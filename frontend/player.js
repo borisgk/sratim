@@ -42,8 +42,8 @@ async function initPlayer() {
     debugCodec = document.getElementById('debugCodec');
     debugLastSeek = document.getElementById('debugLastSeek');
 
-    // Make debug overlay visible by default for easier debugging
-    debugOverlay.style.display = 'block';
+    // Keep debug overlay hidden by default (toggle with 'D')
+    debugOverlay.style.display = 'none';
 
     // Keyboard shortcut to toggle debug overlay (D key)
     window.addEventListener('keydown', (e) => {

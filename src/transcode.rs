@@ -182,37 +182,43 @@ fn run_transcode_cli(
     args.push("-fflags".to_string());
     args.push("+genpts".to_string());
 
-    // Log seeking information for debugging
+    let mut accurate_ss: Option<f64> = None;
+
     if let Some(t) = start_time {
         let duration = info.duration.unwrap_or(0.0);
         println!("=== SEEK INFO ===");
         println!("File duration: {:.2}s", duration);
-        println!("Requested seek: {:.2}s", t);
+        println!("Target seek: {:.2}s", t);
 
-        if duration > 0.0 && t > duration - 5.0 {
-            println!(
-                "WARNING: Seeking very close to end! ({:.2}s from end)",
-                duration - t
-            );
-        }
+        // Split seek: Fast jump to 30s before target, then precise seek for the rest.
+        // This prevents the Double-SS "additive" overshoot (T + T = 2T).
+        let f = (t - 30.0).max(0.0);
+        let a = t - f;
+
+        accurate_ss = Some(a);
+
+        println!(
+            "Split Seek: Fast jump to {:.2}s, precise seek for remaining {:.2}s",
+            f, a
+        );
 
         args.push("-ss".to_string());
-        args.push(format!("{:.4}", t));
+        args.push(format!("{:.4}", f));
     }
 
     args.push("-i".to_string());
     args.push(path.to_string_lossy().to_string());
 
-    // Second -ss for frame-accurate positioning (double-ss technique)
-    if let Some(t) = start_time {
+    // Second -ss for frame-accurate positioning (Double-SS technique)
+    if let Some(a) = accurate_ss {
         args.push("-ss".to_string());
-        args.push(format!("{:.4}", t));
+        args.push(format!("{:.4}", a));
 
         // Add explicit duration to ensure FFmpeg has content to encode
-        // This prevents "empty output" errors when seeking near problematic sections
         let duration = info.duration.unwrap_or(0.0);
-        if duration > 0.0 && t < duration {
-            let remaining = duration - t;
+        let t_target = start_time.unwrap_or(0.0);
+        if duration > 0.0 && t_target < duration {
+            let remaining = duration - t_target;
             args.push("-t".to_string());
             args.push(format!("{:.2}", remaining));
             println!(
