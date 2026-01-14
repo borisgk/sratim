@@ -68,4 +68,4 @@ This will sync the source code and trigger a release build on the destination.
 
 ## 📝 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the GNU GPL v3 - see the LICENSE file for details.
