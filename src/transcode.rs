@@ -182,7 +182,20 @@ fn run_transcode_cli(
     args.push("-fflags".to_string());
     args.push("+genpts".to_string());
 
+    // Log seeking information for debugging
     if let Some(t) = start_time {
+        let duration = info.duration.unwrap_or(0.0);
+        println!("=== SEEK INFO ===");
+        println!("File duration: {:.2}s", duration);
+        println!("Requested seek: {:.2}s", t);
+
+        if duration > 0.0 && t > duration - 5.0 {
+            println!(
+                "WARNING: Seeking very close to end! ({:.2}s from end)",
+                duration - t
+            );
+        }
+
         args.push("-ss".to_string());
         args.push(format!("{:.4}", t));
     }
@@ -194,6 +207,19 @@ fn run_transcode_cli(
     if let Some(t) = start_time {
         args.push("-ss".to_string());
         args.push(format!("{:.4}", t));
+
+        // Add explicit duration to ensure FFmpeg has content to encode
+        // This prevents "empty output" errors when seeking near problematic sections
+        let duration = info.duration.unwrap_or(0.0);
+        if duration > 0.0 && t < duration {
+            let remaining = duration - t;
+            args.push("-t".to_string());
+            args.push(format!("{:.2}", remaining));
+            println!(
+                "Setting duration limit: {:.2}s (remaining from seek point)",
+                remaining
+            );
+        }
     }
 
     // Explicitly map first video and audio stream

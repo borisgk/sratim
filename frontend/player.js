@@ -15,6 +15,7 @@ let isTranscoding = false;
 let currentMoviePath = '';
 let currentMovieName = '';
 let lastSeekTime = null;
+let userSeeking = false; // Flag to prevent seekBar updates during user interaction
 
 // Debug overlay elements (will be initialized in initPlayer)
 let debugOverlay, debugMode, debugVideoTime, debugOffset, debugRealTime, debugCodec, debugLastSeek;
@@ -204,13 +205,36 @@ function startTranscode(reason, startTime = 0) {
 
     mainVideo.play().catch(e => console.log("Autoplay prevented:", e));
 
-    seekBar.onchange = (e) => {
-        const rawSeekTime = parseFloat(e.target.value);
-        // Round to nearest 5-second interval for consistent keyframe alignment
-        const seekTime = Math.round(rawSeekTime / 5) * 5;
-        console.log(`Seeking from ${rawSeekTime.toFixed(1)}s to ${seekTime}s (5s interval)`);
-        debugLastSeek.textContent = `${seekTime}s (from ${rawSeekTime.toFixed(1)}s)`;
+    // Helper function for seeking
+    function performSeek(seekTime) {
+        // Validate: don't seek beyond duration (leave 5 second buffer for double-SS)
+        if (totalDuration > 0 && seekTime > totalDuration - 5) {
+            seekTime = totalDuration - 5;
+            seekBar.value = seekTime;
+            console.log(`Clamped seek to ${seekTime.toFixed(2)}s (${totalDuration - seekTime}s from end)`);
+        }
+
+        console.log(`Seeking to: ${seekTime.toFixed(2)}s`);
+        debugLastSeek.textContent = `${seekTime.toFixed(2)}s`;
         startTranscode("Seek", seekTime);
+    }
+
+    // Track when user starts interacting with seek bar
+    seekBar.onmousedown = () => {
+        userSeeking = true;
+    };
+
+    // Instant seek when user releases
+    seekBar.onmouseup = (e) => {
+        userSeeking = false;
+        const seekTime = parseFloat(e.target.value);
+        performSeek(seekTime);
+    };
+
+    // Also handle direct clicks (without drag)
+    seekBar.onclick = (e) => {
+        const seekTime = parseFloat(e.target.value);
+        performSeek(seekTime);
     };
 }
 
@@ -221,7 +245,12 @@ mainVideo.ontimeupdate = () => {
     } else {
         realTime = mainVideo.currentTime;
     }
-    seekBar.value = realTime;
+
+    // Only update seek bar if user isn't currently interacting with it
+    if (!userSeeking) {
+        seekBar.value = realTime;
+    }
+
     timeDisplay.textContent = formatTime(realTime);
 
     // Update debug overlay
