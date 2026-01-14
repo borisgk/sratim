@@ -24,26 +24,7 @@
         <nav id="breadcrumbs" class="breadcrumbs"></nav>
 
         <main>
-            <div id="playerContainer" class="player-container hidden">
-                <div class="video-wrapper">
-                    <video id="mainVideo" controls preload="metadata">
-                        Your browser does not support the video tag.
-                    </video>
-
-                    <div id="customControls" class="custom-controls hidden">
-                        <div class="controls-row">
-                            <button id="playPauseBtn" class="control-btn">⏸️</button>
-                            <span id="timeDisplay">00:00</span>
-                            <input type="range" id="seekBar" min="0" max="100" value="0" step="0.1">
-                            <span id="durationDisplay">00:00</span>
-                            <button id="fullscreenBtn" class="control-btn">⛶</button>
-                        </div>
-                    </div>
-
-                    <button id="closePlayer" class="close-btn" aria-label="Close Player">&times;</button>
-                </div>
-                <h2 id="nowPlayingTitle">Select a movie</h2>
-            </div>
+            <!-- Player container removed for dedicated player page -->
 
             <div id="moviesGrid" class="movies-grid">
                 <!-- Movies will be injected here -->
