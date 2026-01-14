@@ -127,7 +127,10 @@ async fn transcode_movie(
                 }
             };
 
-            axum::body::Body::from_stream(stream).into_response()
+            axum::response::Response::builder()
+                .header("Content-Type", "video/mp4")
+                .body(axum::body::Body::from_stream(stream))
+                .unwrap()
         }
         Err(e) => {
             eprintln!("Failed to start transcoder: {}", e);

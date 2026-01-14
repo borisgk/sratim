@@ -14,6 +14,10 @@ let totalDuration = 0;
 let isTranscoding = false;
 let currentMoviePath = '';
 let currentMovieName = '';
+let lastSeekTime = null;
+
+// Debug overlay elements (will be initialized in initPlayer)
+let debugOverlay, debugMode, debugVideoTime, debugOffset, debugRealTime, debugCodec, debugLastSeek;
 
 // Helper
 function formatTime(seconds) {
@@ -28,6 +32,25 @@ function formatTime(seconds) {
 }
 
 async function initPlayer() {
+    // Initialize debug overlay elements
+    debugOverlay = document.getElementById('debugOverlay');
+    debugMode = document.getElementById('debugMode');
+    debugVideoTime = document.getElementById('debugVideoTime');
+    debugOffset = document.getElementById('debugOffset');
+    debugRealTime = document.getElementById('debugRealTime');
+    debugCodec = document.getElementById('debugCodec');
+    debugLastSeek = document.getElementById('debugLastSeek');
+
+    // Make debug overlay visible by default for easier debugging
+    debugOverlay.style.display = 'block';
+
+    // Keyboard shortcut to toggle debug overlay (D key)
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'd' || e.key === 'D') {
+            debugOverlay.style.display = debugOverlay.style.display === 'none' ? 'block' : 'none';
+        }
+    });
+
     // Retrieve movie data from sessionStorage
     currentMoviePath = sessionStorage.getItem('currentMoviePath');
     currentMovieName = sessionStorage.getItem('currentMovieName');
@@ -62,6 +85,9 @@ async function initPlayer() {
             const audioCodec = (meta.audio_codec || "").toLowerCase();
             const videoCodec = (meta.video_codec || "").toLowerCase();
             const container = (meta.container || "").toLowerCase();
+
+            // Update debug overlay codec info
+            debugCodec.textContent = `V:${videoCodec} A:${audioCodec} C:${container}`;
 
             let shouldTranscode = false;
             let reason = "";
@@ -141,7 +167,7 @@ async function initPlayer() {
 function startNative() {
     isTranscoding = false;
     currentTranscodeOffset = 0;
-    const originalUrl = `/content/${encodeURI(currentMoviePath)}`;
+    const originalUrl = `/content/${encodeURI(currentMoviePath)}?t=${Date.now()}`;
     mainVideo.onerror = null;
     mainVideo.src = originalUrl;
     nowPlayingTitle.textContent = `Now Playing: ${currentMovieName}`;
@@ -157,11 +183,12 @@ function startNative() {
 function startTranscode(reason, startTime = 0) {
     isTranscoding = true;
     currentTranscodeOffset = startTime;
+    lastSeekTime = startTime;
 
     mainVideo.controls = false;
     customControls.classList.remove('hidden');
 
-    const transcodeUrl = `/api/transcode?path=${encodeURIComponent(currentMoviePath)}&start=${startTime}`;
+    const transcodeUrl = `/api/transcode?path=${encodeURIComponent(currentMoviePath)}&start=${startTime}&t=${Date.now()}`;
     nowPlayingTitle.textContent = `Transcoding (${reason}): ${currentMovieName}`;
 
     mainVideo.onerror = null;
@@ -178,8 +205,11 @@ function startTranscode(reason, startTime = 0) {
     mainVideo.play().catch(e => console.log("Autoplay prevented:", e));
 
     seekBar.onchange = (e) => {
-        const seekTime = parseFloat(e.target.value);
-        console.log("Seeking to:", seekTime);
+        const rawSeekTime = parseFloat(e.target.value);
+        // Round to nearest 5-second interval for consistent keyframe alignment
+        const seekTime = Math.round(rawSeekTime / 5) * 5;
+        console.log(`Seeking from ${rawSeekTime.toFixed(1)}s to ${seekTime}s (5s interval)`);
+        debugLastSeek.textContent = `${seekTime}s (from ${rawSeekTime.toFixed(1)}s)`;
         startTranscode("Seek", seekTime);
     };
 }
@@ -193,6 +223,12 @@ mainVideo.ontimeupdate = () => {
     }
     seekBar.value = realTime;
     timeDisplay.textContent = formatTime(realTime);
+
+    // Update debug overlay
+    debugVideoTime.textContent = mainVideo.currentTime.toFixed(2);
+    debugOffset.textContent = currentTranscodeOffset.toFixed(2);
+    debugRealTime.textContent = realTime.toFixed(2);
+    debugMode.textContent = isTranscoding ? 'Transcoding' : 'Native';
 };
 
 playPauseBtn.onclick = () => {

@@ -64,6 +64,17 @@
                 <a href="index.html" id="closePlayer" class="close-btn" aria-label="Close Player">&times;</a>
             </div>
             <h2 id="nowPlayingTitle">Loading...</h2>
+
+            <!-- Debug Overlay -->
+            <div id="debugOverlay"
+                style="position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.8); color: #0f0; padding: 10px; font-family: monospace; font-size: 12px; z-index: 10000; border-radius: 4px; display: none;">
+                <div>Mode: <span id="debugMode">-</span></div>
+                <div>Video Time: <span id="debugVideoTime">0.00</span>s</div>
+                <div>Seek Offset: <span id="debugOffset">0.00</span>s</div>
+                <div>Real Time: <span id="debugRealTime">0.00</span>s</div>
+                <div>Codec: <span id="debugCodec">-</span></div>
+                <div>Last Seek: <span id="debugLastSeek">-</span></div>
+            </div>
         </div>
     </div>
 

@@ -19,7 +19,7 @@ rsync -avz --progress \
 
 # 2. Build on remote
 echo "🛠️  Building release binary..."
-ssh "$HOST" "cd $DIR && cargo build --release"
+ssh "$HOST" "cd $DIR && cargo build --release --verbose"
 
 echo "✅ Deployment complete!"
 echo "To start the server remotely trying running:"

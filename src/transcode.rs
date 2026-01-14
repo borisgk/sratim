@@ -178,6 +178,10 @@ fn run_transcode_cli(
 ) -> Result<()> {
     let mut args = Vec::new();
 
+    // Global inputs flags for better sync/seeking
+    args.push("-fflags".to_string());
+    args.push("+genpts".to_string());
+
     if let Some(t) = start_time {
         args.push("-ss".to_string());
         args.push(format!("{:.4}", t));
@@ -186,15 +190,29 @@ fn run_transcode_cli(
     args.push("-i".to_string());
     args.push(path.to_string_lossy().to_string());
 
+    // Second -ss for frame-accurate positioning (double-ss technique)
+    if let Some(t) = start_time {
+        args.push("-ss".to_string());
+        args.push(format!("{:.4}", t));
+    }
+
+    // Explicitly map first video and audio stream
+    args.push("-map".to_string());
+    args.push("0:v:0".to_string());
+    args.push("-map".to_string());
+    args.push("0:a:0".to_string());
+
+    // Simple, reliable timestamp handling
+    args.push("-vsync".to_string());
+    args.push("passthrough".to_string());
+    args.push("-max_muxing_queue_size".to_string());
+    args.push("4096".to_string());
+
     // --- Smart Transcoding Logic ---
     let v_codec = info.video_codec.as_deref().unwrap_or("");
     let a_codec = info.audio_codec.as_deref().unwrap_or("");
     let container = info.container.to_lowercase();
 
-    // 1. Video Decision
-    // Browsers natively support h264/avc1 in MP4.
-    // Many also support HEVC/h265 now (especially on Mac/Safari).
-    // Also, AVI container is problematic for web, so we force transcode if it's AVI.
     let needs_v_transcode =
         !(v_codec == "h264" || v_codec == "hevc" || v_codec == "h265") || container.contains("avi");
 
@@ -235,6 +253,8 @@ fn run_transcode_cli(
         args.push("aac".to_string());
         args.push("-b:a".to_string());
         args.push("128k".to_string());
+        args.push("-async".to_string());
+        args.push("1".to_string());
     } else {
         println!("Copying audio stream: {}", a_codec);
         args.push("-c:a".to_string());
@@ -262,6 +282,22 @@ fn run_transcode_cli(
         .stdout
         .take()
         .ok_or(anyhow::anyhow!("Failed to open stdout"))?;
+
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or(anyhow::anyhow!("Failed to open stderr"))?;
+
+    // Spawn a thread to read stderr and print it to prevent pipe buffer deadlock
+    thread::spawn(move || {
+        use std::io::BufRead;
+        let reader = std::io::BufReader::new(stderr);
+        for line in reader.lines() {
+            if let Ok(l) = line {
+                eprintln!("[ffmpeg] {}", l);
+            }
+        }
+    });
 
     let mut buffer = [0u8; 4096];
 
