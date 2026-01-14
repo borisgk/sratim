@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::Value;
-use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::thread;
+use std::process::Stdio;
+use tokio::io::AsyncReadExt;
+use tokio::process::Command;
+use tokio::sync::mpsc::{Receiver, Sender, channel};
 
 pub struct Transcoder {
     input_path: std::path::PathBuf,
@@ -36,7 +36,7 @@ impl Transcoder {
 
     /// Spawns the transcoding process using ffmpeg CLI for robustness.
     pub fn stream(&self, start_pos: Option<f64>) -> Result<Receiver<Vec<u8>>> {
-        let (tx, rx) = channel();
+        let (tx, rx) = channel(100);
         let path = self.input_path.clone();
 
         if !path.exists() {
@@ -46,8 +46,8 @@ impl Transcoder {
         // Get metadata to decide transcoding strategy
         let info = self.get_metadata()?;
 
-        thread::spawn(move || {
-            if let Err(e) = run_transcode_cli(path, tx, start_pos, info) {
+        tokio::spawn(async move {
+            if let Err(e) = run_transcode_cli(path, tx, start_pos, info).await {
                 eprintln!("Transcoding error: {:?}", e);
             }
         });
@@ -57,7 +57,7 @@ impl Transcoder {
 
     /// Probes the file metadata using ffprobe
     pub fn get_metadata(&self) -> Result<MediaInfo> {
-        let output = Command::new("ffprobe")
+        let output = std::process::Command::new("ffprobe")
             .args(&[
                 "-v",
                 "quiet",
@@ -125,14 +125,14 @@ impl Transcoder {
 
     /// Extracts a specific subtitle stream and converts it to WebVTT
     pub fn subtitles(&self, index: usize) -> Result<Receiver<Vec<u8>>> {
-        let (tx, rx) = channel();
+        let (tx, rx) = channel(10);
         let path = self.input_path.clone();
 
         if !path.exists() {
             return Err(anyhow::anyhow!("File not found"));
         }
 
-        thread::spawn(move || {
+        tokio::spawn(async move {
             let child = Command::new("ffmpeg")
                 .args(&[
                     "-v",
@@ -152,17 +152,17 @@ impl Transcoder {
             if let Ok(mut c) = child {
                 if let Some(mut stdout) = c.stdout.take() {
                     let mut buffer = [0u8; 1024];
-                    while let Ok(n) = stdout.read(&mut buffer) {
+                    while let Ok(n) = stdout.read(&mut buffer).await {
                         if n == 0 {
                             break;
                         }
-                        if tx.send(buffer[..n].to_vec()).is_err() {
-                            let _ = c.kill();
+                        if tx.send(buffer[..n].to_vec()).await.is_err() {
+                            let _ = c.kill().await;
                             break;
                         }
                     }
                 }
-                let _ = c.wait();
+                let _ = c.wait().await;
             }
         });
 
@@ -170,7 +170,7 @@ impl Transcoder {
     }
 }
 
-fn run_transcode_cli(
+async fn run_transcode_cli(
     path: std::path::PathBuf,
     tx: Sender<Vec<u8>>,
     start_time: Option<f64>,
@@ -179,6 +179,10 @@ fn run_transcode_cli(
     let mut args = Vec::new();
 
     // Global inputs flags for better sync/seeking
+    args.push("-analyzeduration".to_string());
+    args.push("10M".to_string());
+    args.push("-probesize".to_string());
+    args.push("10M".to_string());
     args.push("-fflags".to_string());
     args.push("+genpts".to_string());
 
@@ -235,7 +239,7 @@ fn run_transcode_cli(
     args.push("0:a:0".to_string());
 
     // Simple, reliable timestamp handling
-    args.push("-vsync".to_string());
+    args.push("-fps_mode".to_string());
     args.push("passthrough".to_string());
     args.push("-max_muxing_queue_size".to_string());
     args.push("4096".to_string());
@@ -321,35 +325,34 @@ fn run_transcode_cli(
         .ok_or(anyhow::anyhow!("Failed to open stderr"))?;
 
     // Spawn a thread to read stderr and print it to prevent pipe buffer deadlock
-    thread::spawn(move || {
-        use std::io::BufRead;
-        let reader = std::io::BufReader::new(stderr);
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                eprintln!("[ffmpeg] {}", l);
-            }
+    tokio::spawn(async move {
+        use tokio::io::AsyncBufReadExt;
+        let reader = tokio::io::BufReader::new(stderr);
+        let mut lines = reader.lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            eprintln!("[ffmpeg] {}", line);
         }
     });
 
     let mut buffer = [0u8; 4096];
 
     loop {
-        match stdout.read(&mut buffer) {
+        match stdout.read(&mut buffer).await {
             Ok(0) => break, // EOF
             Ok(n) => {
-                if tx.send(buffer[..n].to_vec()).is_err() {
-                    let _ = child.kill();
+                if tx.send(buffer[..n].to_vec()).await.is_err() {
+                    let _ = child.kill().await;
                     break;
                 }
             }
             Err(_) => {
-                let _ = child.kill();
+                let _ = child.kill().await;
                 break;
             }
         }
     }
 
-    let _ = child.wait();
+    let _ = child.wait().await;
 
     Ok(())
 }

@@ -112,18 +112,11 @@ async fn transcode_movie(
     let transcoder = crate::transcode::Transcoder::new(path);
 
     match transcoder.stream(params.start) {
-        Ok(rx) => {
+        Ok(mut rx) => {
             // Create a stream from the receiver
             let stream = async_stream::stream! {
-                // In a real implementation we would iterate the receiver
-                // For now, we just yield what we get
-                loop {
-                    // This is blocking, so we should spawn it or use async channel
-                    // For the POC, we'll assume the channel has data or breaks
-                    match rx.recv() {
-                        Ok(bytes) => yield Ok::<_, std::io::Error>(axum::body::Bytes::from(bytes)),
-                        Err(_) => break, // Channel closed
-                    }
+                while let Some(bytes) = rx.recv().await {
+                    yield Ok::<_, std::io::Error>(axum::body::Bytes::from(bytes));
                 }
             };
 
@@ -152,13 +145,10 @@ async fn extract_subtitles(
     let transcoder = crate::transcode::Transcoder::new(path);
 
     match transcoder.subtitles(params.index) {
-        Ok(rx) => {
+        Ok(mut rx) => {
             let stream = async_stream::stream! {
-                loop {
-                    match rx.recv() {
-                        Ok(bytes) => yield Ok::<_, std::io::Error>(axum::body::Bytes::from(bytes)),
-                        Err(_) => break,
-                    }
+                while let Some(bytes) = rx.recv().await {
+                    yield Ok::<_, std::io::Error>(axum::body::Bytes::from(bytes));
                 }
             };
 
