@@ -11,12 +11,20 @@ pub struct Transcoder {
     input_path: std::path::PathBuf,
 }
 
+#[derive(Serialize, Debug, Clone)]
+pub struct SubtitleInfo {
+    pub index: usize,
+    pub language: Option<String>,
+    pub title: Option<String>,
+}
+
 #[derive(Serialize, Debug)]
 pub struct MediaInfo {
     pub container: String,
     pub video_codec: Option<String>,
     pub audio_codec: Option<String>,
     pub duration: Option<f64>,
+    pub subtitles: Vec<SubtitleInfo>,
 }
 
 impl Transcoder {
@@ -84,15 +92,25 @@ impl Transcoder {
 
         let mut video_codec = None;
         let mut audio_codec = None;
+        let mut subtitles = Vec::new();
 
-        for stream in streams {
+        for (i, stream) in streams.iter().enumerate() {
             let codec_type = stream["codec_type"].as_str().unwrap_or("");
             let codec_name = stream["codec_name"].as_str().map(|s| s.to_string());
 
-            if codec_type == "video" && video_codec.is_none() {
-                video_codec = codec_name;
-            } else if codec_type == "audio" && audio_codec.is_none() {
-                audio_codec = codec_name;
+            match codec_type {
+                "video" if video_codec.is_none() => video_codec = codec_name,
+                "audio" if audio_codec.is_none() => audio_codec = codec_name,
+                "subtitle" => {
+                    let title = stream["tags"]["title"].as_str().map(|s| s.to_string());
+                    let language = stream["tags"]["language"].as_str().map(|s| s.to_string());
+                    subtitles.push(SubtitleInfo {
+                        index: i,
+                        language,
+                        title,
+                    });
+                }
+                _ => {}
             }
         }
 
@@ -101,7 +119,54 @@ impl Transcoder {
             video_codec,
             audio_codec,
             duration,
+            subtitles,
         })
+    }
+
+    /// Extracts a specific subtitle stream and converts it to WebVTT
+    pub fn subtitles(&self, index: usize) -> Result<Receiver<Vec<u8>>> {
+        let (tx, rx) = channel();
+        let path = self.input_path.clone();
+
+        if !path.exists() {
+            return Err(anyhow::anyhow!("File not found"));
+        }
+
+        thread::spawn(move || {
+            let child = Command::new("ffmpeg")
+                .args(&[
+                    "-v",
+                    "quiet",
+                    "-i",
+                    &path.to_string_lossy(),
+                    "-map",
+                    &format!("0:{}", index),
+                    "-f",
+                    "webvtt",
+                    "pipe:1",
+                ])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null()) // Don't care about stderr for subs
+                .spawn();
+
+            if let Ok(mut c) = child {
+                if let Some(mut stdout) = c.stdout.take() {
+                    let mut buffer = [0u8; 1024];
+                    while let Ok(n) = stdout.read(&mut buffer) {
+                        if n == 0 {
+                            break;
+                        }
+                        if tx.send(buffer[..n].to_vec()).is_err() {
+                            let _ = c.kill();
+                            break;
+                        }
+                    }
+                }
+                let _ = c.wait();
+            }
+        });
+
+        Ok(rx)
     }
 }
 

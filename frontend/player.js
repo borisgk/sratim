@@ -7,6 +7,7 @@ const durationDisplay = document.getElementById('durationDisplay');
 const playPauseBtn = document.getElementById('playPauseBtn');
 const fullscreenBtn = document.getElementById('fullscreenBtn');
 const videoWrapper = document.querySelector('.video-wrapper');
+const subtitleSelect = document.getElementById('subtitleSelect');
 
 let currentTranscodeOffset = 0;
 let totalDuration = 0;
@@ -79,8 +80,56 @@ async function initPlayer() {
             if (shouldTranscode) {
                 console.log(`Force transcoding due to: ${reason}`);
                 startTranscode(reason);
-                return;
+                // We return here to prevent startNative from being called
+                // Subtitles will be loaded below
             }
+
+            // Load Subtitles
+            if (meta.subtitles && meta.subtitles.length > 0) {
+                console.log("Loading subtitles:", meta.subtitles);
+                meta.subtitles.forEach((sub, idx) => {
+                    const track = document.createElement('track');
+                    track.kind = 'subtitles';
+                    track.label = sub.title || sub.language || `Subtitle ${sub.index}`;
+                    track.srclang = sub.language || 'und';
+                    track.src = `/api/subtitles?path=${encodeURIComponent(currentMoviePath)}&index=${sub.index}`;
+
+                    // Enable first track by default
+                    if (idx === 0) {
+                        track.default = true;
+                    }
+
+                    mainVideo.appendChild(track);
+
+                    // Add to dropdown
+                    const option = document.createElement('option');
+                    option.value = sub.index;
+                    option.textContent = track.label;
+                    subtitleSelect.appendChild(option);
+                });
+
+                // Link dropdown to track switching
+                subtitleSelect.onchange = (e) => {
+                    const val = e.target.value;
+                    const tracks = mainVideo.textTracks;
+                    for (let i = 0; i < tracks.length; i++) {
+                        if (val === 'off') {
+                            tracks[i].mode = 'disabled';
+                        } else {
+                            // Match by label or index if needed, but here simple index suffices
+                            // as we added them in order
+                            tracks[i].mode = (i === subtitleSelect.selectedIndex - 1) ? 'showing' : 'disabled';
+                        }
+                    }
+                };
+
+                // Set default in dropdown
+                if (meta.subtitles.length > 0) {
+                    subtitleSelect.selectedIndex = 1; // First sub after "Off"
+                }
+            }
+
+            if (shouldTranscode) return; // Exit after setting up subs and starting transcode
         }
     } catch (e) {
         console.error("Failed to check metadata, falling back to try-play", e);
@@ -136,11 +185,14 @@ function startTranscode(reason, startTime = 0) {
 }
 
 mainVideo.ontimeupdate = () => {
+    let realTime = 0;
     if (isTranscoding) {
-        const realTime = currentTranscodeOffset + mainVideo.currentTime;
-        seekBar.value = realTime;
-        timeDisplay.textContent = formatTime(realTime);
+        realTime = currentTranscodeOffset + mainVideo.currentTime;
+    } else {
+        realTime = mainVideo.currentTime;
     }
+    seekBar.value = realTime;
+    timeDisplay.textContent = formatTime(realTime);
 };
 
 playPauseBtn.onclick = () => {

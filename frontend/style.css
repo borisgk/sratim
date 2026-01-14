@@ -327,3 +327,30 @@ video {
     background: rgba(255, 255, 255, 0.1);
     color: var(--accent);
 }
+
+.subtitle-control {
+    margin-left: 0.5rem;
+}
+
+.sub-select {
+    background: rgba(0, 0, 0, 0.5);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-family: var(--font-body);
+    font-size: 0.8rem;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.2s;
+}
+
+.sub-select:hover {
+    border-color: var(--accent);
+    background: rgba(99, 102, 241, 0.2);
+}
+
+.sub-select option {
+    background: #050510;
+    color: white;
+}

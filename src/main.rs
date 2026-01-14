@@ -52,6 +52,7 @@ async fn main() {
         .nest_service("/content", ServeDir::new(&movies_dir))
         .route("/api/transcode", get(transcode_movie))
         .route("/api/metadata", get(get_metadata))
+        .route("/api/subtitles", get(extract_subtitles))
         // Serve the frontend
         .fallback_service(ServeDir::new("frontend"))
         .layer(CorsLayer::permissive())
@@ -68,6 +69,12 @@ async fn main() {
 struct TranscodeParams {
     path: String,
     start: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct SubtitleParams {
+    path: String,
+    index: usize,
 }
 
 async fn get_metadata(
@@ -124,6 +131,41 @@ async fn transcode_movie(
         }
         Err(e) => {
             eprintln!("Failed to start transcoder: {}", e);
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn extract_subtitles(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubtitleParams>,
+) -> impl IntoResponse {
+    let path = state.movies_dir.join(&params.path);
+
+    if !path.exists() {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    }
+
+    let transcoder = crate::transcode::Transcoder::new(path);
+
+    match transcoder.subtitles(params.index) {
+        Ok(rx) => {
+            let stream = async_stream::stream! {
+                loop {
+                    match rx.recv() {
+                        Ok(bytes) => yield Ok::<_, std::io::Error>(axum::body::Bytes::from(bytes)),
+                        Err(_) => break,
+                    }
+                }
+            };
+
+            axum::response::Response::builder()
+                .header("Content-Type", "text/vtt")
+                .body(axum::body::Body::from_stream(stream))
+                .unwrap()
+        }
+        Err(e) => {
+            eprintln!("Failed to extract subtitles: {}", e);
             axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
