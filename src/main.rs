@@ -1,7 +1,7 @@
 use axum::{
     Router,
     extract::{Query, State},
-    http::{HeaderValue, header},
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Json},
     routing::get,
 };
@@ -11,7 +11,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, services::ServeDir, set_header::SetResponseHeaderLayer};
-use walkdir::WalkDir;
 
 mod config;
 mod transcode;
@@ -26,14 +25,13 @@ struct AppState {
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum MediaNode {
-    Folder {
-        name: String,
-        children: Vec<MediaNode>,
-    },
-    File {
-        name: String,
-        path: String,
-    },
+    Folder { name: String, path: String },
+    File { name: String, path: String },
+}
+
+#[derive(Deserialize)]
+struct ListParams {
+    path: Option<String>,
 }
 
 #[tokio::main]
@@ -193,75 +191,65 @@ async fn extract_subtitles(
     }
 }
 
-async fn list_movies(State(state): State<Arc<AppState>>) -> Json<Vec<MediaNode>> {
-    use std::collections::BTreeMap;
+async fn list_movies(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ListParams>,
+) -> impl IntoResponse {
+    let relative_path = params.path.unwrap_or_default();
+    let abs_path = state.movies_dir.join(&relative_path);
 
-    // We'll use a nested BTreeMap to build the hierarchy easily
-    // String -> Folder/File
-    enum TempNode {
-        Dir(BTreeMap<String, TempNode>),
-        Movie(String), // path
+    // Security check: ensure path is within movies_dir
+    if !abs_path.starts_with(&state.movies_dir) {
+        return (StatusCode::FORBIDDEN, "Access denied").into_response();
     }
 
-    let mut root_map = BTreeMap::new();
+    if !abs_path.exists() || !abs_path.is_dir() {
+        return (StatusCode::NOT_FOUND, "Folder not found").into_response();
+    }
 
-    // Walk the directory and find video files
-    for entry in WalkDir::new(&state.movies_dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path = entry.path();
-        if path.is_file() {
-            if let Some(ext) = path.extension() {
-                let ext_str = ext.to_string_lossy().to_lowercase();
-                if ["mkv", "mp4", "webm", "avi", "mov"].contains(&ext_str.as_str()) {
-                    let relative_path = path.strip_prefix(&state.movies_dir).unwrap_or(path);
-                    let url_path = relative_path.to_string_lossy().replace('\\', "/");
+    let mut nodes = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(abs_path) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            let node_rel_path = path.strip_prefix(&state.movies_dir).unwrap_or(&path);
+            let url_path = node_rel_path.to_string_lossy().replace('\\', "/");
 
-                    // Navigate/Create the map structure for this path
-                    let mut current_map = &mut root_map;
-                    let components: Vec<_> = relative_path.components().collect();
-
-                    for (i, component) in components.iter().enumerate() {
-                        let name = component.as_os_str().to_string_lossy().to_string();
-
-                        if i == components.len() - 1 {
-                            // It's the file
-                            current_map.insert(name, TempNode::Movie(url_path.clone()));
-                        } else {
-                            // It's a directory
-                            current_map = match current_map
-                                .entry(name)
-                                .or_insert_with(|| TempNode::Dir(BTreeMap::new()))
-                            {
-                                TempNode::Dir(m) => m,
-                                _ => unreachable!(),
-                            };
-                        }
+            if path.is_dir() {
+                nodes.push(MediaNode::Folder {
+                    name,
+                    path: url_path,
+                });
+            } else if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    let ext_str = ext.to_string_lossy().to_lowercase();
+                    if ["mkv", "mp4", "webm", "avi", "mov"].contains(&ext_str.as_str()) {
+                        nodes.push(MediaNode::File {
+                            name,
+                            path: url_path,
+                        });
                     }
                 }
             }
         }
     }
 
-    // Recursively convert TempNode tree to MediaNode tree
-    fn convert(name: String, node: TempNode) -> MediaNode {
-        match node {
-            TempNode::Movie(path) => MediaNode::File { name, path },
-            TempNode::Dir(map) => {
-                let mut children = Vec::new();
-                for (name, node) in map {
-                    children.push(convert(name, node));
+    // Sort: Folders first, then alphabetically
+    nodes.sort_by(|a, b| {
+        let a_is_folder = matches!(a, MediaNode::Folder { .. });
+        let b_is_folder = matches!(b, MediaNode::Folder { .. });
+        if a_is_folder != b_is_folder {
+            b_is_folder.cmp(&a_is_folder)
+        } else {
+            match (a, b) {
+                (MediaNode::Folder { name: n1, .. }, MediaNode::Folder { name: n2, .. }) => {
+                    n1.cmp(n2)
                 }
-                MediaNode::Folder { name, children }
+                (MediaNode::File { name: n1, .. }, MediaNode::File { name: n2, .. }) => n1.cmp(n2),
+                _ => std::cmp::Ordering::Equal,
             }
         }
-    }
+    });
 
-    let mut result = Vec::new();
-    for (name, node) in root_map {
-        result.push(convert(name, node));
-    }
-
-    Json(result)
+    Json(nodes).into_response()
 }

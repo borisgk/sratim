@@ -2,52 +2,65 @@ const moviesGrid = document.getElementById('moviesGrid');
 const searchInput = document.getElementById('searchInput');
 const breadcrumbs = document.getElementById('breadcrumbs');
 
-let movieTree = [];
-let navigationStack = []; // Stack of folder nodes
+let movieTree = []; // Current view nodes
+let navigationStack = []; // Stack of { name, path, children }
+let folderCache = new Map(); // path -> nodes[]
 
-// Fetch movies on load
-async function fetchMovies() {
+// Fetch movies for a specific path
+async function fetchMovies(path = '') {
+    if (folderCache.has(path)) {
+        return folderCache.get(path);
+    }
     try {
-        const response = await fetch('/api/movies');
-        movieTree = await response.json();
-
-        // Try to restore navigation state
-        const savedStack = sessionStorage.getItem('navigationStack');
-        if (savedStack) {
-            try {
-                const names = JSON.parse(savedStack);
-                navigationStack = [{ name: 'Home', children: movieTree }];
-
-                // Rebuild stack by finding nodes in the tree
-                let currentLevel = movieTree;
-                for (let i = 1; i < names.length; i++) {
-                    const found = currentLevel.find(n => n.name === names[i] && n.type === 'folder');
-                    if (found) {
-                        navigationStack.push(found);
-                        currentLevel = found.children;
-                    } else {
-                        break; // Stop if folder not found
-                    }
-                }
-            } catch (e) {
-                console.error("Failed to restore navigation state:", e);
-                navigationStack = [{ name: 'Home', children: movieTree }];
-            }
-        } else {
-            navigationStack = [{ name: 'Home', children: movieTree }];
-        }
-
-        renderUI();
+        const response = await fetch(`/api/movies?path=${encodeURIComponent(path)}`);
+        if (!response.ok) throw new Error('Fetch failed');
+        const nodes = await response.json();
+        folderCache.set(path, nodes);
+        return nodes;
     } catch (error) {
         console.error('Error fetching movies:', error);
         moviesGrid.innerHTML = '<p class="error">Failed to load movies.</p>';
+        return null;
     }
+}
+
+async function initLibrary() {
+    const rootNodes = await fetchMovies('');
+    if (!rootNodes) return;
+
+    // Try to restore navigation state
+    const savedStack = sessionStorage.getItem('navigationStack');
+    if (savedStack) {
+        try {
+            const stackData = JSON.parse(savedStack); // Array of {name, path}
+            navigationStack = [{ name: 'Home', path: '', children: rootNodes }];
+
+            // Rebuild stack by fetching each level
+            for (let i = 1; i < stackData.length; i++) {
+                const { name, path } = stackData[i];
+                const nodes = await fetchMovies(path);
+                if (nodes) {
+                    navigationStack.push({ name, path, children: nodes });
+                } else {
+                    break;
+                }
+            }
+        } catch (e) {
+            console.error("Failed to restore navigation state:", e);
+            navigationStack = [{ name: 'Home', path: '', children: rootNodes }];
+        }
+    } else {
+        navigationStack = [{ name: 'Home', path: '', children: rootNodes }];
+    }
+
+    renderUI();
 }
 
 function renderUI() {
     renderBreadcrumbs();
     const currentFolder = navigationStack[navigationStack.length - 1];
-    renderGrid(currentFolder.children);
+    movieTree = currentFolder.children;
+    renderGrid(movieTree);
 }
 
 function renderBreadcrumbs() {
@@ -59,9 +72,10 @@ function renderBreadcrumbs() {
             item.classList.add('active');
         }
         item.textContent = node.name;
-        item.onclick = () => {
+        item.onclick = async () => {
             navigationStack = navigationStack.slice(0, index + 1);
             renderUI();
+            saveNavigationState();
         };
         breadcrumbs.appendChild(item);
     });
@@ -77,6 +91,7 @@ function renderGrid(nodes) {
         backCard.onclick = () => {
             navigationStack.pop();
             renderUI();
+            saveNavigationState();
         };
         backCard.innerHTML = `
             <div class="movie-icon">⬅️</div>
@@ -85,8 +100,8 @@ function renderGrid(nodes) {
         moviesGrid.appendChild(backCard);
     }
 
-    if (nodes.length === 0 && navigationStack.length === 1) {
-        moviesGrid.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: var(--text-muted);">No movies found.</p>';
+    if (nodes.length === 0) {
+        moviesGrid.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: var(--text-muted);">This folder is empty.</p>';
         return;
     }
 
@@ -96,9 +111,13 @@ function renderGrid(nodes) {
 
         if (node.type === 'folder') {
             card.classList.add('folder');
-            card.onclick = () => {
-                navigationStack.push(node);
-                renderUI();
+            card.onclick = async () => {
+                const children = await fetchMovies(node.path);
+                if (children) {
+                    navigationStack.push({ name: node.name, path: node.path, children });
+                    renderUI();
+                    saveNavigationState();
+                }
             };
             card.innerHTML = `
                 <div class="movie-icon">📁</div>
@@ -117,19 +136,18 @@ function renderGrid(nodes) {
 }
 
 function playMovie(movie) {
-    // Save navigation state (just the folder names to reconstruct the stack)
-    const stackNames = navigationStack.map(node => node.name);
-    sessionStorage.setItem('navigationStack', JSON.stringify(stackNames));
-
-    // Pass movie data via sessionStorage to keep the URL clean
+    saveNavigationState();
     sessionStorage.setItem('currentMoviePath', movie.path);
     sessionStorage.setItem('currentMovieName', movie.name);
-
-    // Navigate to player page without query parameters
     window.location.href = 'player.html';
 }
 
-// Search filter
+function saveNavigationState() {
+    const stackData = navigationStack.map(n => ({ name: n.name, path: n.path }));
+    sessionStorage.setItem('navigationStack', JSON.stringify(stackData));
+}
+
+// Search filter (searches current folder)
 searchInput.addEventListener('input', (e) => {
     const term = e.target.value.toLowerCase();
 
@@ -138,22 +156,17 @@ searchInput.addEventListener('input', (e) => {
         return;
     }
 
-    // Search flattens the result
-    const results = [];
-    function searchRecursive(nodes) {
-        nodes.forEach(node => {
-            if (node.type === 'file' && node.name.toLowerCase().includes(term)) {
-                results.push(node);
-            } else if (node.type === 'folder') {
-                searchRecursive(node.children);
-            }
-        });
-    }
-    searchRecursive(movieTree);
+    const results = movieTree.filter(node =>
+        node.name.toLowerCase().includes(term)
+    );
 
-    // Clear breadcrumbs during search
-    breadcrumbs.innerHTML = '<span class="breadcrumb-item active">Search Results</span>';
+    // Update breadcrumbs to indicate search in current folder
+    const currentFolder = navigationStack[navigationStack.length - 1];
+    breadcrumbs.innerHTML = `
+        <span class="breadcrumb-item" onclick="renderUI()">Home</span>
+        <span class="breadcrumb-item active">Search: ${term} in ${currentFolder.name}</span>
+    `;
     renderGrid(results);
 });
 
-fetchMovies();
+initLibrary();
