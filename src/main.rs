@@ -1,12 +1,16 @@
 use axum::{
     Router,
     extract::{Query, State},
+    http::{HeaderValue, header},
     response::{IntoResponse, Json},
     routing::get,
 };
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
-use tower_http::{cors::CorsLayer, services::ServeDir};
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tower::ServiceBuilder;
+use tower_http::{cors::CorsLayer, services::ServeDir, set_header::SetResponseHeaderLayer};
 use walkdir::WalkDir;
 
 mod config;
@@ -58,8 +62,25 @@ async fn main() {
         .route("/api/transcode", get(transcode_movie))
         .route("/api/metadata", get(get_metadata))
         .route("/api/subtitles", get(extract_subtitles))
-        // Serve the frontend
-        .fallback_service(ServeDir::new(&config.frontend_dir))
+        // Serve the frontend with cache-disabling headers
+        .fallback_service(
+            ServiceBuilder::new()
+                .layer(SetResponseHeaderLayer::overriding(
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static(
+                        "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+                    ),
+                ))
+                .layer(SetResponseHeaderLayer::overriding(
+                    header::PRAGMA,
+                    HeaderValue::from_static("no-cache"),
+                ))
+                .layer(SetResponseHeaderLayer::overriding(
+                    header::EXPIRES,
+                    HeaderValue::from_static("0"),
+                ))
+                .service(ServeDir::new(&config.frontend_dir)),
+        )
         .layer(CorsLayer::permissive())
         .with_state(shared_state);
 

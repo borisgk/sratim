@@ -52,6 +52,28 @@ async function initPlayer() {
         }
     });
 
+    // Initialize UI controls once
+    mainVideo.controls = false;
+    customControls.classList.remove('hidden');
+
+    // Track when user starts interacting with seek bar
+    seekBar.onmousedown = () => {
+        userSeeking = true;
+    };
+
+    // Instant seek when user releases
+    seekBar.onmouseup = (e) => {
+        userSeeking = false;
+        const seekTime = parseFloat(e.target.value);
+        performSeek(seekTime);
+    };
+
+    // Also handle direct clicks (without drag)
+    seekBar.onclick = (e) => {
+        const seekTime = parseFloat(e.target.value);
+        performSeek(seekTime);
+    };
+
     // Retrieve movie data from sessionStorage
     currentMoviePath = sessionStorage.getItem('currentMoviePath');
     currentMovieName = sessionStorage.getItem('currentMovieName');
@@ -65,8 +87,6 @@ async function initPlayer() {
     }
 
     nowPlayingTitle.textContent = `Loading: ${currentMovieName}...`;
-    customControls.classList.add('hidden');
-    mainVideo.controls = true;
 
     try {
         const metaRes = await fetch(`/api/metadata?path=${encodeURIComponent(currentMoviePath)}`);
@@ -170,8 +190,17 @@ function startNative() {
     currentTranscodeOffset = 0;
     const originalUrl = `/content/${encodeURI(currentMoviePath)}?t=${Date.now()}`;
     mainVideo.onerror = null;
+    mainVideo.controls = false;
     mainVideo.src = originalUrl;
     nowPlayingTitle.textContent = `Now Playing: ${currentMovieName}`;
+
+    if (totalDuration > 0) {
+        seekBar.max = totalDuration;
+        durationDisplay.textContent = formatTime(totalDuration);
+    } else {
+        seekBar.max = 100;
+        durationDisplay.textContent = "??:??";
+    }
 
     mainVideo.onerror = (e) => {
         console.log("Native playback failed, switching to transcode...", e);
@@ -181,18 +210,36 @@ function startNative() {
     mainVideo.play().catch(e => console.log("Autoplay prevented:", e));
 }
 
+function performSeek(seekTime) {
+    // Validate: don't seek beyond duration
+    if (totalDuration > 0 && seekTime > totalDuration - 1) {
+        seekTime = totalDuration - 1;
+        seekBar.value = seekTime;
+        console.log(`Clamped seek to ${seekTime.toFixed(2)}s`);
+    }
+
+    console.log(`Seeking to: ${seekTime.toFixed(2)}s`);
+    debugLastSeek.textContent = `${seekTime.toFixed(2)}s`;
+
+    if (isTranscoding) {
+        // For transcoding, we need to restart the FFmpeg process with a new -ss
+        startTranscode("Seek", seekTime);
+    } else {
+        // For native playback, standard HTML5 seeking
+        mainVideo.currentTime = seekTime;
+    }
+}
+
 function startTranscode(reason, startTime = 0) {
     isTranscoding = true;
     currentTranscodeOffset = startTime;
     lastSeekTime = startTime;
 
-    mainVideo.controls = false;
-    customControls.classList.remove('hidden');
-
     const transcodeUrl = `/api/transcode?path=${encodeURIComponent(currentMoviePath)}&start=${startTime}&t=${Date.now()}`;
     nowPlayingTitle.textContent = `Transcoding (${reason}): ${currentMovieName}`;
 
     mainVideo.onerror = null;
+    mainVideo.controls = false;
     mainVideo.src = transcodeUrl;
 
     if (totalDuration > 0) {
@@ -204,38 +251,6 @@ function startTranscode(reason, startTime = 0) {
     }
 
     mainVideo.play().catch(e => console.log("Autoplay prevented:", e));
-
-    // Helper function for seeking
-    function performSeek(seekTime) {
-        // Validate: don't seek beyond duration (leave 5 second buffer for double-SS)
-        if (totalDuration > 0 && seekTime > totalDuration - 5) {
-            seekTime = totalDuration - 5;
-            seekBar.value = seekTime;
-            console.log(`Clamped seek to ${seekTime.toFixed(2)}s (${totalDuration - seekTime}s from end)`);
-        }
-
-        console.log(`Seeking to: ${seekTime.toFixed(2)}s`);
-        debugLastSeek.textContent = `${seekTime.toFixed(2)}s`;
-        startTranscode("Seek", seekTime);
-    }
-
-    // Track when user starts interacting with seek bar
-    seekBar.onmousedown = () => {
-        userSeeking = true;
-    };
-
-    // Instant seek when user releases
-    seekBar.onmouseup = (e) => {
-        userSeeking = false;
-        const seekTime = parseFloat(e.target.value);
-        performSeek(seekTime);
-    };
-
-    // Also handle direct clicks (without drag)
-    seekBar.onclick = (e) => {
-        const seekTime = parseFloat(e.target.value);
-        performSeek(seekTime);
-    };
 }
 
 mainVideo.ontimeupdate = () => {
