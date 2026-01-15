@@ -9,7 +9,10 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tower_http::{cors::CorsLayer, services::ServeDir};
 use walkdir::WalkDir;
 
+mod config;
 mod transcode;
+
+use config::AppConfig;
 
 #[derive(Clone)]
 struct AppState {
@@ -34,11 +37,13 @@ async fn main() {
     // Initialize tracing
     tracing_subscriber::fmt::init();
 
-    // Configuration - You can change this path to where your movies are
-    let movies_dir = PathBuf::from("movies");
+    // Load configuration
+    let config = AppConfig::load().expect("Failed to load configuration");
+
+    let movies_dir = config.movies_dir.clone();
     if !movies_dir.exists() {
         std::fs::create_dir_all(&movies_dir).expect("Failed to create movies directory");
-        println!("Created 'movies' directory. Put your MKV files there!");
+        println!("Created movies directory: {:?}", movies_dir);
     }
 
     let shared_state = Arc::new(AppState {
@@ -54,11 +59,14 @@ async fn main() {
         .route("/api/metadata", get(get_metadata))
         .route("/api/subtitles", get(extract_subtitles))
         // Serve the frontend
-        .fallback_service(ServeDir::new("frontend"))
+        .fallback_service(ServeDir::new(&config.frontend_dir))
         .layer(CorsLayer::permissive())
         .with_state(shared_state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    let addr: SocketAddr = format!("{}:{}", config.host, config.port)
+        .parse()
+        .expect("Invalid host/port in configuration");
+
     println!("Server running on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();

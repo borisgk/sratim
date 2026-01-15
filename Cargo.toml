@@ -17,4 +17,5 @@ walkdir = "2"
 
 anyhow = "1.0.100"
 async-stream = "0.3.6"
+toml = "0.8"
 

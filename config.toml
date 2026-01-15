@@ -1,0 +1,13 @@
+# Sratim Configuration
+
+# Directory where your movie files are stored
+movies_dir = "/media/media1/Sratim"
+
+# Frontend directory (relative to current directory)
+frontend_dir = "frontend"
+
+# Server listening port
+port = 3000
+
+# Server listening host (set to 127.0.0.1 for local only, 0.0.0.0 for public)
+host = "0.0.0.0"
