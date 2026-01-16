@@ -20,6 +20,38 @@ use config::AppConfig;
 #[derive(Clone)]
 struct AppState {
     movies_dir: PathBuf,
+    transcode_manager: Arc<TranscodeManager>,
+}
+
+#[derive(Hash, PartialEq, Eq, Clone, Debug)]
+enum TaskKey {
+    Stream(PathBuf),
+    Subtitles(PathBuf, usize),
+}
+
+struct TranscodeManager {
+    tasks: std::sync::Mutex<std::collections::HashMap<TaskKey, tokio::task::AbortHandle>>,
+}
+
+impl TranscodeManager {
+    fn new() -> Self {
+        Self {
+            tasks: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    fn register(&self, key: TaskKey, handle: tokio::task::AbortHandle) {
+        let mut tasks = self.tasks.lock().unwrap();
+        if let Some(old) = tasks.insert(key.clone(), handle) {
+            println!("[manager] Aborting previous task for {:?}", key);
+            old.abort();
+        }
+    }
+
+    fn unregister(&self, key: &TaskKey) {
+        let mut tasks = self.tasks.lock().unwrap();
+        tasks.remove(key);
+    }
 }
 
 #[derive(Serialize)]
@@ -50,6 +82,7 @@ async fn main() {
 
     let shared_state = Arc::new(AppState {
         movies_dir: movies_dir.clone(),
+        transcode_manager: Arc::new(TranscodeManager::new()),
     });
 
     // Router
@@ -115,7 +148,7 @@ async fn get_metadata(
     }
 
     let transcoder = crate::transcode::Transcoder::new(path);
-    match transcoder.get_metadata() {
+    match transcoder.get_metadata().await {
         Ok(info) => Json(info).into_response(),
         Err(e) => {
             eprintln!("Metadata failed: {}", e);
@@ -136,10 +169,29 @@ async fn transcode_movie(
 
     // Use our custom transcoder
     // Note: In a real app, strict path validation is needed to prevent directory traversal
-    let transcoder = crate::transcode::Transcoder::new(path);
+    let transcoder = crate::transcode::Transcoder::new(path.clone());
 
-    match transcoder.stream(params.start) {
-        Ok(mut rx) => {
+    match transcoder.stream(params.start).await {
+        Ok((mut rx, transcode_task_handle)) => {
+            let key = TaskKey::Stream(path);
+            let manager = Arc::clone(&state.transcode_manager);
+            let key_clone = key.clone();
+
+            let _cleanup_task = tokio::spawn(async move {
+                // Wrapper to clean up on drop/panic
+                let _cleanup = scopeguard::guard((manager, key_clone), |(m, k)| {
+                    m.unregister(&k);
+                });
+
+                // This task just needs to exist to clean up the manager when the stream ends
+                // We'll use a standard loop that ends when the manager unregisters us
+                // or the response stream finishes.
+                tokio::time::sleep(tokio::time::Duration::from_secs(3600 * 4)).await; // 4 hours max
+            });
+
+            // Register the ACTUAL transcode task for abortion
+            state.transcode_manager.register(key, transcode_task_handle);
+
             // Create a stream from the receiver
             let stream = async_stream::stream! {
                 while let Some(bytes) = rx.recv().await {
@@ -149,6 +201,7 @@ async fn transcode_movie(
 
             axum::response::Response::builder()
                 .header("Content-Type", "video/mp4")
+                .header("Accept-Ranges", "none")
                 .body(axum::body::Body::from_stream(stream))
                 .unwrap()
         }
@@ -169,10 +222,15 @@ async fn extract_subtitles(
         return axum::http::StatusCode::NOT_FOUND.into_response();
     }
 
-    let transcoder = crate::transcode::Transcoder::new(path);
+    let transcoder = crate::transcode::Transcoder::new(path.clone());
 
-    match transcoder.subtitles(params.index) {
-        Ok(mut rx) => {
+    match transcoder.subtitles(params.index).await {
+        Ok((mut rx, transcode_task_handle)) => {
+            let key = TaskKey::Subtitles(path, params.index as usize);
+
+            // Register the ACTUAL transcode task for abortion
+            state.transcode_manager.register(key, transcode_task_handle);
+
             let stream = async_stream::stream! {
                 while let Some(bytes) = rx.recv().await {
                     yield Ok::<_, std::io::Error>(axum::body::Bytes::from(bytes));
@@ -181,6 +239,7 @@ async fn extract_subtitles(
 
             axum::response::Response::builder()
                 .header("Content-Type", "text/vtt")
+                .header("Accept-Ranges", "none")
                 .body(axum::body::Body::from_stream(stream))
                 .unwrap()
         }

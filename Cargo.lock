@@ -588,6 +588,7 @@ dependencies = [
  "async-stream",
  "axum",
  "mime_guess",
+ "scopeguard",
  "serde",
  "serde_json",
  "tokio",

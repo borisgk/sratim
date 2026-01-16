@@ -35,7 +35,10 @@ impl Transcoder {
     }
 
     /// Spawns the transcoding process using ffmpeg CLI for robustness.
-    pub fn stream(&self, start_pos: Option<f64>) -> Result<Receiver<Vec<u8>>> {
+    pub async fn stream(
+        &self,
+        start_pos: Option<f64>,
+    ) -> Result<(Receiver<Vec<u8>>, tokio::task::AbortHandle)> {
         let (tx, rx) = channel(100);
         let path = self.input_path.clone();
 
@@ -44,20 +47,20 @@ impl Transcoder {
         }
 
         // Get metadata to decide transcoding strategy
-        let info = self.get_metadata()?;
+        let info = self.get_metadata().await?;
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             if let Err(e) = run_transcode_cli(path, tx, start_pos, info).await {
                 eprintln!("Transcoding error: {:?}", e);
             }
         });
 
-        Ok(rx)
+        Ok((rx, handle.abort_handle()))
     }
 
     /// Probes the file metadata using ffprobe
-    pub fn get_metadata(&self) -> Result<MediaInfo> {
-        let output = std::process::Command::new("ffprobe")
+    pub async fn get_metadata(&self) -> Result<MediaInfo> {
+        let output = Command::new("ffprobe")
             .args(&[
                 "-v",
                 "quiet",
@@ -67,7 +70,9 @@ impl Transcoder {
                 "-show_streams",
             ])
             .arg(&self.input_path)
+            .kill_on_drop(true)
             .output()
+            .await
             .context("Failed to run ffprobe")?;
 
         if !output.status.success() {
@@ -124,7 +129,10 @@ impl Transcoder {
     }
 
     /// Extracts a specific subtitle stream and converts it to WebVTT
-    pub fn subtitles(&self, index: usize) -> Result<Receiver<Vec<u8>>> {
+    pub async fn subtitles(
+        &self,
+        index: usize,
+    ) -> Result<(Receiver<Vec<u8>>, tokio::task::AbortHandle)> {
         let (tx, rx) = channel(10);
         let path = self.input_path.clone();
 
@@ -132,7 +140,7 @@ impl Transcoder {
             return Err(anyhow::anyhow!("File not found"));
         }
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let child = Command::new("ffmpeg")
                 .args(&[
                     "-v",
@@ -147,26 +155,38 @@ impl Transcoder {
                 ])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null()) // Don't care about stderr for subs
+                .kill_on_drop(true)
                 .spawn();
 
             if let Ok(mut c) = child {
                 if let Some(mut stdout) = c.stdout.take() {
                     let mut buffer = [0u8; 1024];
-                    while let Ok(n) = stdout.read(&mut buffer).await {
-                        if n == 0 {
-                            break;
-                        }
-                        if tx.send(buffer[..n].to_vec()).await.is_err() {
-                            let _ = c.kill().await;
-                            break;
+                    loop {
+                        tokio::select! {
+                            res = stdout.read(&mut buffer) => {
+                                match res {
+                                    Ok(0) => break, // EOF
+                                    Ok(n) => {
+                                        if tx.send(buffer[..n].to_vec()).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                    Err(_) => break,
+                                }
+                            }
+                            _ = tx.closed() => {
+                                println!("[subtitles] Client disconnected, killing extraction...");
+                                break;
+                            }
                         }
                     }
                 }
+                let _ = c.kill().await;
                 let _ = c.wait().await;
             }
         });
 
-        Ok(rx)
+        Ok((rx, handle.abort_handle()))
     }
 }
 
@@ -311,6 +331,7 @@ async fn run_transcode_cli(
         .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .context("Failed to spawn ffmpeg")?;
 
@@ -337,22 +358,36 @@ async fn run_transcode_cli(
     let mut buffer = [0u8; 4096];
 
     loop {
-        match stdout.read(&mut buffer).await {
-            Ok(0) => break, // EOF
-            Ok(n) => {
-                if tx.send(buffer[..n].to_vec()).await.is_err() {
-                    let _ = child.kill().await;
-                    break;
+        tokio::select! {
+            res = stdout.read(&mut buffer) => {
+                match res {
+                    Ok(0) => {
+                        println!("[ffmpeg] FFmpeg reached EOF");
+                        break;
+                    }
+                    Ok(n) => {
+                        if tx.send(buffer[..n].to_vec()).await.is_err() {
+                            println!("[ffmpeg] Transmitter closed (client gone), stopping...");
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[ffmpeg] Read error: {:?}", e);
+                        break;
+                    }
                 }
             }
-            Err(_) => {
-                let _ = child.kill().await;
+            _ = tx.closed() => {
+                println!("[ffmpeg] Client disconnected (closed), killing ffmpeg...");
                 break;
             }
         }
     }
 
+    println!("[ffmpeg] Killing process and waiting for exit...");
+    let _ = child.kill().await;
     let _ = child.wait().await;
+    println!("[ffmpeg] Process terminated.");
 
     Ok(())
 }
