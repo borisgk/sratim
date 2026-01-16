@@ -290,8 +290,8 @@ function performSeek(seekTime) {
 
 function startTranscode(reason, startTime = 0, audioTrackIndex = 0) {
     if (isTranscoding) {
-        // Explicitly stop previous transcode session for safety
-        stopTranscode();
+        // Explicitly stop previous transcode session
+        sendStopBeacon();
     }
     isTranscoding = true;
     currentTranscodeOffset = startTime;
@@ -305,7 +305,13 @@ function startTranscode(reason, startTime = 0, audioTrackIndex = 0) {
     console.log(`Starting transcode. Reason: ${reason}. Time: ${startTime}. AudioIndex: ${audioTrackIndex}`);
     nowPlayingTitle.textContent = `Transcoding (${reason}): ${currentMovieName}`;
 
-    mainVideo.onerror = null;
+    // Reset handlers to basic logging only
+    mainVideo.onplaying = null;
+    mainVideo.onwaiting = null;
+    mainVideo.onerror = (e) => {
+        console.error("Transcode stream died:", e);
+    };
+
     mainVideo.controls = false;
     mainVideo.src = transcodeUrl;
 
@@ -317,7 +323,11 @@ function startTranscode(reason, startTime = 0, audioTrackIndex = 0) {
         durationDisplay.textContent = "??:??";
     }
 
-    mainVideo.play().catch(e => console.log("Autoplay prevented:", e));
+    mainVideo.play().catch(e => {
+        if (e.name !== 'AbortError') {
+            console.log("Autoplay prevented:", e.name, e.message);
+        }
+    });
 }
 
 mainVideo.ontimeupdate = () => {
@@ -368,17 +378,17 @@ fullscreenBtn.onclick = () => {
     }
 };
 
-const stopTranscode = () => {
+const sendStopBeacon = () => {
     if (isTranscoding && currentMoviePath) {
         // Send a beacon/fetch to stop transcoding
         const payload = JSON.stringify({ path: currentMoviePath });
         const blob = new Blob([payload], { type: 'application/json' });
-        navigator.sendBeacon('/api/transcode/stop', blob);
+        navigator.sendBeacon('/api/transcode', blob);
         console.log("Sent stop signal for", currentMoviePath);
     }
 };
 
-window.addEventListener('beforeunload', stopTranscode);
-document.getElementById('closePlayer').addEventListener('click', stopTranscode);
+window.addEventListener('beforeunload', sendStopBeacon);
+document.getElementById('closePlayer').addEventListener('click', sendStopBeacon);
 
 window.onload = initPlayer;
