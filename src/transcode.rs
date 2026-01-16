@@ -1,11 +1,83 @@
 use anyhow::{Context, Result};
+use bytes::Bytes;
+use futures_core::Stream;
 use serde::Serialize;
 use serde_json::Value;
+
 use std::path::Path;
+use std::pin::Pin;
 use std::process::Stdio;
-use tokio::io::AsyncReadExt;
-use tokio::process::Command;
-use tokio::sync::mpsc::{Receiver, Sender, channel};
+use std::task::{Context as TaskContext, Poll};
+
+use tokio::process::{ChildStdout, Command};
+use tokio_util::io::ReaderStream;
+
+/// A wrapper around tokio::process::Child that ensures the entire process group
+/// is killed when dropped.
+struct ScopedChild {
+    id: u32, // PID
+    child: Option<tokio::process::Child>,
+}
+
+impl ScopedChild {
+    fn new(child: tokio::process::Child) -> Self {
+        let id = child.id().expect("Child must have a PID");
+        Self {
+            id,
+            child: Some(child),
+        }
+    }
+}
+
+impl Drop for ScopedChild {
+    fn drop(&mut self) {
+        let id = self.id;
+        println!("[process] Drop: Force killing process group -{}", id);
+
+        // 1. Kill the process group immediately
+        unsafe {
+            libc::kill(-(id as i32), libc::SIGKILL);
+        }
+
+        // 2. Spawn a background task to reap the zombie
+        // We take the child out of the Option so we can move it into the async block
+        if let Some(mut child) = self.child.take() {
+            // We verify we are in a tokio context (usually true in Axum)
+            // If not, we can't reap asynchronously, but the kill happened.
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    match child.wait().await {
+                        Ok(status) => {
+                            println!("[reaper] Reaped process {} (status: {})", id, status)
+                        }
+                        Err(e) => eprintln!("[reaper] Failed to reap process {}: {}", id, e),
+                    }
+                });
+            } else {
+                eprintln!(
+                    "[process] Warning: Dropped ScopedChild outside Tokio context, cannot reap zombie {}",
+                    id
+                );
+            }
+        }
+    }
+}
+
+/// A stream that owns the ffmpeg process. When this stream is dropped,
+/// the `ScopedChild` is dropped, triggering a SIGKILL on the process group.
+pub struct FfmpegStream {
+    stream: ReaderStream<ChildStdout>,
+    // We hold this to ensure it drops when the stream drops
+    _process: ScopedChild,
+}
+
+impl Stream for FfmpegStream {
+    type Item = std::io::Result<Bytes>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.stream).poll_next(cx)
+    }
+}
 
 pub struct Transcoder {
     input_path: std::path::PathBuf,
@@ -44,13 +116,12 @@ impl Transcoder {
         }
     }
 
-    /// Spawns the transcoding process using ffmpeg CLI for robustness.
+    /// Spawns the transcoding process and returns a Stream that owns the child process.
     pub async fn stream(
         &self,
         start_pos: Option<f64>,
         audio_stream_index: Option<usize>,
-    ) -> Result<(Receiver<Vec<u8>>, tokio::task::AbortHandle)> {
-        let (tx, rx) = channel(100);
+    ) -> Result<FfmpegStream> {
         let path = self.input_path.clone();
 
         if !path.exists() {
@@ -60,13 +131,25 @@ impl Transcoder {
         // Get metadata to decide transcoding strategy
         let info = self.get_metadata().await?;
 
-        let handle = tokio::spawn(async move {
-            if let Err(e) = run_transcode_cli(path, tx, start_pos, audio_stream_index, info).await {
-                eprintln!("Transcoding error: {:?}", e);
+        let (child, stdout, stderr) =
+            prepare_transcode_child(path, start_pos, audio_stream_index, info)?;
+
+        // Spawn a thread to read stderr (detached, harmless)
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let reader = tokio::io::BufReader::new(stderr);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if !line.starts_with("frame=") {
+                    eprintln!("[ffmpeg] {}", line);
+                }
             }
         });
 
-        Ok((rx, handle.abort_handle()))
+        Ok(FfmpegStream {
+            stream: ReaderStream::new(stdout),
+            _process: ScopedChild::new(child),
+        })
     }
 
     /// Probes the file metadata using ffprobe
@@ -157,77 +240,64 @@ impl Transcoder {
     }
 
     /// Extracts a specific subtitle stream and converts it to WebVTT
-    pub async fn subtitles(
-        &self,
-        index: usize,
-    ) -> Result<(Receiver<Vec<u8>>, tokio::task::AbortHandle)> {
-        let (tx, rx) = channel(10);
+    /// For subtitles, we can stick to the simple one-shot or apply the same stream logic.
+    /// Since subs are small, the current simple implementation is likely fine, but to be safe
+    /// let's switch it to Direct Stream as well.
+    pub async fn subtitles(&self, index: usize) -> Result<FfmpegStream> {
         let path = self.input_path.clone();
 
         if !path.exists() {
             return Err(anyhow::anyhow!("File not found"));
         }
 
-        let handle = tokio::spawn(async move {
-            let child = Command::new("ffmpeg")
-                .args(&[
-                    "-v",
-                    "quiet",
-                    "-i",
-                    &path.to_string_lossy(),
-                    "-map",
-                    &format!("0:{}", index),
-                    "-f",
-                    "webvtt",
-                    "pipe:1",
-                ])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null()) // Don't care about stderr for subs
-                .kill_on_drop(true)
-                .spawn();
+        let child = Command::new("ffmpeg")
+            .args(&[
+                "-v",
+                "quiet",
+                "-i",
+                &path.to_string_lossy(),
+                "-map",
+                &format!("0:{}", index),
+                "-f",
+                "webvtt",
+                "pipe:1",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .process_group(0) // New process group
+            .spawn()
+            .context("Failed to spawn ffmpeg")?;
 
-            if let Ok(mut c) = child {
-                if let Some(mut stdout) = c.stdout.take() {
-                    let mut buffer = [0u8; 1024];
-                    loop {
-                        tokio::select! {
-                            res = stdout.read(&mut buffer) => {
-                                match res {
-                                    Ok(0) => break, // EOF
-                                    Ok(n) => {
-                                        if tx.send(buffer[..n].to_vec()).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                    Err(_) => break,
-                                }
-                            }
-                            _ = tx.closed() => {
-                                println!("[subtitles] Client disconnected, killing extraction...");
-                                break;
-                            }
-                        }
-                    }
-                }
-                let _ = c.kill().await;
-                let _ = c.wait().await;
-            }
-        });
+        let mut scoped_child = ScopedChild::new(child);
+        let stdout = scoped_child
+            .child
+            .as_mut()
+            .unwrap()
+            .stdout
+            .take()
+            .expect("Failed to open stdout");
+        // No stderr needed for subs
 
-        Ok((rx, handle.abort_handle()))
+        Ok(FfmpegStream {
+            stream: ReaderStream::new(stdout),
+            _process: scoped_child,
+        })
     }
 }
 
-async fn run_transcode_cli(
+fn prepare_transcode_child(
     path: std::path::PathBuf,
-    tx: Sender<Vec<u8>>,
     start_time: Option<f64>,
     audio_stream_index: Option<usize>,
     info: MediaInfo,
-) -> Result<()> {
+) -> Result<(
+    tokio::process::Child,
+    ChildStdout,
+    tokio::process::ChildStderr,
+)> {
     let mut args = Vec::new();
 
-    // Global inputs flags for better sync/seeking
+    // Global inputs flags
     args.push("-analyzeduration".to_string());
     args.push("10M".to_string());
     args.push("-probesize".to_string());
@@ -243,17 +313,11 @@ async fn run_transcode_cli(
         println!("File duration: {:.2}s", duration);
         println!("Target seek: {:.2}s", t);
 
-        // Split seek: Fast jump to 30s before target, then precise seek for the rest.
-        // This prevents the Double-SS "additive" overshoot (T + T = 2T).
+        // Split seek
         let f = (t - 30.0).max(0.0);
         let a = t - f;
 
         accurate_ss = Some(a);
-
-        println!(
-            "Split Seek: Fast jump to {:.2}s, precise seek for remaining {:.2}s",
-            f, a
-        );
 
         args.push("-ss".to_string());
         args.push(format!("{:.4}", f));
@@ -262,30 +326,22 @@ async fn run_transcode_cli(
     args.push("-i".to_string());
     args.push(path.to_string_lossy().to_string());
 
-    // Second -ss for frame-accurate positioning (Double-SS technique)
     if let Some(a) = accurate_ss {
         args.push("-ss".to_string());
         args.push(format!("{:.4}", a));
 
-        // Add explicit duration to ensure FFmpeg has content to encode
         let duration = info.duration.unwrap_or(0.0);
         let t_target = start_time.unwrap_or(0.0);
         if duration > 0.0 && t_target < duration {
             let remaining = duration - t_target;
             args.push("-t".to_string());
             args.push(format!("{:.2}", remaining));
-            println!(
-                "Setting duration limit: {:.2}s (remaining from seek point)",
-                remaining
-            );
         }
     }
 
-    // Explicitly map first video and audio stream
     args.push("-map".to_string());
     args.push("0:v:0".to_string());
 
-    // Explicitly map audio stream if provided, otherwise default to first audio stream
     args.push("-map".to_string());
     if let Some(idx) = audio_stream_index {
         args.push(format!("0:{}", idx));
@@ -293,7 +349,6 @@ async fn run_transcode_cli(
         args.push("0:a:0".to_string());
     }
 
-    // Simple, reliable timestamp handling
     args.push("-fps_mode".to_string());
     args.push("passthrough".to_string());
     args.push("-max_muxing_queue_size".to_string());
@@ -301,28 +356,19 @@ async fn run_transcode_cli(
 
     // --- Smart Transcoding Logic ---
     let v_codec = info.video_codec.as_deref().unwrap_or("");
-    // Determine audio codec based on selected track
     let mut a_codec = info.audio_codec.as_deref().unwrap_or("");
     if let Some(idx) = audio_stream_index {
         if let Some(track) = info.audio_tracks.iter().find(|t| t.index == idx) {
             a_codec = &track.codec;
-            println!("Selected audio track index {} has codec: {}", idx, a_codec);
-        } else {
-            println!(
-                "Warning: Requested audio track {} not found in metadata",
-                idx
-            );
         }
     }
 
     let container = info.container.to_lowercase();
-
     let needs_v_transcode =
         !(v_codec == "h264" || v_codec == "hevc" || v_codec == "h265") || container.contains("avi");
 
     if needs_v_transcode {
         println!("Re-encoding video: {} -> h264", v_codec);
-        // Use hardware acceleration if on Mac (Toolbox)
         #[cfg(target_os = "macos")]
         {
             args.push("-c:v".to_string());
@@ -347,20 +393,10 @@ async fn run_transcode_cli(
         args.push("copy".to_string());
     }
 
-    // 2. Audio Decision
-    // Browsers like aac or mp3. We'll stick to aac for better compatibility.
     let needs_a_transcode = a_codec != "aac";
 
     if needs_a_transcode {
-        println!(
-            "Re-encoding audio ({}): {} -> aac",
-            if audio_stream_index.is_some() {
-                "selected"
-            } else {
-                "default"
-            },
-            a_codec
-        );
+        println!("Re-encoding audio: {} -> aac", a_codec);
         args.push("-c:a".to_string());
         args.push("aac".to_string());
         args.push("-b:a".to_string());
@@ -373,7 +409,6 @@ async fn run_transcode_cli(
         args.push("copy".to_string());
     }
 
-    // Output settings
     args.push("-f".to_string());
     args.push("mp4".to_string());
     args.push("-movflags".to_string());
@@ -383,67 +418,22 @@ async fn run_transcode_cli(
 
     println!("Starting ffmpeg with args: {:?}", args);
 
-    let mut child = Command::new("ffmpeg")
-        .args(&args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .context("Failed to spawn ffmpeg")?;
+    let mut command = Command::new("ffmpeg");
+    command.args(&args);
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    command.process_group(0); // setpgid(0, 0) -> New process group leader
 
-    let mut stdout = child
+    let mut child = command.spawn().context("Failed to spawn ffmpeg")?;
+
+    let stdout = child
         .stdout
         .take()
         .ok_or(anyhow::anyhow!("Failed to open stdout"))?;
-
     let stderr = child
         .stderr
         .take()
         .ok_or(anyhow::anyhow!("Failed to open stderr"))?;
 
-    // Spawn a thread to read stderr and print it to prevent pipe buffer deadlock
-    tokio::spawn(async move {
-        use tokio::io::AsyncBufReadExt;
-        let reader = tokio::io::BufReader::new(stderr);
-        let mut lines = reader.lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            eprintln!("[ffmpeg] {}", line);
-        }
-    });
-
-    let mut buffer = [0u8; 4096];
-
-    loop {
-        tokio::select! {
-            res = stdout.read(&mut buffer) => {
-                match res {
-                    Ok(0) => {
-                        println!("[ffmpeg] FFmpeg reached EOF");
-                        break;
-                    }
-                    Ok(n) => {
-                        if tx.send(buffer[..n].to_vec()).await.is_err() {
-                            println!("[ffmpeg] Transmitter closed (client gone), stopping...");
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("[ffmpeg] Read error: {:?}", e);
-                        break;
-                    }
-                }
-            }
-            _ = tx.closed() => {
-                println!("[ffmpeg] Client disconnected (closed), killing ffmpeg...");
-                break;
-            }
-        }
-    }
-
-    println!("[ffmpeg] Killing process and waiting for exit...");
-    let _ = child.kill().await;
-    let _ = child.wait().await;
-    println!("[ffmpeg] Process terminated.");
-
-    Ok(())
+    Ok((child, stdout, stderr))
 }

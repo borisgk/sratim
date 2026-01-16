@@ -284,6 +284,10 @@ function performSeek(seekTime) {
 }
 
 function startTranscode(reason, startTime = 0, audioTrackIndex = 0) {
+    if (isTranscoding) {
+        // Explicitly stop previous transcode session for safety
+        stopTranscode();
+    }
     isTranscoding = true;
     currentTranscodeOffset = startTime;
     lastSeekTime = startTime;
@@ -358,5 +362,18 @@ fullscreenBtn.onclick = () => {
         document.exitFullscreen();
     }
 };
+
+const stopTranscode = () => {
+    if (isTranscoding && currentMoviePath) {
+        // Send a beacon/fetch to stop transcoding
+        const payload = JSON.stringify({ path: currentMoviePath });
+        const blob = new Blob([payload], { type: 'application/json' });
+        navigator.sendBeacon('/api/transcode/stop', blob);
+        console.log("Sent stop signal for", currentMoviePath);
+    }
+};
+
+window.addEventListener('beforeunload', stopTranscode);
+document.getElementById('closePlayer').addEventListener('click', stopTranscode);
 
 window.onload = initPlayer;

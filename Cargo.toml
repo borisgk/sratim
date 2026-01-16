@@ -20,4 +20,8 @@ async-stream = "0.3.6"
 toml = "0.8"
 tower = "0.5.3"
 scopeguard = "1.2.0"
+libc = "0.2.180"
+bytes = "1.11.0"
+tokio-util = "0.7.18"
+futures-core = "0.3.31"
 

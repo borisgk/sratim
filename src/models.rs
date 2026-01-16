@@ -25,3 +25,9 @@ pub struct SubtitleParams {
     pub path: String,
     pub index: usize,
 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StopParams {
+    pub path: String,
+}

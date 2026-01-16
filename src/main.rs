@@ -15,7 +15,7 @@ mod state;
 mod transcode;
 
 use config::AppConfig;
-use state::{AppState, TranscodeManager};
+use state::AppState;
 
 #[tokio::main]
 async fn main() {
@@ -33,7 +33,6 @@ async fn main() {
 
     let shared_state = Arc::new(AppState {
         movies_dir: movies_dir.clone(),
-        transcode_manager: Arc::new(TranscodeManager::new()),
     });
 
     // Router
@@ -41,7 +40,10 @@ async fn main() {
         .route("/api/movies", get(handlers::list_movies))
         // Serve the movies directory directly so browsers can request ranges
         .nest_service("/content", ServeDir::new(&movies_dir))
-        .route("/api/transcode", get(handlers::transcode_movie))
+        .route(
+            "/api/transcode",
+            get(handlers::transcode_movie).post(handlers::stop_transcode),
+        )
         .route("/api/metadata", get(handlers::get_metadata))
         .route("/api/subtitles", get(handlers::extract_subtitles))
         // Serve the frontend with cache-disabling headers
