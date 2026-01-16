@@ -9,82 +9,206 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Outfit:wght@500;700&display=swap"
         rel="stylesheet">
+    <script src="dash.all.min.js"></script>
     <link rel="stylesheet" href="style.css">
     <style>
         .player-page {
             display: flex;
-            flex-direction: column;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
-            padding: 2rem;
+            padding: 0;
+            background: #000;
         }
 
         .player-container {
+            width: 50vw;
+            /* Half page width */
+            margin: auto;
+            position: relative;
+        }
+
+        .video-wrapper {
+            position: relative;
             width: 100%;
-            max-width: 1100px;
-            margin: 0;
-            background: rgba(0, 0, 0, 0.5);
-            animation: none;
-            /* Already centered */
+            padding-top: 56.25%;
+            /* 16:9 Aspect Ratio */
+            background: #000;
+        }
+
+        video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
         }
 
         .close-btn {
+            position: absolute;
+            top: -40px;
+            right: 0;
+            color: white;
             text-decoration: none;
+            font-size: 24px;
+            font-family: sans-serif;
+            background: rgba(255, 255, 255, 0.1);
+            width: 30px;
+            height: 30px;
             display: flex;
             align-items: center;
             justify-content: center;
+            border-radius: 50%;
         }
     </style>
 </head>
 
 <body>
-    <div class="app-container player-page">
+    <div class="player-page">
         <div id="playerContainer" class="player-container">
+            <a href="index.html" class="close-btn" aria-label="Close">&times;</a>
             <div class="video-wrapper">
-                <video id="mainVideo" preload="metadata">
-                    Your browser does not support the video tag.
-                </video>
-
-                <div id="customControls" class="custom-controls">
-                    <div class="controls-row">
-                        <button id="playPauseBtn" class="control-btn">⏸️</button>
-                        <span id="timeDisplay">00:00</span>
-                        <input type="range" id="seekBar" min="0" max="100" value="0" step="0.1">
-                        <span id="durationDisplay">00:00</span>
-                        <button id="fullscreenBtn" class="control-btn" title="Fullscreen">⛶</button>
-                        <div class="subtitle-control">
-                            <select id="subtitleSelect" class="sub-select" title="Subtitles">
-                                <option value="off">Subs: Off</option>
-                            </select>
-                        </div>
-                        <div class="audio-control">
-                            <select id="audioSelect" class="sub-select" title="Audio Track"
-                                style="margin-left: 10px; display: none;">
-                            </select>
-                        </div>
-                    </div>
-                </div>
-
-                <a href="index.html" id="closePlayer" class="close-btn" aria-label="Close Player">&times;</a>
-            </div>
-            <h2 id="nowPlayingTitle">Loading...</h2>
-
-            <!-- Debug Overlay -->
-            <div id="debugOverlay"
-                style="position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.8); color: #0f0; padding: 10px; font-family: monospace; font-size: 12px; z-index: 10000; border-radius: 4px; display: none;">
-                <div>Mode: <span id="debugMode">-</span></div>
-                <div>Video Time: <span id="debugVideoTime">0.00</span>s</div>
-                <div>Seek Offset: <span id="debugOffset">0.00</span>s</div>
-                <div>Real Time: <span id="debugRealTime">0.00</span>s</div>
-                <div>Codec: <span id="debugCodec">-</span></div>
-                <div>Last Seek: <span id="debugLastSeek">-</span></div>
+                <video id="mainVideo" controls></video>
             </div>
         </div>
     </div>
 
-    <script src="dash.all.min.js"></script>
-    <script src="player.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            const videoElement = document.getElementById('mainVideo');
+            const moviePath = sessionStorage.getItem('currentMoviePath');
+
+            if (!moviePath) {
+                console.error('No movie path found');
+                window.location.href = 'index.html';
+                return;
+            }
+
+            if (!window.MediaSource) {
+                console.error('MSE not supported');
+                alert('MSE not supported by browser');
+                return;
+            }
+
+            const mediaSource = new MediaSource();
+            videoElement.src = URL.createObjectURL(mediaSource);
+
+            mediaSource.addEventListener('sourceopen', async () => {
+                // Check codecs - Prioritize HEVC for Safari/modern browsers, fallback to H.264
+                const codecsToCheck = [
+                    'video/mp4; codecs="hvc1.1.6.L93.B0,mp4a.40.2"', // HEVC (Strict tag)
+                    'video/mp4; codecs="hev1.1.6.L93.B0,mp4a.40.2"', // HEVC (Alternative)
+                    'video/mp4; codecs="avc1.4d4028,mp4a.40.2"',     // H.264
+                ];
+
+                let outputMime = '';
+                for (const mime of codecsToCheck) {
+                    if (MediaSource.isTypeSupported(mime)) {
+                        outputMime = mime;
+                        console.log('Selected supported codec:', mime);
+                        break;
+                    }
+                }
+
+                if (!outputMime) {
+                    // Start with basic AVC1 if nothing specific works, but log valid warning
+                    outputMime = 'video/mp4; codecs="avc1.4d4028,mp4a.40.2"';
+                    console.warn('No high-quality codec match found, defaulting to H.264 string (might fail if stream is HEVC)');
+                }
+
+                const sourceBuffer = mediaSource.addSourceBuffer(outputMime);
+                sourceBuffer.mode = 'segments';
+
+                // Queue for appending buffers
+                const queue = [];
+
+                const cleanupBuffer = () => {
+                    if (mediaSource.readyState !== 'open' || sourceBuffer.updating) return;
+
+                    // Keep last 30 seconds of content, remove everything before
+                    // Ensure we don't remove future (buffering) content
+                    const removeEnd = videoElement.currentTime - 30;
+                    if (removeEnd > 0) {
+                        try {
+                            // console.log(`Cleaning buffer up to ${removeEnd}`);
+                            sourceBuffer.remove(0, removeEnd);
+                        } catch (e) {
+                            console.error('Remove error:', e);
+                        }
+                    }
+                };
+
+                const appendNext = () => {
+                    if (mediaSource.readyState !== 'open') return;
+
+                    if (queue.length > 0 && !sourceBuffer.updating) {
+                        try {
+                            // Peek first, only shift on success
+                            sourceBuffer.appendBuffer(queue[0]);
+                            queue.shift();
+                        } catch (e) {
+                            if (e.name === 'QuotaExceededError') {
+                                console.warn('Buffer quota exceeded. Attempting cleanup.');
+                                cleanupBuffer();
+                            } else {
+                                console.error('Append error:', e);
+                                // If hard error, drop the chunk to unblock
+                                queue.shift();
+                            }
+                        }
+                    }
+                };
+
+                sourceBuffer.addEventListener('updateend', appendNext);
+                sourceBuffer.addEventListener('error', (e) => console.error('SourceBuffer error:', e));
+
+                try {
+                    console.log(`Fetching stream for: ${moviePath}`);
+                    const response = await fetch(`/api/stream?path=${encodeURIComponent(moviePath)}`);
+                    if (!response.ok) throw new Error(`Fetch failed: ${response.status}`);
+                    console.log("Stream connected, reading...");
+
+                    const reader = response.body.getReader();
+
+                    let totalBytes = 0;
+                    while (true) {
+                        // Flow Control / Backpressure
+                        // If we have buffer significantly ahead of playback, pause reading from network
+                        if (sourceBuffer.buffered.length > 0) {
+                            const bufferedEnd = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
+                            // If buffer is > 30s ahead of current time, wait.
+                            if (bufferedEnd - videoElement.currentTime > 30) {
+                                await new Promise(r => setTimeout(r, 1000));
+
+                                // After waking, if queue is empty and buffer free, try kickstarting append 
+                                // (though updateend usually handles it, this handles edge case where we paused and queue is empty)
+                                if (!queue.length && !sourceBuffer.updating) appendNext();
+                                continue;
+                            }
+                        }
+
+                        const { done, value } = await reader.read();
+                        if (done) {
+                            console.log("Stream finished");
+                            if (mediaSource.readyState === 'open') {
+                                mediaSource.endOfStream();
+                            }
+                            break;
+                        }
+
+                        if (value && value.byteLength > 0) {
+                            totalBytes += value.byteLength;
+                            queue.push(value);
+                            // If we were idle (not updating), start appending
+                            if (!sourceBuffer.updating) appendNext();
+                        }
+                    }
+                } catch (e) {
+                    console.error("Stream error loop:", e);
+                }
+            });
+        });
+    </script>
 </body>
 
 </html>

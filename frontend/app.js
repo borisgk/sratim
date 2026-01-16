@@ -1,5 +1,4 @@
 const moviesGrid = document.getElementById('moviesGrid');
-const searchInput = document.getElementById('searchInput');
 const breadcrumbs = document.getElementById('breadcrumbs');
 
 let movieTree = []; // Current view nodes
@@ -147,26 +146,6 @@ function saveNavigationState() {
     sessionStorage.setItem('navigationStack', JSON.stringify(stackData));
 }
 
-// Search filter (searches current folder)
-searchInput.addEventListener('input', (e) => {
-    const term = e.target.value.toLowerCase();
 
-    if (term === '') {
-        renderUI();
-        return;
-    }
-
-    const results = movieTree.filter(node =>
-        node.name.toLowerCase().includes(term)
-    );
-
-    // Update breadcrumbs to indicate search in current folder
-    const currentFolder = navigationStack[navigationStack.length - 1];
-    breadcrumbs.innerHTML = `
-        <span class="breadcrumb-item" onclick="renderUI()">Home</span>
-        <span class="breadcrumb-item active">Search: ${term} in ${currentFolder.name}</span>
-    `;
-    renderGrid(results);
-});
 
 initLibrary();

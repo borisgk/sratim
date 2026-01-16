@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use axum::{
-    Json as AxumJson, Router,
+    Router,
     body::Body,
-    extract::{Json, Path, Query, State},
+    extract::{Json, Query, State},
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
@@ -11,9 +11,10 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use tokio::fs::File;
+use std::sync::Arc;
+// use tokio::fs::File; // Removed
 use tokio::process::Child;
+use tokio::sync::Mutex;
 use tokio_util::io::ReaderStream;
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, services::ServeDir, set_header::SetResponseHeaderLayer};
@@ -92,12 +93,9 @@ pub struct AppState {
 
 // --- Models ---
 
-#[derive(Serialize)]
-pub struct DashStartResponse {
-    pub manifest_url: String,
-}
+// DashStartResponse removed
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct DashParams {
     pub path: String,
     #[serde(default)]
@@ -114,53 +112,218 @@ pub struct SubtitleParams {
 
 // --- Handlers ---
 
-pub async fn start_dash(
-    State(state): State<Arc<AppState>>,
-    Json(params): Json<DashParams>,
-) -> impl IntoResponse {
-    // Simplified: just return static manifest URL.
-    // In a real implementation we would spawn FFmpeg here using state.ffmpeg_process
-    let _ = state;
-    let _ = params;
-
-    let response = DashStartResponse {
-        manifest_url: "/dash/manifest.mpd".to_string(),
-    };
-    AxumJson(response)
+#[derive(Deserialize)]
+pub struct ListParams {
+    #[serde(default)]
+    pub path: String,
 }
 
-pub async fn get_dash_file(
-    State(state): State<Arc<AppState>>,
-    Path(path): Path<String>,
+#[derive(Serialize)]
+pub struct FileEntry {
+    pub name: String,
+    pub path: String,
+    #[serde(rename = "type")]
+    pub entry_type: String, // "folder" or "file"
+}
+
+pub async fn list_files(
+    State(state): State<AppState>,
+    Query(params): Query<ListParams>,
 ) -> impl IntoResponse {
-    // path will be something like "manifest.mpd" or "chunk_...m4s"
-    let filename = path.strip_prefix("/dash/").unwrap_or(&path);
-    let file_path = state.dash_temp_dir.join(filename);
-    if !file_path.starts_with(&state.dash_temp_dir) {
+    let mut abs_path = state.movies_dir.clone();
+    if !params.path.is_empty() {
+        abs_path.push(&params.path);
+    }
+
+    // Security check: ensure we didn't escape movies_dir
+    let Ok(canonical_path) = abs_path.canonicalize() else {
+        // If path doesn't exist or other error
+        return (StatusCode::NOT_FOUND, Json(Vec::<FileEntry>::new())).into_response();
+    };
+
+    // We also need the canonical movies dir to check prefix
+    let Ok(canonical_root) = state.movies_dir.canonicalize() else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+
+    if !canonical_path.starts_with(&canonical_root) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    match File::open(&file_path).await {
-        Ok(file) => {
-            let stream = ReaderStream::new(file);
-            let content_type = if filename.ends_with(".mpd") {
-                "application/dash+xml"
-            } else if filename.ends_with(".mp4") {
-                "video/mp4"
+
+    let mut entries = Vec::new();
+
+    if let Ok(mut read_dir) = tokio::fs::read_dir(canonical_path).await {
+        while let Ok(Some(entry)) = read_dir.next_entry().await {
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            // Skip hidden files
+            if file_name.starts_with('.') {
+                continue;
+            }
+
+            let file_type = entry.file_type().await.ok();
+            let is_dir = file_type.map(|t| t.is_dir()).unwrap_or(false);
+            let is_file = file_type.map(|t| t.is_file()).unwrap_or(false);
+
+            let mut rel_path = params.path.clone();
+            if !rel_path.is_empty() && !rel_path.ends_with('/') {
+                rel_path.push('/');
+            }
+            rel_path.push_str(&file_name);
+            // Ensure no leading slash for relative paths if possible, or keep inconsistent?
+            // Frontend sends path="" for root.
+            // If we have "Action/movie.mp4", that's what we want.
+            // If params.path was "Action", rel_path becomes "Action/movie.mp4"
+
+            if is_dir {
+                entries.push(FileEntry {
+                    name: file_name,
+                    path: rel_path,
+                    entry_type: "folder".to_string(),
+                });
+            } else if is_file {
+                // Filter extensions
+                if let Some(ext) = std::path::Path::new(&file_name)
+                    .extension()
+                    .and_then(|s| s.to_str())
+                {
+                    match ext.to_lowercase().as_str() {
+                        "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "flv" | "wmv" => {
+                            entries.push(FileEntry {
+                                name: file_name,
+                                path: rel_path,
+                                entry_type: "file".to_string(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort: Folders first, then files. Both alphabetical.
+    entries.sort_by(|a, b| {
+        if a.entry_type == b.entry_type {
+            a.name.to_lowercase().cmp(&b.name.to_lowercase())
+        } else {
+            // Folders ("folder") < Files ("file") ? No, "folder" > "file" alphabetically.
+            // We want folders first.
+            if a.entry_type == "folder" {
+                std::cmp::Ordering::Less
             } else {
-                "video/iso.segment"
+                std::cmp::Ordering::Greater
+            }
+        }
+    });
+
+    Json(entries).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct StreamParams {
+    pub path: String,
+    #[serde(default)]
+    pub start: f64,
+}
+
+// Wrapper to keep the child process alive while streaming
+pub struct ProcessStream {
+    stream: ReaderStream<tokio::process::ChildStdout>,
+    _child: Child,
+}
+
+impl futures_core::Stream for ProcessStream {
+    type Item = std::io::Result<axum::body::Bytes>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        std::pin::Pin::new(&mut self.stream).poll_next(cx)
+    }
+}
+
+pub async fn stream_video(
+    State(state): State<AppState>,
+    Query(params): Query<StreamParams>,
+) -> Response {
+    let abs_path = state.movies_dir.join(&params.path);
+    if !abs_path.exists() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    let args = vec![
+        "-ss".to_string(),
+        params.start.to_string(),
+        "-i".to_string(),
+        abs_path.to_string_lossy().to_string(),
+        "-map".to_string(),
+        "0:v:0".to_string(),
+        "-c:v".to_string(),
+        "copy".to_string(), // Direct stream copy
+        "-tag:v".to_string(),
+        "hvc1".to_string(), // Force compatible HEVC tag
+        "-map".to_string(),
+        "0:a:0".to_string(),
+        "-c:a".to_string(),
+        "aac".to_string(),
+        "-ac".to_string(),
+        "2".to_string(),
+        "-movflags".to_string(),
+        "frag_keyframe+empty_moov+default_base_moof+global_sidx".to_string(),
+        "-f".to_string(),
+        "mp4".to_string(),
+        "pipe:1".to_string(),
+    ];
+
+    println!("[stream] Spawning ffmpeg: {:?}", args);
+
+    let mut command = tokio::process::Command::new("ffmpeg");
+    command
+        .args(&args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+
+    match command.spawn() {
+        Ok(mut child) => {
+            let stdout = child.stdout.take().unwrap();
+            let stderr = child.stderr.take().unwrap();
+
+            tokio::spawn(async move {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let mut reader = BufReader::new(stderr);
+                let mut line = String::new();
+                while let Ok(n) = reader.read_line(&mut line).await {
+                    if n == 0 {
+                        break;
+                    }
+                    eprint!("[ffmpeg] {}", line);
+                    line.clear();
+                }
+            });
+
+            let stream = ReaderStream::new(stdout);
+            let process_stream = ProcessStream {
+                stream,
+                _child: child,
             };
+
             Response::builder()
-                .header("Content-Type", content_type)
+                .header("Content-Type", "video/mp4")
                 .header("Cache-Control", "no-cache")
-                .body(Body::from_stream(stream))
+                .body(Body::from_stream(process_stream))
                 .unwrap()
         }
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            eprintln!("Failed to spawn ffmpeg: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
     }
 }
 
 pub async fn get_subtitles(
-    State(state): State<Arc<AppState>>,
+    State(state): State<AppState>,
     Query(params): Query<SubtitleParams>,
 ) -> impl IntoResponse {
     // Stub: not implemented
@@ -185,15 +348,15 @@ async fn main() {
     let dash_temp_dir = std::env::temp_dir().join("sratim_dash");
     std::fs::create_dir_all(&dash_temp_dir).expect("Failed to create dash temp directory");
 
-    let shared_state = Arc::new(AppState {
+    let shared_state = AppState {
         movies_dir: movies_dir.clone(),
         dash_temp_dir,
         ffmpeg_process: Arc::new(Mutex::new(None)),
-    });
+    };
 
     let app = Router::new()
-        .route("/api/dash/start", get(start_dash))
-        .route("/dash/*file", get(get_dash_file))
+        .route("/api/movies", get(list_files))
+        .route("/api/stream", get(stream_video))
         .route("/api/subtitles", get(get_subtitles))
         .nest_service("/content", ServeDir::new(&movies_dir))
         .fallback_service(
