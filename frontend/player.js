@@ -20,6 +20,7 @@ let userSeeking = false; // Flag to prevent seekBar updates during user interact
 
 // Debug overlay elements (will be initialized in initPlayer)
 let debugOverlay, debugMode, debugVideoTime, debugOffset, debugRealTime, debugCodec, debugLastSeek;
+let dashPlayer = null;
 
 // Helper
 function formatTime(seconds) {
@@ -302,18 +303,52 @@ function startTranscode(reason, startTime = 0, audioTrackIndex = 0) {
         transcodeUrl += `&audioTrack=${audioTrackIndex}`;
     }
 
-    console.log(`Starting transcode. Reason: ${reason}. Time: ${startTime}. AudioIndex: ${audioTrackIndex}`);
+    console.log(`Starting DASH transcode. Reason: ${reason}. Time: ${startTime}. AudioIndex: ${audioTrackIndex}`);
     nowPlayingTitle.textContent = `Transcoding (${reason}): ${currentMovieName}`;
 
-    // Reset handlers to basic logging only
-    mainVideo.onplaying = null;
-    mainVideo.onwaiting = null;
-    mainVideo.onerror = (e) => {
-        console.error("Transcode stream died:", e);
-    };
+    // Initialize DASH
+    if (dashPlayer) {
+        dashPlayer.reset();
+        dashPlayer = null;
+    }
+
+    if (!dashPlayer) {
+        dashPlayer = dashjs.MediaPlayer().create();
+        dashPlayer.initialize(mainVideo, null, true);
+        dashPlayer.updateSettings({
+            streaming: {
+                lowLatencyEnabled: false,
+                bufferTimeAtTopQuality: 10,
+                stableBufferTime: 10,
+                utcSynchronization: {
+                    enabled: false
+                },
+                retryIntervals: {
+                    MPD: 1000,
+                    InitializationSegment: 1000,
+                    MediaSegment: 1000
+                }
+            }
+        });
+
+        // Handle errors
+        dashPlayer.on(dashjs.MediaPlayer.events.ERROR, (e) => {
+            console.error("DASH Error:", e);
+        });
+    }
+
+    // Call start API
+    const apiUrl = `/api/dash/start?path=${encodeURIComponent(currentMoviePath)}&start=${startTime}&audioTrack=${audioTrackIndex || 0}`;
+    fetch(apiUrl).then(r => r.json()).then(data => {
+        console.log("DASH started:", data);
+        dashPlayer.attachSource(data.manifest_url);
+    }).catch(e => {
+        console.error("Failed to start DASH", e);
+        nowPlayingTitle.textContent = "Error starting transcoding";
+    });
 
     mainVideo.controls = false;
-    mainVideo.src = transcodeUrl;
+    // mainVideo.src = transcodeUrl; -- No longer setting src directly
 
     if (totalDuration > 0) {
         seekBar.max = totalDuration;
@@ -323,11 +358,8 @@ function startTranscode(reason, startTime = 0, audioTrackIndex = 0) {
         durationDisplay.textContent = "??:??";
     }
 
-    mainVideo.play().catch(e => {
-        if (e.name !== 'AbortError') {
-            console.log("Autoplay prevented:", e.name, e.message);
-        }
-    });
+    // dash.js handles play
+
 }
 
 mainVideo.ontimeupdate = () => {
@@ -379,12 +411,9 @@ fullscreenBtn.onclick = () => {
 };
 
 const sendStopBeacon = () => {
-    if (isTranscoding && currentMoviePath) {
-        // Send a beacon/fetch to stop transcoding
-        const payload = JSON.stringify({ path: currentMoviePath });
-        const blob = new Blob([payload], { type: 'application/json' });
-        navigator.sendBeacon('/api/transcode', blob);
-        console.log("Sent stop signal for", currentMoviePath);
+    if (isTranscoding && dashPlayer) {
+        dashPlayer.reset();
+        dashPlayer = null;
     }
 };
 

@@ -625,6 +625,7 @@ dependencies = [
  "futures-core",
  "libc",
  "mime_guess",
+ "percent-encoding",
  "scopeguard",
  "serde",
  "serde_json",
