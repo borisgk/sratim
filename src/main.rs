@@ -126,9 +126,11 @@ async fn main() {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct TranscodeParams {
     path: String,
     start: Option<f64>,
+    audio_track: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -171,7 +173,7 @@ async fn transcode_movie(
     // Note: In a real app, strict path validation is needed to prevent directory traversal
     let transcoder = crate::transcode::Transcoder::new(path.clone());
 
-    match transcoder.stream(params.start).await {
+    match transcoder.stream(params.start, params.audio_track).await {
         Ok((mut rx, transcode_task_handle)) => {
             let key = TaskKey::Stream(path);
             let manager = Arc::clone(&state.transcode_manager);

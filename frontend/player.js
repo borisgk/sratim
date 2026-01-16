@@ -8,6 +8,7 @@ const playPauseBtn = document.getElementById('playPauseBtn');
 const fullscreenBtn = document.getElementById('fullscreenBtn');
 const videoWrapper = document.querySelector('.video-wrapper');
 const subtitleSelect = document.getElementById('subtitleSelect');
+const audioSelect = document.getElementById('audioSelect');
 
 let currentTranscodeOffset = 0;
 let totalDuration = 0;
@@ -126,9 +127,58 @@ async function initPlayer() {
 
             if (shouldTranscode) {
                 console.log(`Force transcoding due to: ${reason}`);
-                startTranscode(reason);
+                // Select default audio track (either index 0 or English)
+                let defaultAudioIndex = 0;
+                if (meta.audio_tracks && meta.audio_tracks.length > 0) {
+                    // Try to find English track
+                    const eng = meta.audio_tracks.find(t => (t.language || "").toLowerCase().startsWith("en"));
+                    if (eng) {
+                        defaultAudioIndex = eng.index;
+                        console.log("Selected English audio track:", eng);
+                    } else {
+                        console.log("No English track found, defaulting to first track:", meta.audio_tracks[0]);
+                        defaultAudioIndex = meta.audio_tracks[0].index;
+                    }
+                }
+
+                startTranscode(reason, 0, defaultAudioIndex);
                 // We return here to prevent startNative from being called
-                // Subtitles will be loaded below
+                // Subtitles will be loaded below for the transcoded stream too
+            }
+
+            // Handle Audio Tracks Dropdown
+            if (meta.audio_tracks && meta.audio_tracks.length > 0) {
+                audioSelect.innerHTML = ''; // Clear
+                audioSelect.style.display = 'inline-block';
+
+                meta.audio_tracks.forEach(track => {
+                    const option = document.createElement('option');
+                    option.value = track.index;
+                    let label = track.title || track.language || `Track ${track.index}`;
+                    if (track.codec) label += ` (${track.codec})`;
+                    if (track.channels) label += ` ${track.channels}ch`;
+                    option.textContent = label;
+                    audioSelect.appendChild(option);
+                });
+
+                // Set initial selection
+                // If we are already transcoding, we might have picked a specific track
+                let currentAudioIndex = 0;
+                // Try to match what we would have picked (English or 0)
+                const eng = meta.audio_tracks.find(t => (t.language || "").toLowerCase().startsWith("en"));
+                if (eng) currentAudioIndex = eng.index;
+
+                audioSelect.value = currentAudioIndex;
+
+                audioSelect.onchange = (e) => {
+                    const newIndex = parseInt(e.target.value);
+                    console.log("Switching audio to index:", newIndex);
+                    // Use current time
+                    const currentTime = mainVideo.currentTime + (isTranscoding ? currentTranscodeOffset : 0);
+                    startTranscode("Audio Switch", currentTime, newIndex);
+                };
+            } else {
+                audioSelect.style.display = 'none';
             }
 
             // Load Subtitles
@@ -223,19 +273,27 @@ function performSeek(seekTime) {
 
     if (isTranscoding) {
         // For transcoding, we need to restart the FFmpeg process with a new -ss
-        startTranscode("Seek", seekTime);
+        // Keep current audio track selection
+        const currentAudioRaw = audioSelect.value;
+        const currentAudio = currentAudioRaw ? parseInt(currentAudioRaw) : 0;
+        startTranscode("Seek", seekTime, currentAudio);
     } else {
         // For native playback, standard HTML5 seeking
         mainVideo.currentTime = seekTime;
     }
 }
 
-function startTranscode(reason, startTime = 0) {
+function startTranscode(reason, startTime = 0, audioTrackIndex = 0) {
     isTranscoding = true;
     currentTranscodeOffset = startTime;
     lastSeekTime = startTime;
 
-    const transcodeUrl = `/api/transcode?path=${encodeURIComponent(currentMoviePath)}&start=${startTime}&t=${Date.now()}`;
+    let transcodeUrl = `/api/transcode?path=${encodeURIComponent(currentMoviePath)}&start=${startTime}&t=${Date.now()}`;
+    if (audioTrackIndex !== undefined && audioTrackIndex !== null) {
+        transcodeUrl += `&audioTrack=${audioTrackIndex}`;
+    }
+
+    console.log(`Starting transcode. Reason: ${reason}. Time: ${startTime}. AudioIndex: ${audioTrackIndex}`);
     nowPlayingTitle.textContent = `Transcoding (${reason}): ${currentMovieName}`;
 
     mainVideo.onerror = null;

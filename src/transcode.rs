@@ -12,6 +12,15 @@ pub struct Transcoder {
 }
 
 #[derive(Serialize, Debug, Clone)]
+pub struct AudioTrackInfo {
+    pub index: usize,
+    pub language: Option<String>,
+    pub title: Option<String>,
+    pub codec: String,
+    pub channels: Option<i32>,
+}
+
+#[derive(Serialize, Debug, Clone)]
 pub struct SubtitleInfo {
     pub index: usize,
     pub language: Option<String>,
@@ -23,6 +32,7 @@ pub struct MediaInfo {
     pub container: String,
     pub video_codec: Option<String>,
     pub audio_codec: Option<String>,
+    pub audio_tracks: Vec<AudioTrackInfo>,
     pub duration: Option<f64>,
     pub subtitles: Vec<SubtitleInfo>,
 }
@@ -38,6 +48,7 @@ impl Transcoder {
     pub async fn stream(
         &self,
         start_pos: Option<f64>,
+        audio_stream_index: Option<usize>,
     ) -> Result<(Receiver<Vec<u8>>, tokio::task::AbortHandle)> {
         let (tx, rx) = channel(100);
         let path = self.input_path.clone();
@@ -50,7 +61,7 @@ impl Transcoder {
         let info = self.get_metadata().await?;
 
         let handle = tokio::spawn(async move {
-            if let Err(e) = run_transcode_cli(path, tx, start_pos, info).await {
+            if let Err(e) = run_transcode_cli(path, tx, start_pos, audio_stream_index, info).await {
                 eprintln!("Transcoding error: {:?}", e);
             }
         });
@@ -97,6 +108,7 @@ impl Transcoder {
 
         let mut video_codec = None;
         let mut audio_codec = None;
+        let mut audio_tracks = Vec::new();
         let mut subtitles = Vec::new();
 
         for (i, stream) in streams.iter().enumerate() {
@@ -105,7 +117,22 @@ impl Transcoder {
 
             match codec_type {
                 "video" if video_codec.is_none() => video_codec = codec_name,
-                "audio" if audio_codec.is_none() => audio_codec = codec_name,
+                "audio" => {
+                    if audio_codec.is_none() {
+                        audio_codec = codec_name.clone();
+                    }
+                    let title = stream["tags"]["title"].as_str().map(|s| s.to_string());
+                    let language = stream["tags"]["language"].as_str().map(|s| s.to_string());
+                    let channels = stream["channels"].as_i64().map(|c| c as i32);
+
+                    audio_tracks.push(AudioTrackInfo {
+                        index: i,
+                        language,
+                        title,
+                        codec: codec_name.unwrap_or_default(),
+                        channels,
+                    });
+                }
                 "subtitle" => {
                     let title = stream["tags"]["title"].as_str().map(|s| s.to_string());
                     let language = stream["tags"]["language"].as_str().map(|s| s.to_string());
@@ -123,6 +150,7 @@ impl Transcoder {
             container,
             video_codec,
             audio_codec,
+            audio_tracks,
             duration,
             subtitles,
         })
@@ -194,6 +222,7 @@ async fn run_transcode_cli(
     path: std::path::PathBuf,
     tx: Sender<Vec<u8>>,
     start_time: Option<f64>,
+    audio_stream_index: Option<usize>,
     info: MediaInfo,
 ) -> Result<()> {
     let mut args = Vec::new();
@@ -255,8 +284,14 @@ async fn run_transcode_cli(
     // Explicitly map first video and audio stream
     args.push("-map".to_string());
     args.push("0:v:0".to_string());
+
+    // Explicitly map audio stream if provided, otherwise default to first audio stream
     args.push("-map".to_string());
-    args.push("0:a:0".to_string());
+    if let Some(idx) = audio_stream_index {
+        args.push(format!("0:{}", idx));
+    } else {
+        args.push("0:a:0".to_string());
+    }
 
     // Simple, reliable timestamp handling
     args.push("-fps_mode".to_string());
@@ -266,7 +301,20 @@ async fn run_transcode_cli(
 
     // --- Smart Transcoding Logic ---
     let v_codec = info.video_codec.as_deref().unwrap_or("");
-    let a_codec = info.audio_codec.as_deref().unwrap_or("");
+    // Determine audio codec based on selected track
+    let mut a_codec = info.audio_codec.as_deref().unwrap_or("");
+    if let Some(idx) = audio_stream_index {
+        if let Some(track) = info.audio_tracks.iter().find(|t| t.index == idx) {
+            a_codec = &track.codec;
+            println!("Selected audio track index {} has codec: {}", idx, a_codec);
+        } else {
+            println!(
+                "Warning: Requested audio track {} not found in metadata",
+                idx
+            );
+        }
+    }
+
     let container = info.container.to_lowercase();
 
     let needs_v_transcode =
@@ -304,7 +352,15 @@ async fn run_transcode_cli(
     let needs_a_transcode = a_codec != "aac";
 
     if needs_a_transcode {
-        println!("Re-encoding audio: {} -> aac", a_codec);
+        println!(
+            "Re-encoding audio ({}): {} -> aac",
+            if audio_stream_index.is_some() {
+                "selected"
+            } else {
+                "default"
+            },
+            a_codec
+        );
         args.push("-c:a".to_string());
         args.push("aac".to_string());
         args.push("-b:a".to_string());
