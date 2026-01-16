@@ -1,8 +1,9 @@
 use crate::models::{ListParams, MediaNode, StopParams, SubtitleParams, TranscodeParams};
 use crate::state::AppState;
 use axum::{
+    body::Body,
     extract::{Json, Query, State},
-    http::StatusCode,
+    http::{Response, StatusCode},
     response::{IntoResponse, Json as JsonResponse},
 };
 use std::process::Command;
@@ -94,27 +95,41 @@ pub async fn get_metadata(
 pub async fn transcode_movie(
     State(state): State<Arc<AppState>>,
     Query(params): Query<TranscodeParams>,
-) -> impl IntoResponse {
+) -> Result<Response<Body>, StatusCode> {
     let path = state.movies_dir.join(&params.path);
 
     if !path.exists() {
-        return StatusCode::NOT_FOUND.into_response();
+        return Err(StatusCode::NOT_FOUND);
     }
 
     // Use our custom transcoder
     let transcoder = crate::transcode::Transcoder::new(path.clone());
+    let start_pos = params.start;
+    let audio_stream_index = params.audio_track;
 
-    match transcoder.stream(params.start, params.audio_track).await {
-        Ok(stream) => axum::response::Response::builder()
-            .header("Content-Type", "video/mp4")
-            .header("Accept-Ranges", "none")
-            .body(axum::body::Body::from_stream(stream))
-            .unwrap(),
-        Err(e) => {
-            eprintln!("Failed to start transcoder: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
+    let stream = transcoder
+        .stream(start_pos, audio_stream_index)
+        .await
+        .map_err(|e| {
+            tracing::error!("Transcode failed: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let session_id = stream.session_id().to_string();
+    tracing::info!(
+        "Transcode started for file {:?}. Session ID: {}",
+        path,
+        session_id
+    );
+
+    let body = Body::from_stream(stream);
+
+    Ok(Response::builder()
+        .header("Content-Type", "video/mp4")
+        .header("X-Sratim-Session-Id", session_id)
+        .header("Accept-Ranges", "none")
+        .body(body)
+        .unwrap())
 }
 
 pub async fn extract_subtitles(
@@ -155,22 +170,35 @@ pub async fn stop_transcode(
 
     // Brute-force verification: pkill any ffmpeg handling this file
     if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-        println!("[stop] Executing pkill fallback for file: {}", filename);
-        let output = Command::new("pkill")
-            .arg("-f")
-            // We adding a -e and -x flag for more verbose pkill output if available, but -f is standard.
-            // Let's print the status.
-            .arg(format!("ffmpeg.*{}", filename))
+        println!("[stop] Searching for processes matching file: {}", filename);
+
+        // Find pids using pgrep
+        let pgrep_output = Command::new("pgrep")
+            .arg("-a") // Show full command line
+            .arg("-f") // Match against full command line
+            .arg("ffmpeg")
             .output();
 
-        match output {
-            Ok(o) => println!(
-                "[stop] pkill finished with status: {:?}, stdout: {:?}, stderr: {:?}",
-                o.status,
-                String::from_utf8_lossy(&o.stdout),
-                String::from_utf8_lossy(&o.stderr)
-            ),
-            Err(e) => eprintln!("[stop] pkill failed to execute: {}", e),
+        match pgrep_output {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    if line.contains(filename) {
+                        // Line format: "PID COMMAND..."
+                        if let Some(pid_str) = line.split_whitespace().next() {
+                            println!("[stop] Found matching process: {}", line);
+                            if let Ok(pid) = pid_str.parse::<i32>() {
+                                unsafe {
+                                    libc::kill(pid, libc::SIGKILL);
+                                    println!("[stop] Sent SIGKILL to {}", pid);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(_) => println!("[stop] No ffmpeg processes found by pgrep."),
+            Err(e) => eprintln!("[stop] Failed to run pgrep: {}", e),
         }
     }
 

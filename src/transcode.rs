@@ -12,19 +12,21 @@ use std::task::{Context as TaskContext, Poll};
 use tokio::process::{ChildStdout, Command};
 use tokio_util::io::ReaderStream;
 
-/// A wrapper around tokio::process::Child that ensures the entire process group
-/// is killed when dropped.
+/// A wrapper around tokio::process::Child that ensures the entire process tree
+/// is killed when dropped, using a specific Session ID tag.
 struct ScopedChild {
-    id: u32, // PID
+    id: u32, // PID (still useful for initial kill)
     child: Option<tokio::process::Child>,
+    session_id: String,
 }
 
 impl ScopedChild {
-    fn new(child: tokio::process::Child) -> Self {
+    fn new(child: tokio::process::Child, session_id: String) -> Self {
         let id = child.id().expect("Child must have a PID");
         Self {
             id,
             child: Some(child),
+            session_id,
         }
     }
 }
@@ -32,31 +34,68 @@ impl ScopedChild {
 impl Drop for ScopedChild {
     fn drop(&mut self) {
         let id = self.id;
-        println!("[process] Drop: Force killing process group -{}", id);
+        let session_id = self.session_id.clone();
 
-        // 1. Kill the process group immediately
+        println!("[process] Drop: Stopping session {}", session_id);
+
+        // 1. Kill the direct PID immediately (Fastest reaction)
         unsafe {
             libc::kill(-(id as i32), libc::SIGKILL);
         }
 
-        // 2. Spawn a background task to reap the zombie
-        // We take the child out of the Option so we can move it into the async block
+        // 2. Spawn a background task to SWEEP via Session ID
+        // This catches wrappers, grandchildren, and detached processes.
         if let Some(mut child) = self.child.take() {
-            // We verify we are in a tokio context (usually true in Axum)
-            // If not, we can't reap asynchronously, but the kill happened.
             if let Ok(handle) = tokio::runtime::Handle::try_current() {
                 handle.spawn(async move {
-                    match child.wait().await {
-                        Ok(status) => {
-                            println!("[reaper] Reaped process {} (status: {})", id, status)
+                    println!(
+                        "[cleanup] Sweeping session {}. Scanning process list...",
+                        session_id
+                    );
+
+                    // Run pgrep -f sratim_id=<UUID>
+                    let pgrep = tokio::process::Command::new("pgrep")
+                        .arg("-a") // Show full command line for logging
+                        .arg("-f") // Match against full command line
+                        .arg(format!("sratim_id={}", session_id))
+                        .output()
+                        .await;
+
+                    match pgrep {
+                        Ok(output) if output.status.success() => {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            for line in stdout.lines() {
+                                if !line.trim().is_empty() {
+                                    // Line: "PID COMMAND"
+                                    if let Some(pid_str) = line.split_whitespace().next() {
+                                        if let Ok(pid) = pid_str.parse::<i32>() {
+                                            println!(
+                                                "[cleanup] KILLING leaked process: {} (PID: {})",
+                                                line, pid
+                                            );
+                                            unsafe {
+                                                libc::kill(pid, libc::SIGKILL);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        Err(e) => eprintln!("[reaper] Failed to reap process {}: {}", id, e),
+                        _ => {} // No matches found (good!)
+                    }
+
+                    // 3. Reap the original zombie
+                    match child.wait().await {
+                        Ok(_) => {
+                            // println!("[reaper] Parent process {} exited: {}", id, status)
+                        }
+                        Err(e) => eprintln!("[reaper] Failed to reap parent {}: {}", id, e),
                     }
                 });
             } else {
                 eprintln!(
-                    "[process] Warning: Dropped ScopedChild outside Tokio context, cannot reap zombie {}",
-                    id
+                    "[process] Warning: Dropped without Tokio context. Session {} might leak.",
+                    session_id
                 );
             }
         }
@@ -69,6 +108,12 @@ pub struct FfmpegStream {
     stream: ReaderStream<ChildStdout>,
     // We hold this to ensure it drops when the stream drops
     _process: ScopedChild,
+}
+
+impl FfmpegStream {
+    pub fn session_id(&self) -> &str {
+        &self._process.session_id
+    }
 }
 
 impl Stream for FfmpegStream {
@@ -131,8 +176,16 @@ impl Transcoder {
         // Get metadata to decide transcoding strategy
         let info = self.get_metadata().await?;
 
-        let (child, stdout, stderr) =
-            prepare_transcode_child(path, start_pos, audio_stream_index, info)?;
+        // Generate a unique session ID for this transcode
+        let session_id = uuid::Uuid::new_v4().to_string();
+
+        let (child, stdout, stderr) = prepare_transcode_child(
+            path.clone(),
+            start_pos,
+            audio_stream_index,
+            info,
+            &session_id,
+        )?;
 
         // Spawn a thread to read stderr (detached, harmless)
         tokio::spawn(async move {
@@ -148,7 +201,7 @@ impl Transcoder {
 
         Ok(FfmpegStream {
             stream: ReaderStream::new(stdout),
-            _process: ScopedChild::new(child),
+            _process: ScopedChild::new(child, session_id),
         })
     }
 
@@ -250,6 +303,9 @@ impl Transcoder {
             return Err(anyhow::anyhow!("File not found"));
         }
 
+        // Generate unique session ID for subtitles
+        let session_id = uuid::Uuid::new_v4().to_string();
+
         let child = Command::new("ffmpeg")
             .args(&[
                 "-v",
@@ -260,6 +316,8 @@ impl Transcoder {
                 &format!("0:{}", index),
                 "-f",
                 "webvtt",
+                "-metadata",
+                &format!("sratim_id={}", session_id),
                 "pipe:1",
             ])
             .stdout(Stdio::piped())
@@ -268,7 +326,7 @@ impl Transcoder {
             .spawn()
             .context("Failed to spawn ffmpeg")?;
 
-        let mut scoped_child = ScopedChild::new(child);
+        let mut scoped_child = ScopedChild::new(child, session_id);
         let stdout = scoped_child
             .child
             .as_mut()
@@ -290,6 +348,7 @@ fn prepare_transcode_child(
     start_time: Option<f64>,
     audio_stream_index: Option<usize>,
     info: MediaInfo,
+    session_id: &str,
 ) -> Result<(
     tokio::process::Child,
     ChildStdout,
@@ -416,7 +475,13 @@ fn prepare_transcode_child(
 
     args.push("pipe:1".to_string());
 
-    println!("Starting ffmpeg with args: {:?}", args);
+    args.push("-metadata".to_string());
+    args.push(format!("sratim_id={}", session_id));
+
+    println!(
+        "Starting ffmpeg session [{}] with args: {:?}",
+        session_id, args
+    );
 
     let mut command = Command::new("ffmpeg");
     command.args(&args);
@@ -424,7 +489,27 @@ fn prepare_transcode_child(
     command.stderr(Stdio::piped());
     command.process_group(0); // setpgid(0, 0) -> New process group leader
 
+    #[cfg(target_os = "linux")]
+    unsafe {
+        command.pre_exec(|| {
+            // PR_SET_PDEATHSIG = 1
+            // Ensure child dies if we die
+            let r = libc::prctl(1, libc::SIGKILL, 0, 0, 0);
+            if r != 0 {
+                // Ignore error, best effort
+            }
+            Ok(())
+        });
+    }
+
     let mut child = command.spawn().context("Failed to spawn ffmpeg")?;
+
+    if let Some(id) = child.id() {
+        println!(
+            "[process] Spawned ffmpeg parent {} for session {}",
+            id, session_id
+        );
+    }
 
     let stdout = child
         .stdout

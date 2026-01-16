@@ -164,7 +164,12 @@ async function initPlayer() {
                 // Set initial selection
                 // If we are already transcoding, we might have picked a specific track
                 let currentAudioIndex = 0;
-                // Try to match what we would have picked (English or 0)
+                // Default to first track from list if available
+                if (meta.audio_tracks.length > 0) {
+                    currentAudioIndex = meta.audio_tracks[0].index;
+                }
+
+                // Try to find English track to prefer it
                 const eng = meta.audio_tracks.find(t => (t.language || "").toLowerCase().startsWith("en"));
                 if (eng) currentAudioIndex = eng.index;
 
