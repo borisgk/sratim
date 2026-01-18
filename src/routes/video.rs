@@ -1,0 +1,200 @@
+use axum::{
+    body::Body,
+    extract::{Json, Query, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio_util::io::ReaderStream;
+
+use crate::models::{
+    AppState, FileEntry, ListParams, MetadataParams, StreamParams, SubtitleParams,
+};
+use crate::streaming::{ProcessStream, probe_metadata, spawn_ffmpeg};
+
+pub async fn list_files(
+    State(state): State<AppState>,
+    Query(params): Query<ListParams>,
+) -> impl IntoResponse {
+    let mut abs_path = state.movies_dir.clone();
+    if !params.path.is_empty() {
+        abs_path.push(&params.path);
+    }
+
+    // Security check: ensure we didn't escape movies_dir
+    let Ok(canonical_path) = abs_path.canonicalize() else {
+        return (StatusCode::NOT_FOUND, Json(Vec::<FileEntry>::new())).into_response();
+    };
+
+    let Ok(canonical_root) = state.movies_dir.canonicalize() else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+
+    if !canonical_path.starts_with(&canonical_root) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
+    let mut entries = Vec::new();
+
+    if let Ok(mut read_dir) = tokio::fs::read_dir(canonical_path).await {
+        while let Ok(Some(entry)) = read_dir.next_entry().await {
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            // Skip hidden files
+            if file_name.starts_with('.') {
+                continue;
+            }
+
+            let file_type = entry.file_type().await.ok();
+            let is_dir = file_type.map(|t| t.is_dir()).unwrap_or(false);
+            let is_file = file_type.map(|t| t.is_file()).unwrap_or(false);
+
+            let mut rel_path = params.path.clone();
+            if !rel_path.is_empty() && !rel_path.ends_with('/') {
+                rel_path.push('/');
+            }
+            rel_path.push_str(&file_name);
+
+            if is_dir {
+                entries.push(FileEntry {
+                    name: file_name,
+                    path: rel_path,
+                    entry_type: "folder".to_string(),
+                });
+            } else if is_file {
+                if let Some(ext) = std::path::Path::new(&file_name)
+                    .extension()
+                    .and_then(|s| s.to_str())
+                {
+                    match ext.to_lowercase().as_str() {
+                        "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "flv" | "wmv" => {
+                            entries.push(FileEntry {
+                                name: file_name,
+                                path: rel_path,
+                                entry_type: "file".to_string(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort: Folders first, then files. Both alphabetical.
+    entries.sort_by(|a, b| {
+        if a.entry_type == b.entry_type {
+            a.name.to_lowercase().cmp(&b.name.to_lowercase())
+        } else {
+            if a.entry_type == "folder" {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            }
+        }
+    });
+
+    Json(entries).into_response()
+}
+
+pub async fn get_metadata(
+    State(state): State<AppState>,
+    Query(params): Query<MetadataParams>,
+) -> impl IntoResponse {
+    let abs_path = state.movies_dir.join(&params.path);
+    if !abs_path.exists() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    match probe_metadata(&abs_path).await {
+        Ok(metadata) => Json(metadata).into_response(),
+        Err(e) => {
+            eprintln!("Metadata probe failed: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+pub async fn stream_video(
+    State(state): State<AppState>,
+    Query(params): Query<StreamParams>,
+) -> Response {
+    let abs_path = state.movies_dir.join(&params.path);
+    if !abs_path.exists() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    // Detect codec & audio & duration via unified probe
+    let metadata = match probe_metadata(&abs_path).await {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("Probe failed: {}", e);
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    let codec_name = metadata.video_codec.clone();
+    let duration = metadata.duration;
+    let has_audio = !metadata.audio_tracks.is_empty();
+
+    println!(
+        "Detected for {}: Codec={}, AudioTracks={}, Duration={:.2}s, RequestedTrack={:?}",
+        params.path,
+        codec_name,
+        metadata.audio_tracks.len(),
+        duration,
+        params.audio_track
+    );
+
+    // Resolve audio track index to pass to ffmpeg
+    // If has_audio is true, we pass Some(requested_or_0). If false, None.
+    let audio_track_idx = if has_audio {
+        Some(params.audio_track.unwrap_or(0))
+    } else {
+        None
+    };
+
+    match spawn_ffmpeg(&abs_path, params.start, audio_track_idx, &codec_name) {
+        Ok(mut child) => {
+            let stdout = child.stdout.take().unwrap();
+            let stderr = child.stderr.take().unwrap();
+
+            // Spawn stderr logger
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stderr);
+                let mut line = String::new();
+                while let Ok(n) = reader.read_line(&mut line).await {
+                    if n == 0 {
+                        break;
+                    }
+                    eprint!("[ffmpeg] {}", line);
+                    line.clear();
+                }
+            });
+
+            let stream = ReaderStream::new(stdout);
+            let process_stream = ProcessStream::new(stream, child);
+
+            Response::builder()
+                .header("Content-Type", "video/mp4")
+                .header("Cache-Control", "no-cache")
+                .header("X-Video-Codec", codec_name)
+                .header("X-Has-Audio", if has_audio { "true" } else { "false" })
+                .header("X-Video-Duration", duration.to_string())
+                // No Content-Length, implies chunked if body is a stream
+                .body(Body::from_stream(process_stream))
+                .unwrap()
+        }
+        Err(e) => {
+            eprintln!("Failed to spawn ffmpeg: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+pub async fn get_subtitles(
+    State(_state): State<AppState>,
+    Query(_params): Query<SubtitleParams>,
+) -> impl IntoResponse {
+    // Stub
+    StatusCode::NOT_FOUND.into_response()
+}
