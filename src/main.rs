@@ -333,6 +333,7 @@ pub async fn stream_video(
     );
 
     let mut args = vec![
+        "-noaccurate_seek".to_string(),
         "-ss".to_string(),
         params.start.to_string(),
         "-i".to_string(),
