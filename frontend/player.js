@@ -17,39 +17,62 @@ document.addEventListener('DOMContentLoaded', async () => {
     const mediaSource = new MediaSource();
     videoElement.src = URL.createObjectURL(mediaSource);
 
+    let currentAudioTrackIndex = 0;
+    const audioSelect = document.getElementById('audioTrackSelect');
+
     mediaSource.addEventListener('sourceopen', async () => {
         try {
-            console.log(`Probing stream for: ${moviePath}`);
-            const probeController = new AbortController();
-            const probeResponse = await fetch(`/api/stream?path=${encodeURIComponent(moviePath)}`, {
-                signal: probeController.signal
-            });
+            console.log(`Fetching metadata for: ${moviePath}`);
+            const metaResponse = await fetch(`/api/metadata?path=${encodeURIComponent(moviePath)}`);
+            if (!metaResponse.ok) throw new Error(`Metadata fetch failed: ${metaResponse.status}`);
+            const metadata = await metaResponse.json();
 
-            if (!probeResponse.ok) throw new Error(`Probe fetch failed: ${probeResponse.status}`);
+            console.log('Metadata:', metadata);
 
-            // Dynamic Codec Detection from Header
-            const serverCodec = probeResponse.headers.get('X-Video-Codec');
-            const hasAudio = probeResponse.headers.get('X-Has-Audio') !== 'false';
-            const serverDuration = parseFloat(probeResponse.headers.get('X-Video-Duration'));
-
-            console.log(`Server signals: Codec=${serverCodec}, Audio=${hasAudio}, Duration=${serverDuration}`);
-
-            // Cancel the probe request immediately as we only needed headers
-            // We use the controller abort to sever connection immediately
-            probeController.abort();
-
-            // Set duration if valid
-            if (!isNaN(serverDuration) && serverDuration > 0) {
-                mediaSource.duration = serverDuration;
+            // Setup Duration
+            if (metadata.duration && metadata.duration > 0) {
+                mediaSource.duration = metadata.duration;
             }
 
-            // Base video codecs
-            let videoCodec = 'avc1.4d4028'; // Default H.264
-            if (serverCodec === 'hevc') {
-                videoCodec = 'hvc1.1.6.L93.B0'; // HEVC
+            // Setup Video Codec
+            let videoCodec = 'avc1.4d4028';
+            if (metadata.video_codec === 'hevc') {
+                videoCodec = 'hvc1.1.6.L93.B0';
             }
 
-            // Construct full MIME
+            // Setup Audio Tracks API
+            const audioTracks = metadata.audio_tracks || [];
+            if (audioTracks.length > 1) {
+                audioSelect.style.display = 'block';
+                audioSelect.innerHTML = audioTracks.map(track => {
+                    const label = track.label || track.language || `Track ${track.index + 1}`;
+                    const codec = track.codec === 'aac' ? '' : ` (${track.codec})`;
+                    return `<option value="${track.index}">${label}${codec}</option>`;
+                }).join('');
+
+                audioSelect.addEventListener('change', (e) => {
+                    const newIndex = parseInt(e.target.value);
+                    if (newIndex !== currentAudioTrackIndex) {
+                        console.log(`Switching audio track to ${newIndex}`);
+                        currentAudioTrackIndex = newIndex;
+
+                        const wasPlaying = !videoElement.paused;
+
+                        // Restart stream immediately at current time
+                        startStream(videoElement.currentTime);
+
+                        // Signal intent to play immediately (browser will buffer)
+                        if (wasPlaying) {
+                            console.log("Resuming playback after track switch...");
+                            videoElement.play().catch(e => console.warn("Resume failed:", e));
+                        }
+                    }
+                });
+            }
+
+            // Construct MIME
+            // We assume audio is present if tracks > 0
+            const hasAudio = audioTracks.length > 0;
             let outputMime = `video/mp4; codecs="${videoCodec}`;
             if (hasAudio) {
                 outputMime += ',mp4a.40.2';
@@ -106,71 +129,71 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // Start Stream Function
             const startStream = async (startTime = 0, retryCount = 0) => {
-                if (retryCount > 20) {
-                    console.error("Failed to start stream after multiple retries (buffer busy).");
-                    return;
-                }
-
-                if (abortController) {
-                    abortController.abort();
-                }
-                abortController = new AbortController();
-                const signal = abortController.signal;
-
-                // Clear queue
-                queue.length = 0;
-
-                // Reset parser state via abort()
                 try {
+                    if (retryCount > 20) {
+                        console.error("Failed to start stream after multiple retries (buffer busy).");
+                        return;
+                    }
+
+                    if (abortController) {
+                        abortController.abort();
+                    }
+                    abortController = new AbortController();
+                    const signal = abortController.signal;
+
+                    // Clear queue
+                    queue.length = 0;
+
+                    // Reset parser state via abort()
                     if (mediaSource.readyState === 'open') {
-                        sourceBuffer.abort();
-                    }
-                } catch (e) {
-                    console.warn('Abort error:', e);
-                }
-
-                // Wait for updating to clear
-                let safeties = 0;
-                while (sourceBuffer.updating && safeties < 20) {
-                    await new Promise(r => setTimeout(r, 20));
-                    safeties++;
-                }
-
-                // FLUSH BUFFER: Remove all existing data to prevent timeline conflicts (backwards seek issue)
-                try {
-                    if (mediaSource.readyState === 'open' && !sourceBuffer.updating) {
-                        console.log("Flushing buffer...");
-                        sourceBuffer.remove(0, Infinity);
-
-                        // Wait for remove() to finish
-                        let removeSafeties = 0;
-                        while (sourceBuffer.updating && removeSafeties < 50) { // Give it up to 1s
-                            await new Promise(r => setTimeout(r, 20));
-                            removeSafeties++;
+                        try {
+                            sourceBuffer.abort();
+                        } catch (e) {
+                            console.warn('Abort error:', e);
                         }
-                        console.log("Buffer flushed.");
                     }
-                } catch (e) {
-                    console.warn("Buffer flush failed:", e);
-                }
 
-                if (sourceBuffer.updating) {
-                    console.warn(`SourceBuffer busy after flush, retrying stream start (${retryCount + 1})...`);
-                    setTimeout(() => startStream(startTime, retryCount + 1), 100);
-                    return;
-                }
-
-                // Ensure MediaSource is open before setting timestampOffset
-                if (mediaSource.readyState === 'ended') {
-                    try {
-                        console.log("MediaSource ended, re-opening via abort()...");
-                        sourceBuffer.abort();
-                    } catch (e) {
-                        console.warn("Failed to re-open MediaSource:", e);
+                    // Wait for updating to clear
+                    let safeties = 0;
+                    while (sourceBuffer.updating && safeties < 20) {
+                        await new Promise(r => setTimeout(r, 20));
+                        safeties++;
                     }
-                }
 
-                try {
+                    // FLUSH BUFFER: Remove all existing data to prevent timeline conflicts (backwards seek issue)
+                    if (mediaSource.readyState === 'open' && !sourceBuffer.updating) {
+                        try {
+                            console.log("Flushing buffer...");
+                            sourceBuffer.remove(0, Infinity);
+
+                            // Wait for remove() to finish
+                            let removeSafeties = 0;
+                            while (sourceBuffer.updating && removeSafeties < 50) { // Give it up to 1s
+                                await new Promise(r => setTimeout(r, 20));
+                                removeSafeties++;
+                            }
+                            console.log("Buffer flushed.");
+                        } catch (e) {
+                            console.warn("Buffer flush failed:", e);
+                        }
+                    }
+
+                    if (sourceBuffer.updating) {
+                        console.warn(`SourceBuffer busy after flush, retrying stream start (${retryCount + 1})...`);
+                        setTimeout(() => startStream(startTime, retryCount + 1).catch(e => console.warn("Retry failed:", e)), 100);
+                        return;
+                    }
+
+                    // Ensure MediaSource is open before setting timestampOffset
+                    if (mediaSource.readyState === 'ended') {
+                        try {
+                            console.log("MediaSource ended, re-opening via abort()...");
+                            sourceBuffer.abort();
+                        } catch (e) {
+                            console.warn("Failed to re-open MediaSource:", e);
+                        }
+                    }
+
                     if (mediaSource.readyState === 'open') {
                         sourceBuffer.timestampOffset = startTime;
                         console.log(`TimestampOffset set to ${startTime}`);
@@ -178,14 +201,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                         console.error(`MediaSource state is ${mediaSource.readyState}. Cannot set timestampOffset or seek.`);
                         return;
                     }
-                } catch (e) {
-                    console.error("Failed to set timestampOffset:", e);
-                    return; // Stop here
-                }
 
-                try {
-                    console.log(`Fetching stream for: ${moviePath} at ${startTime}s`);
-                    const response = await fetch(`/api/stream?path=${encodeURIComponent(moviePath)}&start=${startTime}`, { signal });
+                    console.log(`Fetching stream for: ${moviePath} at ${startTime}s (AudioTrack: ${currentAudioTrackIndex})`);
+                    const response = await fetch(`/api/stream?path=${encodeURIComponent(moviePath)}&start=${startTime}&audio_track=${currentAudioTrackIndex}`, { signal });
                     if (!response.ok) throw new Error(`Fetch failed: ${response.status}`);
 
                     console.log("Stream connected, reading...");
@@ -233,7 +251,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         }
                     }
                 } catch (e) {
-                    if (e.name === 'AbortError' || e.message.includes('Aborted') || e.message.includes('aborted')) {
+                    if (e.name === 'AbortError' || e.message.includes('Aborted') || e.message.includes('aborted') || e.message.includes('BodyStreamBuffer')) {
                         console.debug('Fetch request cancelled (cleanup).');
                     } else {
                         console.error("Stream error loop:", e);

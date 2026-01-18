@@ -95,13 +95,34 @@ pub struct AppState {
 
 // DashStartResponse removed
 
-#[derive(Deserialize, Clone)]
-pub struct DashParams {
+#[derive(Serialize)]
+pub struct AudioTrack {
+    pub index: usize,
+    pub language: Option<String>,
+    pub label: Option<String>,
+    pub codec: String,
+    pub channels: Option<usize>,
+}
+
+#[derive(Serialize)]
+pub struct MovieMetadata {
+    pub duration: f64,
+    pub video_codec: String,
+    pub audio_tracks: Vec<AudioTrack>,
+}
+
+#[derive(Deserialize)]
+pub struct StreamParams {
     pub path: String,
     #[serde(default)]
     pub start: f64,
-    #[serde(rename = "audioTrack")]
+    #[serde(default)]
     pub audio_track: Option<usize>,
+}
+
+#[derive(Deserialize)]
+pub struct MetadataParams {
+    pub path: String,
 }
 
 #[derive(Deserialize)]
@@ -219,13 +240,6 @@ pub async fn list_files(
     Json(entries).into_response()
 }
 
-#[derive(Deserialize)]
-pub struct StreamParams {
-    pub path: String,
-    #[serde(default)]
-    pub start: f64,
-}
-
 // Wrapper to keep the child process alive while streaming
 pub struct ProcessStream {
     stream: ReaderStream<tokio::process::ChildStdout>,
@@ -243,73 +257,115 @@ impl futures_core::Stream for ProcessStream {
     }
 }
 
-// Separate clean probe for video codec
-async fn probe_video_codec(path: &std::path::Path) -> String {
-    let output = tokio::process::Command::new("ffprobe")
-        .args(&[
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=codec_name",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-        ])
-        .arg(path)
-        .output()
-        .await;
-
-    match output {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
-        _ => "h264".to_string(),
-    }
+#[derive(Deserialize)]
+struct FFProbeOutput {
+    streams: Option<Vec<FFProbeStream>>,
+    format: Option<FFProbeFormat>,
 }
 
-// Separate clean probe for audio existence
-async fn probe_has_audio(path: &std::path::Path) -> bool {
-    let output = tokio::process::Command::new("ffprobe")
-        .args(&[
-            "-v",
-            "error",
-            "-select_streams",
-            "a",
-            "-show_entries",
-            "stream=codec_type",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-        ])
-        .arg(path)
-        .output()
-        .await;
-
-    match output {
-        Ok(out) if out.status.success() => !out.stdout.is_empty(),
-        _ => false,
-    }
+#[derive(Deserialize)]
+struct FFProbeStream {
+    #[serde(rename = "index")]
+    _index: usize,
+    codec_name: Option<String>,
+    codec_type: String, // "video" or "audio"
+    tags: Option<FFProbeTags>,
+    channels: Option<usize>,
 }
 
-// Separate clean probe for duration
-async fn probe_duration(path: &std::path::Path) -> Option<f64> {
+#[derive(Deserialize)]
+struct FFProbeFormat {
+    duration: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct FFProbeTags {
+    language: Option<String>,
+    title: Option<String>,
+    label: Option<String>,
+}
+
+async fn probe_metadata(path: &std::path::Path) -> Result<MovieMetadata> {
     let output = tokio::process::Command::new("ffprobe")
         .args(&[
             "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
+            "quiet",
+            "-print_format",
+            "json",
+            "-show_streams",
+            "-show_format",
         ])
         .arg(path)
         .output()
         .await
-        .ok()?;
+        .context("Failed to run ffprobe")?;
 
-    if output.status.success() {
-        let duration_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        duration_str.parse::<f64>().ok()
-    } else {
-        None
+    if !output.status.success() {
+        return Err(anyhow::anyhow!("ffprobe failed"));
+    }
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    let probe: FFProbeOutput =
+        serde_json::from_str(&output_str).context("Failed to parse ffprobe output")?;
+
+    let duration = probe
+        .format
+        .and_then(|f| f.duration)
+        .and_then(|d| d.parse::<f64>().ok())
+        .unwrap_or(0.0);
+
+    let streams = probe.streams.unwrap_or_default();
+
+    let video_codec = streams
+        .iter()
+        .find(|s| s.codec_type == "video")
+        .and_then(|s| s.codec_name.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let mut audio_tracks = Vec::new();
+    let mut audio_idx_counter = 0;
+
+    for stream in streams {
+        if stream.codec_type == "audio" {
+            let lang = stream.tags.as_ref().and_then(|t| t.language.clone());
+            let label = stream
+                .tags
+                .as_ref()
+                .and_then(|t| t.title.clone().or_else(|| t.label.clone()));
+
+            audio_tracks.push(AudioTrack {
+                index: audio_idx_counter, // This is the relative audio index for 0:a:N
+                language: lang,
+                label: label,
+                codec: stream.codec_name.unwrap_or_else(|| "unknown".to_string()),
+                channels: stream.channels,
+            });
+            audio_idx_counter += 1;
+        }
+    }
+
+    Ok(MovieMetadata {
+        duration,
+        video_codec,
+        audio_tracks,
+    })
+}
+
+pub async fn get_metadata(
+    State(state): State<AppState>,
+    Query(params): Query<MetadataParams>,
+) -> impl IntoResponse {
+    let abs_path = state.movies_dir.join(&params.path);
+    if !abs_path.exists() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    match probe_metadata(&abs_path).await {
+        Ok(metadata) => Json(metadata).into_response(),
+        Err(e) => {
+            eprintln!("Metadata probe failed: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
     }
 }
 
@@ -322,14 +378,27 @@ pub async fn stream_video(
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    // Detect codec & audio & duration
-    let codec_name = probe_video_codec(&abs_path).await;
-    let has_audio = probe_has_audio(&abs_path).await;
-    let duration = probe_duration(&abs_path).await.unwrap_or(0.0);
+    // Detect codec & audio & duration via unified probe
+    let metadata = match probe_metadata(&abs_path).await {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("Probe failed: {}", e);
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    let codec_name = metadata.video_codec;
+    let duration = metadata.duration;
+    // Check if requested audio track exists or default to first audio info
+    let has_audio = !metadata.audio_tracks.is_empty();
 
     println!(
-        "Detected for {}: Codec={}, Audio={}, Duration={:.2}s",
-        params.path, codec_name, has_audio, duration
+        "Detected for {}: Codec={}, AudioTracks={}, Duration={:.2}s, RequestedTrack={:?}",
+        params.path,
+        codec_name,
+        metadata.audio_tracks.len(),
+        duration,
+        params.audio_track
     );
 
     let mut args = vec![
@@ -351,9 +420,13 @@ pub async fn stream_video(
     }
 
     if has_audio {
+        // Use requested track or default to 0 (relative index)
+        // Note: We need to map the N-th audio stream. FFmpeg -map 0:a:N selects the Nth audio stream.
+        let track_idx = params.audio_track.unwrap_or(0);
+
         args.extend_from_slice(&[
             "-map".to_string(),
-            "0:a:0".to_string(),
+            format!("0:a:{}", track_idx),
             "-c:a".to_string(),
             "aac".to_string(),
             "-ac".to_string(),
@@ -452,6 +525,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/api/movies", get(list_files))
+        .route("/api/metadata", get(get_metadata))
         .route("/api/stream", get(stream_video))
         .route("/api/subtitles", get(get_subtitles))
         .nest_service("/content", ServeDir::new(&movies_dir))
