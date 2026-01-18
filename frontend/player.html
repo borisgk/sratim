@@ -9,7 +9,6 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Outfit:wght@500;700&display=swap"
         rel="stylesheet">
-    <script src="dash.all.min.js"></script>
     <link rel="stylesheet" href="style.css">
     <style>
         .player-page {
@@ -94,80 +93,90 @@
             videoElement.src = URL.createObjectURL(mediaSource);
 
             mediaSource.addEventListener('sourceopen', async () => {
-                // Check codecs - Prioritize HEVC for Safari/modern browsers, fallback to H.264
-                const codecsToCheck = [
-                    'video/mp4; codecs="hvc1.1.6.L93.B0,mp4a.40.2"', // HEVC (Strict tag)
-                    'video/mp4; codecs="hev1.1.6.L93.B0,mp4a.40.2"', // HEVC (Alternative)
-                    'video/mp4; codecs="avc1.4d4028,mp4a.40.2"',     // H.264
-                ];
-
-                let outputMime = '';
-                for (const mime of codecsToCheck) {
-                    if (MediaSource.isTypeSupported(mime)) {
-                        outputMime = mime;
-                        console.log('Selected supported codec:', mime);
-                        break;
-                    }
-                }
-
-                if (!outputMime) {
-                    // Start with basic AVC1 if nothing specific works, but log valid warning
-                    outputMime = 'video/mp4; codecs="avc1.4d4028,mp4a.40.2"';
-                    console.warn('No high-quality codec match found, defaulting to H.264 string (might fail if stream is HEVC)');
-                }
-
-                const sourceBuffer = mediaSource.addSourceBuffer(outputMime);
-                sourceBuffer.mode = 'segments';
-
-                // Queue for appending buffers
-                const queue = [];
-
-                const cleanupBuffer = () => {
-                    if (mediaSource.readyState !== 'open' || sourceBuffer.updating) return;
-
-                    // Keep last 30 seconds of content, remove everything before
-                    // Ensure we don't remove future (buffering) content
-                    const removeEnd = videoElement.currentTime - 30;
-                    if (removeEnd > 0) {
-                        try {
-                            // console.log(`Cleaning buffer up to ${removeEnd}`);
-                            sourceBuffer.remove(0, removeEnd);
-                        } catch (e) {
-                            console.error('Remove error:', e);
-                        }
-                    }
-                };
-
-                const appendNext = () => {
-                    if (mediaSource.readyState !== 'open') return;
-
-                    if (queue.length > 0 && !sourceBuffer.updating) {
-                        try {
-                            // Peek first, only shift on success
-                            sourceBuffer.appendBuffer(queue[0]);
-                            queue.shift();
-                        } catch (e) {
-                            if (e.name === 'QuotaExceededError') {
-                                console.warn('Buffer quota exceeded. Attempting cleanup.');
-                                cleanupBuffer();
-                            } else {
-                                console.error('Append error:', e);
-                                // If hard error, drop the chunk to unblock
-                                queue.shift();
-                            }
-                        }
-                    }
-                };
-
-                sourceBuffer.addEventListener('updateend', appendNext);
-                sourceBuffer.addEventListener('error', (e) => console.error('SourceBuffer error:', e));
-
                 try {
                     console.log(`Fetching stream for: ${moviePath}`);
                     const response = await fetch(`/api/stream?path=${encodeURIComponent(moviePath)}`);
                     if (!response.ok) throw new Error(`Fetch failed: ${response.status}`);
-                    console.log("Stream connected, reading...");
 
+                    // Dynamic Codec Detection from Header
+                    const serverCodec = response.headers.get('X-Video-Codec');
+                    const hasAudio = response.headers.get('X-Has-Audio') !== 'false';
+                    const serverDuration = parseFloat(response.headers.get('X-Video-Duration'));
+
+                    console.log(`Server signals: Codec=${serverCodec}, Audio=${hasAudio}, Duration=${serverDuration}`);
+
+                    // Set duration if valid
+                    if (!isNaN(serverDuration) && serverDuration > 0) {
+                        mediaSource.duration = serverDuration;
+                    }
+
+                    // Base video codecs
+                    let videoCodec = 'avc1.4d4028'; // Default H.264
+                    if (serverCodec === 'hevc') {
+                        videoCodec = 'hvc1.1.6.L93.B0'; // HEVC
+                    }
+
+                    // Construct full MIME
+                    let outputMime = `video/mp4; codecs="${videoCodec}`;
+                    if (hasAudio) {
+                        outputMime += ',mp4a.40.2';
+                    }
+                    outputMime += '"';
+
+                    console.log(`Initializing SourceBuffer with: ${outputMime}`);
+
+                    if (!MediaSource.isTypeSupported(outputMime)) {
+                        alert(`Browser does not support the required codec: ${outputMime}`);
+                        return;
+                    }
+
+                    const sourceBuffer = mediaSource.addSourceBuffer(outputMime);
+                    sourceBuffer.mode = 'segments';
+
+                    // Queue for appending buffers
+                    const queue = [];
+
+                    const cleanupBuffer = () => {
+                        if (mediaSource.readyState !== 'open' || sourceBuffer.updating) return;
+
+                        // Keep last 30 seconds of content, remove everything before
+                        // Ensure we don't remove future (buffering) content
+                        const removeEnd = videoElement.currentTime - 30;
+                        if (removeEnd > 0) {
+                            try {
+                                // console.log(`Cleaning buffer up to ${removeEnd}`);
+                                sourceBuffer.remove(0, removeEnd);
+                            } catch (e) {
+                                console.error('Remove error:', e);
+                            }
+                        }
+                    };
+
+                    const appendNext = () => {
+                        if (mediaSource.readyState !== 'open') return;
+
+                        if (queue.length > 0 && !sourceBuffer.updating) {
+                            try {
+                                // Peek first, only shift on success
+                                sourceBuffer.appendBuffer(queue[0]);
+                                queue.shift();
+                            } catch (e) {
+                                if (e.name === 'QuotaExceededError') {
+                                    console.warn('Buffer quota exceeded. Attempting cleanup.');
+                                    cleanupBuffer();
+                                } else {
+                                    console.error('Append error:', e);
+                                    // If hard error, drop the chunk to unblock
+                                    queue.shift();
+                                }
+                            }
+                        }
+                    };
+
+                    sourceBuffer.addEventListener('updateend', appendNext);
+                    sourceBuffer.addEventListener('error', (e) => console.error('SourceBuffer error:', e));
+
+                    console.log("Stream connected, reading...");
                     const reader = response.body.getReader();
 
                     let totalBytes = 0;

@@ -243,6 +243,76 @@ impl futures_core::Stream for ProcessStream {
     }
 }
 
+// Separate clean probe for video codec
+async fn probe_video_codec(path: &std::path::Path) -> String {
+    let output = tokio::process::Command::new("ffprobe")
+        .args(&[
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=codec_name",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(path)
+        .output()
+        .await;
+
+    match output {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        _ => "h264".to_string(),
+    }
+}
+
+// Separate clean probe for audio existence
+async fn probe_has_audio(path: &std::path::Path) -> bool {
+    let output = tokio::process::Command::new("ffprobe")
+        .args(&[
+            "-v",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(path)
+        .output()
+        .await;
+
+    match output {
+        Ok(out) if out.status.success() => !out.stdout.is_empty(),
+        _ => false,
+    }
+}
+
+// Separate clean probe for duration
+async fn probe_duration(path: &std::path::Path) -> Option<f64> {
+    let output = tokio::process::Command::new("ffprobe")
+        .args(&[
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(path)
+        .output()
+        .await
+        .ok()?;
+
+    if output.status.success() {
+        let duration_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        duration_str.parse::<f64>().ok()
+    } else {
+        None
+    }
+}
+
 pub async fn stream_video(
     State(state): State<AppState>,
     Query(params): Query<StreamParams>,
@@ -252,7 +322,17 @@ pub async fn stream_video(
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    let args = vec![
+    // Detect codec & audio & duration
+    let codec_name = probe_video_codec(&abs_path).await;
+    let has_audio = probe_has_audio(&abs_path).await;
+    let duration = probe_duration(&abs_path).await.unwrap_or(0.0);
+
+    println!(
+        "Detected for {}: Codec={}, Audio={}, Duration={:.2}s",
+        params.path, codec_name, has_audio, duration
+    );
+
+    let mut args = vec![
         "-ss".to_string(),
         params.start.to_string(),
         "-i".to_string(),
@@ -260,21 +340,33 @@ pub async fn stream_video(
         "-map".to_string(),
         "0:v:0".to_string(),
         "-c:v".to_string(),
-        "copy".to_string(), // Direct stream copy
-        "-tag:v".to_string(),
-        "hvc1".to_string(), // Force compatible HEVC tag
-        "-map".to_string(),
-        "0:a:0".to_string(),
-        "-c:a".to_string(),
-        "aac".to_string(),
-        "-ac".to_string(),
-        "2".to_string(),
+        "copy".to_string(),
+    ];
+
+    // Only add hvc1 tag if it's HEVC.
+    if codec_name == "hevc" {
+        args.push("-tag:v".to_string());
+        args.push("hvc1".to_string());
+    }
+
+    if has_audio {
+        args.extend_from_slice(&[
+            "-map".to_string(),
+            "0:a:0".to_string(),
+            "-c:a".to_string(),
+            "aac".to_string(),
+            "-ac".to_string(),
+            "2".to_string(),
+        ]);
+    }
+
+    args.extend_from_slice(&[
         "-movflags".to_string(),
-        "frag_keyframe+empty_moov+default_base_moof+global_sidx".to_string(),
+        "frag_keyframe+empty_moov+default_base_moof".to_string(),
         "-f".to_string(),
         "mp4".to_string(),
         "pipe:1".to_string(),
-    ];
+    ]);
 
     println!("[stream] Spawning ffmpeg: {:?}", args);
 
@@ -312,6 +404,9 @@ pub async fn stream_video(
             Response::builder()
                 .header("Content-Type", "video/mp4")
                 .header("Cache-Control", "no-cache")
+                .header("X-Video-Codec", codec_name) // Signal codec to frontend
+                .header("X-Has-Audio", if has_audio { "true" } else { "false" }) // Signal audio presence
+                .header("X-Video-Duration", duration.to_string()) // Signal duration
                 .body(Body::from_stream(process_stream))
                 .unwrap()
         }
