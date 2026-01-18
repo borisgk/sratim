@@ -1,24 +1,23 @@
 # SRATIM 🎬
 ### A Modern, High-Performance Movie Streamer
 
-Sratim (Hebrew for "Movies") is a powerful, lightweight media server built with Rust, designed for seamless movie streaming directly to your web browser. It features **real-time transcoding**, allowing you to play almost any video format (including MKV and AVI) without manual conversion.
+Sratim (Hebrew for "Movies") is a powerful, lightweight media server built with Rust, designed for high-fidelity movie streaming directly to your web browser. It uses **Media Source Extensions (MSE)** to deliver fragmented MP4 streams with zero quality loss.
 
 ---
 
 ## ✨ Key Features
 
-- ⚡ **Real-Time Transcoding**: Automatically converts incompatible codecs to browser-friendly H.264/AAC on the fly using FFmpeg.
-- 🍏 **Apple Silicon Optimized**: Uses `h264_videotoolbox` hardware acceleration on macOS for near-zero CPU impact during transcoding.
-- 📁 **Auto-Discovery**: Automatically scans your `movies` directory for video files and builds a navigable library.
+- ⚡ **Direct Stream Copy**: Streams video data directly from the source file (H.264/HEVC) without transcoding, ensuring 100% original quality and minimal CPU usage.
+- 🍏 **Smart Compatibility**: Automatically detects codec (H.264 vs HEVC) and configures the MSE player for Apple/Safari support (`hvc1`) or standard AVC (`avc1`).
+- 📂 **Auto-Discovery**: Automatically scans your `movies` directory for video files and builds a navigable library.
 - 🎨 **Premium UI**: A sleek, modern frontend built with Inter & Outfit typography, featuring glassmorphism and smooth animations.
-- ⏩ **Advanced Player Controls**: Custom-built HTML5 player with seekable transcoded streams, duration tracking, and fullscreen support.
-- 📦 **Effortless Deployment**: Includes a specialized `deploy.sh` for easy rsync and remote building.
+- ⏩ **Advanced Player**: Custom-built HTML5 MSE player with instant seeking, duration tracking, and robust buffering management.
 
 ## 🛠 Tech Stack
 
 - **Backend**: [Rust](https://www.rust-lang.org/) with [Axum](https://github.com/tokio-rs/axum) and [Tokio](https://tokio.rs/) for high-concurrency performance.
-- **Media Engine**: [FFmpeg](https://ffmpeg.org/) & [ffprobe](https://ffmpeg.org/ffprobe.html) for robust stream processing.
-- **Frontend**: Vanilla JavaScript and CSS3 for a lean, fast, and beautiful user experience.
+- **Media Engine**: [FFmpeg](https://ffmpeg.org/) & [ffprobe](https://ffmpeg.org/ffprobe.html) for stream segmentation and metadata probing.
+- **Frontend**: Vanilla JavaScript (MSE API) and CSS3 for a lean, fast, and beautiful user experience.
 
 ---
 
@@ -51,18 +50,6 @@ Sratim (Hebrew for "Movies") is a powerful, lightweight media server built with 
 
 4. **Access the library**:
    Open your browser and navigate to `http://localhost:3000`.
-
----
-
-## 🏗 Deployment
-
-The project includes a `deploy.sh` script to simplify deployment to remote servers:
-
-```bash
-./deploy.sh <user@remote-host> <target-directory>
-```
-
-This will sync the source code and trigger a release build on the destination.
 
 ---
 
