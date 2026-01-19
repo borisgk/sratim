@@ -180,6 +180,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         try {
                             if (abortController) abortController.abort();
                             abortController = new AbortController();
+                            currentAbortController = abortController; // Track globally for cleanup
                             const signal = abortController.signal;
 
                             queue.length = 0;
@@ -219,15 +220,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                             // Re-open if ended
                             if (mediaSource.readyState === 'ended') {
-                                try { sourceBuffer.abort(); } catch (e) { }
+                                try {
+                                    // abort() transitions 'ended' -> 'open' per spec
+                                    sourceBuffer.abort();
+                                } catch (e) {
+                                    console.warn("Failed to re-open via abort:", e);
+                                }
                             }
 
                             if (mediaSource.readyState === 'open') {
                                 sourceBuffer.timestampOffset = timeToStart;
                             } else {
-                                // If closed, we might need full reload or just return?
-                                // If mediaSource is closed here, it's bad.
-                                console.error("MediaSource not open during startStream");
+                                console.error("MediaSource not open during startStream, attempting full reload.");
+                                loadVideo(timeToStart);
                                 return;
                             }
 
@@ -253,8 +258,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                                 const { done, value } = await reader.read();
                                 if (done) {
-                                    if (mediaSource.readyState === 'open' && !signal.aborted) mediaSource.endOfStream();
-                                    break;
+                                    if (mediaSource.readyState === 'open' && !signal.aborted) {
+                                        // Wait for queue to drain and final update to complete
+                                        let eosSafeties = 0;
+                                        while ((sourceBuffer.updating || queue.length > 0) && eosSafeties < 100) {
+                                            await new Promise(r => setTimeout(r, 50));
+                                            eosSafeties++;
+                                        }
+                                        if (!sourceBuffer.updating && queue.length === 0) {
+                                            console.log("Stream complete, calling endOfStream.");
+                                            mediaSource.endOfStream();
+                                        } else {
+                                            console.warn("Timed out waiting for buffer update/queue drain before cleanup.");
+                                        }
+                                    }
                                 }
 
                                 if (value && value.byteLength > 0) {
@@ -288,10 +305,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (startPosition > 0) {
                     console.log(`Restoring position to ${startPosition}s`);
                     videoElement.currentTime = startPosition;
-                    // Setting currentTime triggers 'seeking', which calls startStream.
-                } else {
-                    startStream(0);
                 }
+
+                // Explicitly start stream to guarantee loading
+                startStream(startPosition);
 
                 // Safely attempt play when ready
                 const tryPlay = () => {
