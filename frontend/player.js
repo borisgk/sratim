@@ -107,6 +107,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             const appendNext = () => {
                 if (mediaSource.readyState !== 'open') return;
+                if (videoElement.error) {
+                    console.error('Playback Error detected, stopping append:', videoElement.error);
+                    return;
+                }
 
                 if (queue.length > 0 && !sourceBuffer.updating) {
                     try {
@@ -247,6 +251,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                         if (value && value.byteLength > 0) {
                             totalBytes += value.byteLength;
                             queue.push(value);
+                            if (videoElement.error) {
+                                console.error('Video element error detected in stream loop:', videoElement.error);
+                                break;
+                            }
                             if (!sourceBuffer.updating) appendNext();
                         }
                     }
