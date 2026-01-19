@@ -1,6 +1,8 @@
 document.addEventListener('DOMContentLoaded', async () => {
+    // Basic UI Setup
     const videoElement = document.getElementById('mainVideo');
     const moviePath = sessionStorage.getItem('currentMoviePath');
+    const audioSelect = document.getElementById('audioTrackSelect');
 
     if (!moviePath) {
         console.error('No movie path found');
@@ -14,295 +16,299 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
 
-    const mediaSource = new MediaSource();
-    videoElement.src = URL.createObjectURL(mediaSource);
-
+    // Global State
     let currentAudioTrackIndex = 0;
-    const audioSelect = document.getElementById('audioTrackSelect');
+    let lastDecodeErrorTime = 0;
+    let currentMediaSource = null;
+    let currentAbortController = null;
 
-    mediaSource.addEventListener('sourceopen', async () => {
-        try {
-            console.log(`Fetching metadata for: ${moviePath}`);
-            const metaResponse = await fetch(`/api/metadata?path=${encodeURIComponent(moviePath)}`);
-            if (!metaResponse.ok) throw new Error(`Metadata fetch failed: ${metaResponse.status}`);
-            const metadata = await metaResponse.json();
+    // Main Initialization Function
+    const loadVideo = async (startPosition = 0) => {
+        console.log(`Initializing player at ${startPosition}s...`);
 
-            console.log('Metadata:', metadata);
+        // 1. Cleanup previous state
+        if (currentAbortController) {
+            currentAbortController.abort();
+            currentAbortController = null;
+        }
 
-            // Setup Duration
-            if (metadata.duration && metadata.duration > 0) {
-                mediaSource.duration = metadata.duration;
-            }
+        // 2. Create new MediaSource
+        const mediaSource = new MediaSource();
+        currentMediaSource = mediaSource;
+        videoElement.src = URL.createObjectURL(mediaSource);
 
-            // Setup Video Codec
-            let videoCodec = 'avc1.4d4028';
-            if (metadata.video_codec === 'hevc') {
-                videoCodec = 'hvc1.1.6.L93.B0';
-            }
-
-            // Setup Audio Tracks API
-            const audioTracks = metadata.audio_tracks || [];
-            if (audioTracks.length > 1) {
-                audioSelect.style.display = 'block';
-                audioSelect.innerHTML = audioTracks.map(track => {
-                    const label = track.label || track.language || `Track ${track.index + 1}`;
-                    const codec = track.codec === 'aac' ? '' : ` (${track.codec})`;
-                    return `<option value="${track.index}">${label}${codec}</option>`;
-                }).join('');
-
-                audioSelect.addEventListener('change', (e) => {
-                    const newIndex = parseInt(e.target.value);
-                    if (newIndex !== currentAudioTrackIndex) {
-                        console.log(`Switching audio track to ${newIndex}`);
-                        currentAudioTrackIndex = newIndex;
-
-                        const wasPlaying = !videoElement.paused;
-
-                        // Restart stream immediately at current time
-                        startStream(videoElement.currentTime);
-
-                        // Signal intent to play immediately (browser will buffer)
-                        if (wasPlaying) {
-                            console.log("Resuming playback after track switch...");
-                            videoElement.play().catch(e => console.warn("Resume failed:", e));
-                        }
-                    }
-                });
-            }
-
-            // Construct MIME
-            // We assume audio is present if tracks > 0
-            const hasAudio = audioTracks.length > 0;
-            let outputMime = `video/mp4; codecs="${videoCodec}`;
-            if (hasAudio) {
-                outputMime += ',mp4a.40.2';
-            }
-            outputMime += '"';
-
-            console.log(`Initializing SourceBuffer with: ${outputMime}`);
-
-            if (!MediaSource.isTypeSupported(outputMime)) {
-                alert(`Browser does not support the required codec: ${outputMime}`);
+        mediaSource.addEventListener('sourceopen', async () => {
+            // If this mediaSource is stale (replaced during async wait), stop.
+            if (mediaSource !== currentMediaSource) {
+                console.log("MediaSource replaced, stopping old initialization.");
                 return;
             }
 
-            const sourceBuffer = mediaSource.addSourceBuffer(outputMime);
-            sourceBuffer.mode = 'segments';
+            URL.revokeObjectURL(videoElement.src); // Good practice
 
-            // Stream Management
-            let abortController = null;
-            const queue = [];
+            try {
+                // Fetch Metadata
+                console.log(`Fetching metadata for: ${moviePath}`);
+                const metaResponse = await fetch(`/api/metadata?path=${encodeURIComponent(moviePath)}`);
+                if (!metaResponse.ok) throw new Error(`Metadata fetch failed: ${metaResponse.status}`);
+                const metadata = await metaResponse.json();
 
-            const cleanupBuffer = () => {
-                if (mediaSource.readyState !== 'open' || sourceBuffer.updating) return;
-                const removeEnd = videoElement.currentTime - 30;
-                if (removeEnd > 0) {
-                    try {
-                        sourceBuffer.remove(0, removeEnd);
-                    } catch (e) {
-                        console.error('Remove error:', e);
-                    }
+                // Setup Duration
+                if (metadata.duration && metadata.duration > 0) {
+                    mediaSource.duration = metadata.duration;
                 }
-            };
 
-            let lastDecodeErrorTime = 0;
+                // Setup Video Codec
+                let videoCodec = 'avc1.4d4028';
+                if (metadata.video_codec === 'hevc') {
+                    videoCodec = 'hvc1.1.6.L93.B0';
+                }
 
-            const appendNext = () => {
-                if (mediaSource.readyState !== 'open') return;
+                // Setup Audio Tracks UI (Only once effectively, but re-population is safe)
+                const audioTracks = metadata.audio_tracks || [];
+                if (audioTracks.length > 1) {
+                    audioSelect.style.display = 'block';
+                    audioSelect.innerHTML = audioTracks.map(track => {
+                        const label = track.label || track.language || `Track ${track.index + 1}`;
+                        const codec = track.codec === 'aac' ? '' : ` (${track.codec})`;
+                        const selected = track.index === currentAudioTrackIndex ? 'selected' : '';
+                        return `<option value="${track.index}" ${selected}>${label}${codec}</option>`;
+                    }).join('');
 
-                if (videoElement.error) {
-                    console.error('Playback Error detected:', videoElement.error);
+                    // Remove old listener to avoid duplicates if any (though we usually don't need to if element persists)
+                    // Better: use 'onchange' property or ensure single add.
+                    audioSelect.onchange = (e) => {
+                        const newIndex = parseInt(e.target.value);
+                        if (newIndex !== currentAudioTrackIndex) {
+                            console.log(`Switching audio track to ${newIndex}`);
+                            currentAudioTrackIndex = newIndex;
+                            // Restart stream at current time
+                            // We can use startStream (soft restart) if just switching audio?
+                            // Or full reload? Soft restart is better for UX.
+                            // But since startStream is internal, we trigger it via seek or call it directly if exposed.
+                            // However, since we are inside init, we can just call startStream.
+                            startStream(videoElement.currentTime);
+                        }
+                    };
+                }
 
-                    if (videoElement.error.code === 3) { // MEDIA_ERR_DECODE
-                        const now = Date.now();
-                        if (now - lastDecodeErrorTime > 5000) {
-                            console.warn("Attempting to recover from decode error by skipping 2s...");
-                            lastDecodeErrorTime = now;
-                            const targetTime = videoElement.currentTime + 2.0;
-                            // Forced restart at new time
-                            startStream(targetTime);
-                            return;
+                // Construct MIME
+                const hasAudio = audioTracks.length > 0;
+                let outputMime = `video/mp4; codecs="${videoCodec}`;
+                if (hasAudio) {
+                    outputMime += ',mp4a.40.2';
+                }
+                outputMime += '"';
+
+                if (!MediaSource.isTypeSupported(outputMime)) {
+                    alert(`Browser does not support codec: ${outputMime}`);
+                    return;
+                }
+
+                const sourceBuffer = mediaSource.addSourceBuffer(outputMime);
+                sourceBuffer.mode = 'segments';
+
+                // --- Streaming Logic ---
+                let abortController = null;
+                const queue = [];
+
+                const cleanupBuffer = () => {
+                    if (mediaSource.readyState !== 'open' || sourceBuffer.updating) return;
+                    const removeEnd = videoElement.currentTime - 30;
+                    if (removeEnd > 0) {
+                        try {
+                            sourceBuffer.remove(0, removeEnd);
+                        } catch (e) {
+                            console.error('Remove error:', e);
+                        }
+                    }
+                };
+
+                const appendNext = () => {
+                    if (mediaSource.readyState !== 'open') return;
+
+                    // Error Check Phase
+                    if (videoElement.error) {
+                        console.error('Playback Error detected:', videoElement.error);
+
+                        // Recovery Logic
+                        if (videoElement.error.code === 3) { // MEDIA_ERR_DECODE
+                            const now = Date.now();
+                            if (now - lastDecodeErrorTime > 5000) {
+                                console.warn("Attempting to recover from decode error by reloading player skipping 2s...");
+                                lastDecodeErrorTime = now;
+                                const targetTime = videoElement.currentTime + 2.0;
+
+                                // FULL RELOAD
+                                loadVideo(targetTime);
+                                return;
+                            } else {
+                                console.error("Too many decode errors. Giving up.");
+                                return;
+                            }
                         } else {
-                            console.error("Too many decode errors in rapid succession. Stopping.");
+                            console.error("Fatal playback error.");
                             return;
                         }
-                    } else {
-                        // Not a decode error, just stop
-                        console.error('Non-recoverable error, stopping append.');
-                        return;
                     }
-                }
 
-                if (queue.length > 0 && !sourceBuffer.updating) {
-                    try {
-                        sourceBuffer.appendBuffer(queue[0]);
-                        queue.shift();
-                    } catch (e) {
-                        if (e.name === 'QuotaExceededError') {
-                            console.warn('Buffer quota exceeded. Attempting cleanup.');
-                            cleanupBuffer();
-                        } else {
-                            console.error('Append error:', e);
+                    if (queue.length > 0 && !sourceBuffer.updating) {
+                        try {
+                            sourceBuffer.appendBuffer(queue[0]);
                             queue.shift();
-                        }
-                    }
-                }
-            };
-
-            sourceBuffer.addEventListener('updateend', appendNext);
-            sourceBuffer.addEventListener('error', (e) => console.error('SourceBuffer error:', e));
-
-            // Start Stream Function
-            const startStream = async (startTime = 0, retryCount = 0) => {
-                try {
-                    if (retryCount > 20) {
-                        console.error("Failed to start stream after multiple retries (buffer busy).");
-                        return;
-                    }
-
-                    if (abortController) {
-                        abortController.abort();
-                    }
-                    abortController = new AbortController();
-                    const signal = abortController.signal;
-
-                    // Clear queue
-                    queue.length = 0;
-
-                    // Reset parser state via abort()
-                    if (mediaSource.readyState === 'open') {
-                        try {
-                            sourceBuffer.abort();
                         } catch (e) {
-                            console.warn('Abort error:', e);
+                            if (e.name === 'QuotaExceededError') {
+                                cleanupBuffer();
+                            } else {
+                                console.error('Append error:', e);
+                                queue.shift();
+                            }
                         }
                     }
+                };
 
-                    // Wait for updating to clear
-                    let safeties = 0;
-                    while (sourceBuffer.updating && safeties < 20) {
-                        await new Promise(r => setTimeout(r, 20));
-                        safeties++;
-                    }
+                sourceBuffer.addEventListener('updateend', appendNext);
+                sourceBuffer.addEventListener('error', (e) => console.error('SourceBuffer error:', e));
 
-                    // FLUSH BUFFER: Remove all existing data to prevent timeline conflicts (backwards seek issue)
-                    if (mediaSource.readyState === 'open' && !sourceBuffer.updating) {
+                // Start Stream Inner Function
+                const startStream = async (timeToStart) => {
+                    // Retry / Busy check
+                    let retryCount = 0;
+                    const maxRetries = 20;
+
+                    const activeStart = async () => {
                         try {
-                            console.log("Flushing buffer...");
-                            sourceBuffer.remove(0, Infinity);
+                            if (abortController) abortController.abort();
+                            abortController = new AbortController();
+                            const signal = abortController.signal;
 
-                            // Wait for remove() to finish
-                            let removeSafeties = 0;
-                            while (sourceBuffer.updating && removeSafeties < 50) { // Give it up to 1s
+                            queue.length = 0;
+
+                            // Abort any current sourceBuffer op
+                            if (mediaSource.readyState === 'open') {
+                                try { sourceBuffer.abort(); } catch (e) { }
+                            }
+
+                            // Wait for not updating
+                            let safeties = 0;
+                            while (sourceBuffer.updating && safeties < 20) {
                                 await new Promise(r => setTimeout(r, 20));
-                                removeSafeties++;
+                                safeties++;
                             }
-                            console.log("Buffer flushed.");
+
+                            // Flush for seek/restart
+                            if (mediaSource.readyState === 'open' && !sourceBuffer.updating) {
+                                try {
+                                    sourceBuffer.remove(0, Infinity);
+                                    let s2 = 0;
+                                    while (sourceBuffer.updating && s2 < 50) {
+                                        await new Promise(r => setTimeout(r, 20));
+                                        s2++;
+                                    }
+                                } catch (e) { console.warn("Flush failed", e); }
+                            }
+
+                            if (sourceBuffer.updating) {
+                                if (retryCount < maxRetries) {
+                                    retryCount++;
+                                    setTimeout(activeStart, 100);
+                                    return;
+                                }
+                                return;
+                            }
+
+                            // Re-open if ended
+                            if (mediaSource.readyState === 'ended') {
+                                try { sourceBuffer.abort(); } catch (e) { }
+                            }
+
+                            if (mediaSource.readyState === 'open') {
+                                sourceBuffer.timestampOffset = timeToStart;
+                            } else {
+                                // If closed, we might need full reload or just return?
+                                // If mediaSource is closed here, it's bad.
+                                console.error("MediaSource not open during startStream");
+                                return;
+                            }
+
+                            console.log(`Fetching stream: ${timeToStart}s`);
+                            const response = await fetch(`/api/stream?path=${encodeURIComponent(moviePath)}&start=${timeToStart}&audio_track=${currentAudioTrackIndex}`, { signal });
+                            if (!response.ok) throw new Error(`Stream fetch failed: ${response.status}`);
+
+                            const reader = response.body.getReader();
+                            let totalBytes = 0;
+
+                            while (true) {
+                                if (signal.aborted) break;
+                                if (mediaSource.readyState !== 'open') break;
+
+                                if (sourceBuffer.buffered.length > 0) {
+                                    const end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
+                                    if (end - videoElement.currentTime > 30) {
+                                        await new Promise(r => setTimeout(r, 1000));
+                                        if (!queue.length && !sourceBuffer.updating) appendNext();
+                                        continue;
+                                    }
+                                }
+
+                                const { done, value } = await reader.read();
+                                if (done) {
+                                    if (mediaSource.readyState === 'open' && !signal.aborted) mediaSource.endOfStream();
+                                    break;
+                                }
+
+                                if (value && value.byteLength > 0) {
+                                    totalBytes += value.byteLength;
+                                    queue.push(value);
+
+                                    // Immediate error check
+                                    if (videoElement.error) {
+                                        // This will be caught by appendNext or next loop
+                                        console.error("Stream loop detected error");
+                                        break;
+                                    }
+                                    if (!sourceBuffer.updating) appendNext();
+                                }
+                            }
+
                         } catch (e) {
-                            console.warn("Buffer flush failed:", e);
+                            if (e.name !== 'AbortError') console.error("Stream Loop Error:", e);
                         }
-                    }
+                    };
+                    activeStart();
+                };
 
-                    if (sourceBuffer.updating) {
-                        console.warn(`SourceBuffer busy after flush, retrying stream start (${retryCount + 1})...`);
-                        setTimeout(() => startStream(startTime, retryCount + 1).catch(e => console.warn("Retry failed:", e)), 100);
-                        return;
-                    }
+                // Define Seeking Handler (capturing current scope's startStream)
+                videoElement.onseeking = () => {
+                    console.log(`Seek detected: ${videoElement.currentTime}`);
+                    startStream(videoElement.currentTime);
+                };
 
-                    // Ensure MediaSource is open before setting timestampOffset
-                    if (mediaSource.readyState === 'ended') {
-                        try {
-                            console.log("MediaSource ended, re-opening via abort()...");
-                            sourceBuffer.abort();
-                        } catch (e) {
-                            console.warn("Failed to re-open MediaSource:", e);
-                        }
-                    }
-
-                    if (mediaSource.readyState === 'open') {
-                        sourceBuffer.timestampOffset = startTime;
-                        console.log(`TimestampOffset set to ${startTime}`);
-                    } else {
-                        console.error(`MediaSource state is ${mediaSource.readyState}. Cannot set timestampOffset or seek.`);
-                        return;
-                    }
-
-                    console.log(`Fetching stream for: ${moviePath} at ${startTime}s (AudioTrack: ${currentAudioTrackIndex})`);
-                    const response = await fetch(`/api/stream?path=${encodeURIComponent(moviePath)}&start=${startTime}&audio_track=${currentAudioTrackIndex}`, { signal });
-                    if (!response.ok) throw new Error(`Fetch failed: ${response.status}`);
-
-                    console.log("Stream connected, reading...");
-                    const reader = response.body.getReader();
-
-                    let totalBytes = 0;
-                    while (true) {
-                        if (signal.aborted) {
-                            console.debug("Previous stream fetch stopped (cleanup).");
-                            break;
-                        }
-
-                        // Debug buffered ranges occasionally
-                        if (totalBytes % (1024 * 1024) === 0) { // Every 1MB approx
-                            let ranges = [];
-                            for (let i = 0; i < sourceBuffer.buffered.length; i++) {
-                                ranges.push(`${sourceBuffer.buffered.start(i).toFixed(2)}-${sourceBuffer.buffered.end(i).toFixed(2)}`);
-                            }
-                            console.log(`Buffered ranges: [${ranges.join(', ')}], Current: ${videoElement.currentTime}`);
-                        }
-
-                        // Flow control
-                        if (sourceBuffer.buffered.length > 0) {
-                            const bufferedEnd = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
-                            if (bufferedEnd - videoElement.currentTime > 30) {
-                                await new Promise(r => setTimeout(r, 1000));
-                                if (!queue.length && !sourceBuffer.updating) appendNext();
-                                continue;
-                            }
-                        }
-
-                        const { done, value } = await reader.read();
-                        if (done) {
-                            console.log("Stream finished");
-                            if (mediaSource.readyState === 'open' && !signal.aborted) {
-                                mediaSource.endOfStream();
-                            }
-                            break;
-                        }
-
-                        if (value && value.byteLength > 0) {
-                            totalBytes += value.byteLength;
-                            queue.push(value);
-                            if (videoElement.error) {
-                                console.error('Video element error detected in stream loop:', videoElement.error);
-                                break;
-                            }
-                            if (!sourceBuffer.updating) appendNext();
-                        }
-                    }
-                } catch (e) {
-                    if (e.name === 'AbortError' || e.message.includes('Aborted') || e.message.includes('aborted') || e.message.includes('BodyStreamBuffer')) {
-                        console.debug('Fetch request cancelled (cleanup).');
-                    } else {
-                        console.error("Stream error loop:", e);
-                    }
+                // Initial start logic
+                if (startPosition > 0) {
+                    console.log(`Restoring position to ${startPosition}s`);
+                    videoElement.currentTime = startPosition;
+                    // Setting currentTime triggers 'seeking', which calls startStream.
+                } else {
+                    startStream(0);
                 }
-            };
 
-            // Handle Seek
-            videoElement.addEventListener('seeking', () => {
-                console.log(`User seeking to: ${videoElement.currentTime}`);
+                // Safely attempt play when ready
+                const tryPlay = () => {
+                    videoElement.play().catch(e => {
+                        if (e.name !== 'AbortError') console.log("Autoplay blocked or waiting", e);
+                    });
+                };
 
-                // User requested to always restart stream to ensure stability, 
-                // ignoring any potentially existing buffer.
-                console.log('Seek detected. Restarting stream (forced).');
-                const time = videoElement.currentTime;
-                startStream(time).catch(e => console.error("StartStream failed on seek:", e));
-            });
+                videoElement.addEventListener('canplay', tryPlay, { once: true });
+                videoElement.addEventListener('canplaythrough', tryPlay, { once: true });
 
-            // Initial start
-            startStream(0);
-        } catch (e) {
-            console.error("Setup error:", e);
-        }
-    });
+            } catch (e) {
+                console.error("Setup error in sourceopen:", e);
+            }
+        });
+    };
+
+    // Kickoff
+    loadVideo(0);
 });
