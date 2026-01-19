@@ -105,11 +105,32 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             };
 
+            let lastDecodeErrorTime = 0;
+
             const appendNext = () => {
                 if (mediaSource.readyState !== 'open') return;
+
                 if (videoElement.error) {
-                    console.error('Playback Error detected, stopping append:', videoElement.error);
-                    return;
+                    console.error('Playback Error detected:', videoElement.error);
+
+                    if (videoElement.error.code === 3) { // MEDIA_ERR_DECODE
+                        const now = Date.now();
+                        if (now - lastDecodeErrorTime > 5000) {
+                            console.warn("Attempting to recover from decode error by skipping 2s...");
+                            lastDecodeErrorTime = now;
+                            const targetTime = videoElement.currentTime + 2.0;
+                            // Forced restart at new time
+                            startStream(targetTime);
+                            return;
+                        } else {
+                            console.error("Too many decode errors in rapid succession. Stopping.");
+                            return;
+                        }
+                    } else {
+                        // Not a decode error, just stop
+                        console.error('Non-recoverable error, stopping append.');
+                        return;
+                    }
                 }
 
                 if (queue.length > 0 && !sourceBuffer.updating) {
