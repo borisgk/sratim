@@ -307,10 +307,16 @@ header {
     height: 100%;
 }
 
-.close-btn {
+.player-controls-top {
     position: absolute;
     top: -40px;
     right: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.close-btn {
     color: white;
     text-decoration: none;
     font-size: 24px;
@@ -324,11 +330,7 @@ header {
     border-radius: 50%;
 }
 
-.audio-select {
-    position: absolute;
-    top: -40px;
-    right: 40px;
-    /* Left of close button */
+.track-select {
     background: rgba(255, 255, 255, 0.1);
     color: white;
     border: 1px solid rgba(255, 255, 255, 0.2);
@@ -340,7 +342,7 @@ header {
     outline: none;
 }
 
-.audio-select option {
+.track-select option {
     background: #222;
     color: white;
 }

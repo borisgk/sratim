@@ -10,7 +10,7 @@ use tokio_util::io::ReaderStream;
 use crate::models::{
     AppState, FileEntry, ListParams, MetadataParams, StreamParams, SubtitleParams,
 };
-use crate::streaming::{ProcessStream, probe_metadata, spawn_ffmpeg};
+use crate::streaming::{ProcessStream, extract_subtitle, probe_metadata, spawn_ffmpeg};
 
 pub async fn list_files(
     State(state): State<AppState>,
@@ -191,10 +191,48 @@ pub async fn stream_video(
     }
 }
 
+// ...
+
 pub async fn get_subtitles(
-    State(_state): State<AppState>,
-    Query(_params): Query<SubtitleParams>,
+    State(state): State<AppState>,
+    Query(params): Query<SubtitleParams>,
 ) -> impl IntoResponse {
-    // Stub
-    StatusCode::NOT_FOUND.into_response()
+    let abs_path = state.movies_dir.join(&params.path);
+    if !abs_path.exists() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    match extract_subtitle(&abs_path, params.index) {
+        Ok(mut child) => {
+            let stdout = child.stdout.take().unwrap();
+            let stderr = child.stderr.take().unwrap();
+
+            // Spawn stderr logger
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stderr);
+                let mut line = String::new();
+                while let Ok(n) = reader.read_line(&mut line).await {
+                    if n == 0 {
+                        break;
+                    }
+                    eprint!("[ffmpeg-sub] {}", line);
+                    line.clear();
+                }
+            });
+
+            let stream = ReaderStream::new(stdout);
+            let process_stream = ProcessStream::new(stream, child);
+
+            Response::builder()
+                .header("Content-Type", "text/vtt")
+                .header("Cache-Control", "no-cache")
+                .body(Body::from_stream(process_stream))
+                .unwrap()
+                .into_response()
+        }
+        Err(e) => {
+            eprintln!("Failed to extract subtitles: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }

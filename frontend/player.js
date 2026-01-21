@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const videoElement = document.getElementById('mainVideo');
     const moviePath = sessionStorage.getItem('currentMoviePath');
     const audioSelect = document.getElementById('audioTrackSelect');
+    const subtitleSelect = document.getElementById('subtitleTrackSelect');
 
     if (!moviePath) {
         console.error('No movie path found');
@@ -82,12 +83,47 @@ document.addEventListener('DOMContentLoaded', async () => {
                         if (newIndex !== currentAudioTrackIndex) {
                             console.log(`Switching audio track to ${newIndex}`);
                             currentAudioTrackIndex = newIndex;
-                            // Restart stream at current time
-                            // We can use startStream (soft restart) if just switching audio?
-                            // Or full reload? Soft restart is better for UX.
-                            // But since startStream is internal, we trigger it via seek or call it directly if exposed.
-                            // However, since we are inside init, we can just call startStream.
                             startStream(videoElement.currentTime);
+                        }
+                    };
+                }
+
+                // Setup Subtitle Tracks UI
+                const subtitleTracks = metadata.subtitle_tracks || [];
+                if (subtitleTracks.length > 0) {
+                    subtitleSelect.style.display = 'block';
+                    const options = subtitleTracks.map(track => {
+                        const label = track.label || track.language || `Track ${track.index + 1}`;
+                        // const selected = track.index === currentSubtitleIndex ? 'selected' : ''; // Default off
+                        return `<option value="${track.index}">${label}</option>`;
+                    }).join('');
+
+                    // Prepend "Off" option (already in HTML, but if we overwrite innerHTML we need to keep it)
+                    subtitleSelect.innerHTML = `<option value="-1" selected>Subtitles: Off</option>` + options;
+
+                    subtitleSelect.onchange = (e) => {
+                        const trackIndex = parseInt(e.target.value);
+                        console.log(`Switching subtitle track to ${trackIndex}`);
+
+                        // Remove existing tracks
+                        const existingTracks = videoElement.querySelectorAll('track');
+                        existingTracks.forEach(t => t.remove());
+
+                        if (trackIndex !== -1) {
+                            const trackData = subtitleTracks.find(t => t.index === trackIndex);
+                            if (trackData) {
+                                const track = document.createElement('track');
+                                track.kind = 'subtitles';
+                                track.label = trackData.label || trackData.language || `Track ${trackIndex + 1}`;
+                                track.srclang = trackData.language || 'en';
+                                track.src = `/api/subtitles?path=${encodeURIComponent(moviePath)}&index=${trackIndex}`;
+                                track.default = true;
+                                videoElement.appendChild(track);
+
+                                // Ensure it shows
+                                // Accessing track.track might require waiting for append? Usually unexpected but let's see.
+                                // track.track.mode = 'showing';
+                            }
                         }
                     };
                 }

@@ -15,8 +15,15 @@
 <body>
     <div class="player-page">
         <div id="playerContainer" class="player-container">
-            <a href="index.html" class="close-btn" aria-label="Close">&times;</a>
-            <select id="audioTrackSelect" class="audio-select" style="display: none;" aria-label="Audio Track"></select>
+            <div class="player-controls-top">
+                <select id="subtitleTrackSelect" class="track-select" style="display: none;"
+                    aria-label="Subtitle Track">
+                    <option value="-1">Subtitles: Off</option>
+                </select>
+                <select id="audioTrackSelect" class="track-select" style="display: none;"
+                    aria-label="Audio Track"></select>
+                <a href="index.html" class="close-btn" aria-label="Close">&times;</a>
+            </div>
             <div class="video-wrapper">
                 <video id="mainVideo" controls></video>
             </div>

@@ -1,4 +1,4 @@
-use crate::models::{AudioTrack, MovieMetadata};
+use crate::models::{AudioTrack, MovieMetadata, SubtitleTrack};
 use anyhow::{Context, Result};
 use axum::body::Bytes;
 use futures_core::Stream;
@@ -65,6 +65,37 @@ pub fn spawn_ffmpeg(
         .kill_on_drop(true); // Safety: kill if client disconnects
 
     let child = command.spawn().context("Failed to spawn ffmpeg")?;
+    Ok(child)
+}
+
+pub fn extract_subtitle(path: &Path, subtitle_track_idx: usize) -> Result<Child> {
+    let path_str = path.to_string_lossy().to_string();
+    let map_arg = format!("0:s:{}", subtitle_track_idx);
+
+    let args = vec![
+        "-i",
+        path_str.as_str(),
+        "-map",
+        map_arg.as_str(),
+        "-c:s",
+        "webvtt",
+        "-f",
+        "webvtt",
+        "pipe:1",
+    ];
+
+    println!("[subtitle] Spawning ffmpeg: {:?}", args);
+
+    let mut command = tokio::process::Command::new("ffmpeg");
+    command
+        .args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped()) // Capture stderr to avoid polluting server logs, but maybe we don't need to read it
+        .kill_on_drop(true);
+
+    let child = command
+        .spawn()
+        .context("Failed to spawn ffmpeg for subtitles")?;
     Ok(child)
 }
 
@@ -162,7 +193,7 @@ pub async fn probe_metadata(path: &Path) -> Result<MovieMetadata> {
     let mut audio_tracks = Vec::new();
     let mut audio_idx_counter = 0;
 
-    for stream in streams {
+    for stream in &streams {
         if stream.codec_type == "audio" {
             let lang = stream.tags.as_ref().and_then(|t| t.language.clone());
             let label = stream
@@ -174,10 +205,41 @@ pub async fn probe_metadata(path: &Path) -> Result<MovieMetadata> {
                 index: audio_idx_counter,
                 language: lang,
                 label: label,
-                codec: stream.codec_name.unwrap_or_else(|| "unknown".to_string()),
+                codec: stream
+                    .codec_name
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
                 channels: stream.channels,
             });
             audio_idx_counter += 1;
+        }
+    }
+
+    let mut subtitle_tracks = Vec::new();
+    let mut subtitle_idx_counter = 0;
+
+    for stream in &streams {
+        if stream.codec_type == "subtitle" {
+            let lang = stream.tags.as_ref().and_then(|t| t.language.clone());
+            let label = stream
+                .tags
+                .as_ref()
+                .and_then(|t| t.title.clone().or_else(|| t.label.clone()));
+
+            // Some codecs might be image based (hdmv_pgs_subtitle, dvd_subtitle) which ffmpeg might struggle to convert to webvtt nicely without excessive CPU or OCR.
+            // TEXT based subtitles (subrip, mov_text, webvtt) convert easily.
+            // For now, we list them all, but extraction might fail for bitmap subs.
+
+            subtitle_tracks.push(SubtitleTrack {
+                index: subtitle_idx_counter,
+                language: lang,
+                label: label,
+                codec: stream
+                    .codec_name
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
+            });
+            subtitle_idx_counter += 1;
         }
     }
 
@@ -185,5 +247,6 @@ pub async fn probe_metadata(path: &Path) -> Result<MovieMetadata> {
         duration,
         video_codec,
         audio_tracks,
+        subtitle_tracks,
     })
 }

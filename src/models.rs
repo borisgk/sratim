@@ -90,10 +90,19 @@ pub struct AudioTrack {
 }
 
 #[derive(Serialize)]
+pub struct SubtitleTrack {
+    pub index: usize,
+    pub language: Option<String>,
+    pub label: Option<String>,
+    pub codec: String,
+}
+
+#[derive(Serialize)]
 pub struct MovieMetadata {
     pub duration: f64,
     pub video_codec: String,
     pub audio_tracks: Vec<AudioTrack>,
+    pub subtitle_tracks: Vec<SubtitleTrack>,
 }
 
 #[derive(Deserialize)]
