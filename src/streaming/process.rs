@@ -246,6 +246,7 @@ struct FFProbeStream {
 #[derive(Deserialize)]
 struct FFProbeFormat {
     duration: Option<String>,
+    tags: Option<FFProbeTags>,
 }
 
 #[derive(Deserialize)]
@@ -280,7 +281,8 @@ pub async fn probe_metadata(path: &Path) -> Result<MovieMetadata> {
 
     let duration = probe
         .format
-        .and_then(|f| f.duration)
+        .as_ref()
+        .and_then(|f| f.duration.as_ref())
         .and_then(|d| d.parse::<f64>().ok())
         .unwrap_or(0.0);
 
@@ -345,9 +347,12 @@ pub async fn probe_metadata(path: &Path) -> Result<MovieMetadata> {
         }
     }
 
+    let title = probe.format.and_then(|f| f.tags).and_then(|t| t.title);
+
     Ok(MovieMetadata {
         duration,
         video_codec,
+        title,
         audio_tracks,
         subtitle_tracks,
     })

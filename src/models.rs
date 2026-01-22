@@ -101,6 +101,7 @@ pub struct SubtitleTrack {
 pub struct MovieMetadata {
     pub duration: f64,
     pub video_codec: String,
+    pub title: Option<String>,
     pub audio_tracks: Vec<AudioTrack>,
     pub subtitle_tracks: Vec<SubtitleTrack>,
 }
@@ -139,4 +140,11 @@ pub struct FileEntry {
     pub path: String,
     #[serde(rename = "type")]
     pub entry_type: String, // "folder" or "file"
+    pub title: Option<String>,
+    pub poster: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct LookupParams {
+    pub path: String,
 }

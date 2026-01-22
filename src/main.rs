@@ -37,6 +37,7 @@ async fn main() {
         .route("/api/metadata", get(video::get_metadata))
         .route("/api/stream", get(video::stream_video))
         .route("/api/subtitles", get(video::get_subtitles))
+        .route("/api/lookup", get(video::lookup_metadata))
         .nest_service("/content", ServeDir::new(&movies_dir))
         .fallback_service(
             ServiceBuilder::new()

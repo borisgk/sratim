@@ -124,10 +124,45 @@ function renderGrid(nodes) {
             `;
         } else {
             card.onclick = () => playMovie(node);
+
+            // POSTER LOGIC
+            if (node.poster) {
+                // node.poster is relative to the movie folder inside /content/
+                // path is relative like Action/Movie.mkv
+                // image is relative like Action/Movie.jpg (or just Movie.jpg?)
+                // The backend `poster` field in FileEntry:
+                // If it is just a filename "Movie.jpg", and we are in /Action/, we need /content/Action/Movie.jpg
+
+                // Oops, the backend returns `poster: Some("Movie.jpg")`.
+                // We need to construct the full URL.
+                // node.path is "Action/Movie.mkv".
+                // The parent folder path is... we can extract it.
+                const lastSlash = node.path.lastIndexOf('/');
+                const parentPath = lastSlash !== -1 ? node.path.substring(0, lastSlash + 1) : '';
+                const posterUrl = `/content/${parentPath}${node.poster}`;
+
+                card.style.backgroundImage = `linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.8) 100%), url('${encodeURI(posterUrl)}')`;
+                card.style.backgroundSize = 'cover';
+                card.style.backgroundPosition = 'center';
+            }
+
+            const displayTitle = node.title || node.name;
+
             card.innerHTML = `
-                <div class="movie-icon">🎬</div>
-                <div class="movie-title">${node.name}</div>
+                <div class="movie-icon" ${node.poster ? 'style="opacity:0"' : ''}>🎬</div>
+                <div class="movie-title">${displayTitle}</div>
             `;
+
+            // LOOKUP BUTTON
+            const lookupBtn = document.createElement('div');
+            lookupBtn.className = 'lookup-btn';
+            lookupBtn.innerHTML = '🔍';
+            lookupBtn.title = 'Lookup Metadata';
+            lookupBtn.onclick = (e) => {
+                e.stopPropagation();
+                lookupMovie(node, card);
+            };
+            card.appendChild(lookupBtn);
         }
 
         moviesGrid.appendChild(card);
@@ -144,6 +179,37 @@ function playMovie(movie) {
 function saveNavigationState() {
     const stackData = navigationStack.map(n => ({ name: n.name, path: n.path }));
     sessionStorage.setItem('navigationStack', JSON.stringify(stackData));
+}
+
+async function lookupMovie(node, cardElement) {
+    const btn = cardElement.querySelector('.lookup-btn');
+    const originalIcon = btn.innerHTML;
+    btn.innerHTML = '⏳';
+
+    try {
+        const response = await fetch(`/api/lookup?path=${encodeURIComponent(node.path)}`);
+        if (!response.ok) throw new Error('Lookup failed');
+        const data = await response.json();
+
+        if (data) {
+            // Success, reload current folder
+            const currentPath = navigationStack[navigationStack.length - 1].path;
+            const nodes = await fetchMovies(currentPath);
+            // Invalidate cache
+            folderCache.set(currentPath, nodes);
+            // Refresh view
+            // Find CURRENT folder node to update children
+            navigationStack[navigationStack.length - 1].children = nodes;
+            renderUI();
+        } else {
+            alert('No metadata found for this movie.');
+            btn.innerHTML = originalIcon;
+        }
+    } catch (e) {
+        console.error("Lookup error:", e);
+        alert('Lookup failed.');
+        btn.innerHTML = originalIcon;
+    }
 }
 
 

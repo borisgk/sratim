@@ -7,8 +7,9 @@ use axum::{
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_util::io::ReaderStream;
 
+use crate::metadata::{LocalMetadata, cleanup_filename, download_image, fetch_tmdb_metadata};
 use crate::models::{
-    AppState, FileEntry, ListParams, MetadataParams, StreamParams, SubtitleParams,
+    AppState, FileEntry, ListParams, LookupParams, MetadataParams, StreamParams, SubtitleParams,
 };
 use crate::streaming::{
     ProcessStream, extract_subtitle, find_keyframe, probe_metadata, spawn_ffmpeg,
@@ -40,7 +41,7 @@ pub async fn list_files(
 
     let mut entries = Vec::new();
 
-    if let Ok(mut read_dir) = tokio::fs::read_dir(canonical_path).await {
+    if let Ok(mut read_dir) = tokio::fs::read_dir(&canonical_path).await {
         while let Ok(Some(entry)) = read_dir.next_entry().await {
             let file_name = entry.file_name().to_string_lossy().to_string();
             // Skip hidden files
@@ -63,6 +64,8 @@ pub async fn list_files(
                     name: file_name,
                     path: rel_path,
                     entry_type: "folder".to_string(),
+                    title: None,
+                    poster: None,
                 });
             } else if is_file {
                 if let Some(ext) = std::path::Path::new(&file_name)
@@ -71,10 +74,40 @@ pub async fn list_files(
                 {
                     match ext.to_lowercase().as_str() {
                         "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "flv" | "wmv" => {
+                            let mut title = None;
+                            let mut poster = None;
+
+                            // Check for Sidecar JSON
+                            let json_path = canonical_path.join(format!("{}.json", file_name));
+                            if json_path.exists() {
+                                if let Ok(content) = tokio::fs::read_to_string(&json_path).await {
+                                    if let Ok(meta) =
+                                        serde_json::from_str::<LocalMetadata>(&content)
+                                    {
+                                        title = Some(meta.title);
+                                        // Poster path is relative to movie? No, we might store it as absolute or relative.
+                                        // Let's assume we store it as local file name like "movie.jpg"
+                                        // But the frontend needs a way to access it.
+                                        // The frontend will construct URL.
+                                        // We just say "yes we have poster".
+                                        if meta.poster_path.is_some() {
+                                            // Check if image exists
+                                            let img_path =
+                                                canonical_path.join(format!("{}.jpg", file_name));
+                                            if img_path.exists() {
+                                                poster = Some(format!("{}.jpg", file_name));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             entries.push(FileEntry {
                                 name: file_name,
                                 path: rel_path,
                                 entry_type: "file".to_string(),
+                                title,
+                                poster,
                             });
                         }
                         _ => {}
@@ -254,4 +287,87 @@ pub async fn get_subtitles(
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+pub async fn lookup_metadata(
+    State(state): State<AppState>,
+    Query(params): Query<LookupParams>,
+) -> impl IntoResponse {
+    let abs_path = state.movies_dir.join(&params.path);
+    if !abs_path.exists() {
+        return (StatusCode::NOT_FOUND, Json(None::<LocalMetadata>)).into_response();
+    }
+
+    let file_name = abs_path.file_name().unwrap().to_string_lossy().to_string();
+    let (cleaned_name, year) = cleanup_filename(&file_name);
+
+    println!(
+        "Lookup metadata for: {} -> cleaned: '{}', year: {:?}",
+        file_name, cleaned_name, year
+    );
+
+    let api_key = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI0YjY4NjgwZDI3MzVlYjdiMWVkNjIwZTQwZDNiMjYxMCIsIm5iZiI6MTY5MjE5NTc4Ny41MjQsInN1YiI6IjY0ZGNkYmNiMDAxYmJkMDQxYmY0NjhlOCIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.3kiXVao5QsftRTtLu2H5mfmO8K35tCtD0siaWdeCbTw";
+
+    // 1. Search by filename with separated year
+    let mut best_match = fetch_tmdb_metadata(&cleaned_name, year.as_deref(), api_key)
+        .await
+        .ok()
+        .flatten();
+
+    // 2. Fallback: Probe internal title
+    if best_match.is_none() {
+        println!("No match for filename, probing internal title...");
+        if let Ok(meta) = probe_metadata(&abs_path).await {
+            if let Some(internal_title) = meta.title {
+                println!("Internal title found: {}", internal_title);
+                // For internal title, we might not have a year explicitly separated,
+                // or we could try to clean it too?
+                // Let's clean the internal title as well to extract year if present.
+                let (clean_int_title, int_year) = cleanup_filename(&internal_title);
+                best_match = fetch_tmdb_metadata(&clean_int_title, int_year.as_deref(), api_key)
+                    .await
+                    .ok()
+                    .flatten();
+            }
+        }
+    }
+
+    if let Some(m) = best_match {
+        // Save to JSON
+        // We want to match the logic in list_files, which looks for format!("{}.json", file_name)
+        // file_name includes extension, e.g. "Movie.mkv". So we want "Movie.mkv.json"
+
+        let json_path = abs_path
+            .parent()
+            .unwrap()
+            .join(format!("{}.json", file_name));
+
+        // Download poster if available
+        if let Some(poster_suffix) = &m.poster_path {
+            // Also matching list_files: format!("{}.jpg", file_name) -> "Movie.mkv.jpg"
+            let img_path = abs_path
+                .parent()
+                .unwrap()
+                .join(format!("{}.jpg", file_name));
+            if let Err(e) = download_image(poster_suffix, &img_path).await {
+                eprintln!("Failed to download image: {}", e);
+            }
+        }
+
+        // We keep the original poster path in the struct (suffix) or full?
+        // The definition has `poster_path: Option<String>`. TMDB returns suffix.
+        // We should store suffix so we know we have it? Or store what we want to return?
+        // Let's store what we got from TMDB.
+
+        let content = serde_json::to_string_pretty(&m).unwrap();
+        if let Err(e) = tokio::fs::write(&json_path, content).await {
+            eprintln!("Failed to write metadata json: {}", e);
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+
+        return Json(Some(m)).into_response();
+    }
+
+    // No match found
+    (StatusCode::OK, Json(None::<LocalMetadata>)).into_response()
 }
