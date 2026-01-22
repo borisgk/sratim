@@ -27,10 +27,16 @@ struct TmdbMovie {
 }
 
 pub fn cleanup_filename(filename: &str) -> (String, Option<String>) {
+    // Remove extension first
+    let filename_no_ext = Path::new(filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(filename);
+
     // 1. Find the year (19xx or 20xx)
     let year_re = Regex::new(r"[\(\[\.]*(19|20)\d{2}[\)\]\.]*").unwrap();
 
-    let (base_name, year) = if let Some(mat) = year_re.find(filename) {
+    let (base_name, year) = if let Some(mat) = year_re.find(filename_no_ext) {
         // Extract year string (clean it of brackets/dots)
         let raw_year = mat.as_str();
         let clean_year_re = Regex::new(r"\d{4}").unwrap();
@@ -38,9 +44,9 @@ pub fn cleanup_filename(filename: &str) -> (String, Option<String>) {
 
         // Keep everything up to the START of the year match for title
         let start = mat.start();
-        (&filename[..start], year_val)
+        (&filename_no_ext[..start], year_val)
     } else {
-        (filename, None)
+        (filename_no_ext, None)
     };
 
     // 2. Remove tags from the remaining base_name
@@ -130,4 +136,44 @@ pub async fn download_image(poster_suffix: &str, target_path: &Path) -> Result<(
         .context("Failed to write image data")?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cleanup_filename_standard() {
+        let (title, year) = cleanup_filename("Inception.2010.1080p.Bluray.x264.mkv");
+        assert_eq!(title, "Inception");
+        assert_eq!(year, Some("2010".to_string()));
+    }
+
+    #[test]
+    fn test_cleanup_filename_with_brackets() {
+        let (title, year) = cleanup_filename("The.Matrix.[1999].4k.HDR.mkv");
+        assert_eq!(title, "The Matrix");
+        assert_eq!(year, Some("1999".to_string()));
+    }
+
+    #[test]
+    fn test_cleanup_filename_no_year() {
+        let (title, year) = cleanup_filename("My.Home.Movie.1080p.mp4");
+        assert_eq!(title, "My Home Movie");
+        assert_eq!(year, None);
+    }
+
+    #[test]
+    fn test_cleanup_filename_underscores() {
+        let (title, year) = cleanup_filename("Spider_Man_No_Way_Home_2021_WebRip.mp4");
+        assert_eq!(title, "Spider Man No Way Home");
+        assert_eq!(year, Some("2021".to_string()));
+    }
+
+    #[test]
+    fn test_cleanup_filename_simple() {
+        let (title, year) = cleanup_filename("Avatar (2009)");
+        assert_eq!(title, "Avatar");
+        assert_eq!(year, Some("2009".to_string()));
+    }
 }

@@ -11,3 +11,7 @@ port = 3000
 
 # Server listening host (set to 127.0.0.1 for local only, 0.0.0.0 for public)
 host = "0.0.0.0"
+
+# TMDB API Key (Optional)
+# Replace this with your actual TMDB API key.
+tmdb_api_key = "YOUR_TMDB_API_KEY_HERE"

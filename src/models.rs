@@ -18,6 +18,7 @@ pub struct AppConfig {
     pub port: u16,
     #[serde(default = "default_host")]
     pub host: String,
+    pub tmdb_api_key: Option<String>,
 }
 
 fn default_movies_dir() -> PathBuf {
@@ -65,6 +66,7 @@ impl AppConfig {
             frontend_dir: default_frontend_dir(),
             port: default_port(),
             host: default_host(),
+            tmdb_api_key: None,
         }
     }
 }
@@ -76,6 +78,7 @@ pub struct AppState {
     pub movies_dir: PathBuf,
     pub dash_temp_dir: PathBuf,
     pub ffmpeg_process: Arc<Mutex<Option<Child>>>,
+    pub tmdb_api_key: Option<String>,
 }
 
 // --- Models ---

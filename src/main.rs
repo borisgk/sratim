@@ -30,6 +30,7 @@ async fn main() {
         movies_dir: movies_dir.clone(),
         dash_temp_dir,
         ffmpeg_process: Arc::new(Mutex::new(None)),
+        tmdb_api_key: config.tmdb_api_key.clone(),
     };
 
     let app = Router::new()
