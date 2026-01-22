@@ -10,7 +10,11 @@ use tokio_util::io::ReaderStream;
 use crate::models::{
     AppState, FileEntry, ListParams, MetadataParams, StreamParams, SubtitleParams,
 };
-use crate::streaming::{ProcessStream, extract_subtitle, probe_metadata, spawn_ffmpeg};
+use crate::streaming::{
+    ProcessStream, extract_subtitle, find_keyframe, probe_metadata, spawn_ffmpeg,
+};
+
+// ...
 
 pub async fn list_files(
     State(state): State<AppState>,
@@ -136,13 +140,27 @@ pub async fn stream_video(
     let duration = metadata.duration;
     let has_audio = !metadata.audio_tracks.is_empty();
 
+    let mut actual_start = params.start;
+    if actual_start > 0.0 {
+        match find_keyframe(&abs_path, actual_start).await {
+            Ok(k) => {
+                actual_start = k;
+            }
+            Err(e) => {
+                eprintln!("Keyframe probe failed: {}", e);
+            }
+        }
+    }
+
     println!(
-        "Detected for {}: Codec={}, AudioTracks={}, Duration={:.2}s, RequestedTrack={:?}",
+        "Detected for {}: Codec={}, AudioTracks={}, Duration={:.2}s, RequestedTrack={:?}, RequestedStart={:.2}, ActualStart={:.2}",
         params.path,
         codec_name,
         metadata.audio_tracks.len(),
         duration,
-        params.audio_track
+        params.audio_track,
+        params.start,
+        actual_start
     );
 
     // Resolve audio track index to pass to ffmpeg
@@ -153,7 +171,7 @@ pub async fn stream_video(
         None
     };
 
-    match spawn_ffmpeg(&abs_path, params.start, audio_track_idx, &codec_name) {
+    match spawn_ffmpeg(&abs_path, actual_start, audio_track_idx, &codec_name) {
         Ok(mut child) => {
             let stdout = child.stdout.take().unwrap();
             let stderr = child.stderr.take().unwrap();
@@ -180,6 +198,7 @@ pub async fn stream_video(
                 .header("X-Video-Codec", codec_name)
                 .header("X-Has-Audio", if has_audio { "true" } else { "false" })
                 .header("X-Video-Duration", duration.to_string())
+                .header("X-Actual-Start", actual_start.to_string())
                 // No Content-Length, implies chunked if body is a stream
                 .body(Body::from_stream(process_stream))
                 .unwrap()

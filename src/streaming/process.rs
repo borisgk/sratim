@@ -99,6 +99,108 @@ pub fn extract_subtitle(path: &Path, subtitle_track_idx: usize) -> Result<Child>
     Ok(child)
 }
 
+// --- Keyframe Probe ---
+
+#[derive(Deserialize)]
+struct FFProbeFrame {
+    pkt_pts_time: String,
+}
+
+#[derive(Deserialize)]
+struct FFProbeFrameOutput {
+    frames: Option<Vec<FFProbeFrame>>,
+}
+
+pub async fn find_keyframe(path: &Path, target: f64) -> Result<f64> {
+    if target <= 0.0 {
+        return Ok(0.0);
+    }
+
+    // Search window: Look back 60s. ffmpeg -ss (target-60) snaps to a keyframe before that.
+    // Then we read frames forward.
+    let search_start = (target - 60.0).max(0.0);
+
+    println!(
+        "[keyframe] Probing keyframe near {} (scanning from {})",
+        target, search_start
+    );
+
+    // Command: ffprobe -ss {search_start} -i {path} -select_streams v -skip_frame nokey -show_entries frame=pkt_pts_time -of json -read_intervals "%+70"
+    // Note: -read_intervals is relative to the seek point if we use input seeking? No, it's absolute timestamps usually.
+    // simpler: just scan 70s of duration.
+
+    // We can use `-read_intervals` with `+duration` syntax relative to input?
+    // Or just let it run and pipe output? process.kill() isn't easy here.
+    // Best to use -read_intervals with absolute times if possible, or relative.
+
+    // Let's try explicit absolute time scan range.
+    // But we need input seeking for speed.
+    // If we use input seeking `-ss`, timestamps are reset? or processed?
+    // ffprobe usually reports preserved timestamps if we don't transcode?
+    // Let's verify: `ffprobe -ss 10 -i file -show_entries frame=pkt_pts_time`.
+    // It reports timestamps relative to 0 usually? No, pkt_pts_time is usually absolute or relative to file.
+
+    // SAFEST: No input seeking, just read_intervals.
+    // But read_intervals failed last time.
+    // Maybe `pkt_pts_time` was missing?
+
+    // Let's use `frame=best_effort_timestamp_time,pkt_pts_time`.
+
+    let start_scan = (target - 60.0).max(0.0);
+    let end_scan = target + 5.0; // slightly past target
+    let interval = format!("{}%{}", start_scan, end_scan);
+
+    let output = tokio::process::Command::new("ffprobe")
+        .args(&[
+            "-v",
+            "error",
+            "-select_streams",
+            "v",
+            "-skip_frame",
+            "nokey",
+            "-show_entries",
+            "frame=pkt_pts_time",
+            "-of",
+            "json",
+            "-read_intervals",
+            &interval,
+        ])
+        .arg(path)
+        .output()
+        .await
+        .context("Failed to run ffprobe")?;
+
+    if !output.status.success() {
+        return Err(anyhow::anyhow!("ffprobe failed"));
+    }
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    let result: FFProbeFrameOutput = serde_json::from_str(&output_str)?;
+
+    if let Some(frames) = result.frames {
+        // Find last keyframe <= target
+        // Add a small epsilon 0.1 to include target if it is exactly a keyframe
+        let mut candidate = 0.0;
+        let mut found = false;
+
+        for frame in frames {
+            let ts = frame.pkt_pts_time.parse::<f64>().unwrap_or(-1.0);
+            if ts >= 0.0 && ts <= target + 0.1 {
+                candidate = ts;
+                found = true;
+            }
+        }
+
+        if found {
+            println!("[keyframe] Found keyframe at {}", candidate);
+            return Ok(candidate);
+        }
+    }
+
+    println!("[keyframe] No keyframe found, defaulting to target.");
+    Ok(target)
+}
+
 // --- Process Stream Wrapper ---
 
 pub struct ProcessStream {

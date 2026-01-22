@@ -276,6 +276,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                             const response = await fetch(`/api/stream?path=${encodeURIComponent(moviePath)}&start=${timeToStart}&audio_track=${currentAudioTrackIndex}`, { signal });
                             if (!response.ok) throw new Error(`Stream fetch failed: ${response.status}`);
 
+                            const actualStartHeader = response.headers.get('X-Actual-Start');
+                            if (mediaSource.readyState === 'open') {
+                                if (actualStartHeader) {
+                                    const actualStart = parseFloat(actualStartHeader);
+                                    console.log(`Adjusting timestampOffset from ${timeToStart} to actual start: ${actualStart}`);
+                                    sourceBuffer.timestampOffset = actualStart;
+                                } else {
+                                    // Fallback if header missing (e.g. old server, error)
+                                    sourceBuffer.timestampOffset = timeToStart;
+                                }
+                            }
+
                             const reader = response.body.getReader();
                             let totalBytes = 0;
 
