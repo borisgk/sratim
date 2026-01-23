@@ -148,17 +148,42 @@ mod tests {
     fn test_cleanup_filename() {
         let cases = vec![
             ("Movie.Title.2023.1080p.mkv", "Movie Title", Some("2023")),
-            ("Another Movie (1999) [Bluray]", "Another Movie", Some("1999")),
+            (
+                "Another Movie (1999) [Bluray]",
+                "Another Movie",
+                Some("1999"),
+            ),
             ("No Year Movie", "No Year Movie", None),
-            ("Complex.Movie.Name.2022.PROPER.1080p.WEB-DL.H264-Release", "Complex Movie Name", Some("2022")),
-            ("Movie_With_Underscores_2020", "Movie With Underscores", Some("2020")),
-            ("Movie.Title.With.Many.Dots.2021", "Movie Title With Many Dots", Some("2021")),
+            (
+                "Complex.Movie.Name.2022.PROPER.1080p.WEB-DL.H264-Release",
+                "Complex Movie Name",
+                Some("2022"),
+            ),
+            (
+                "Movie_With_Underscores_2020",
+                "Movie With Underscores",
+                Some("2020"),
+            ),
+            (
+                "Movie.Title.With.Many.Dots.2021",
+                "Movie Title With Many Dots",
+                Some("2021"),
+            ),
         ];
 
         for (input, expected_title, expected_year) in cases {
             let (title, year) = cleanup_filename(input);
-            assert_eq!(title, expected_title, "Failed on title for input: {}", input);
-            assert_eq!(year.as_deref(), expected_year, "Failed on year for input: {}", input);
+            assert_eq!(
+                title, expected_title,
+                "Failed on title for input: {}",
+                input
+            );
+            assert_eq!(
+                year.as_deref(),
+                expected_year,
+                "Failed on year for input: {}",
+                input
+            );
         }
     }
 }
