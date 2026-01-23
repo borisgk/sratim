@@ -57,14 +57,10 @@ pub fn cleanup_filename(filename: &str) -> (String, Option<String>) {
     (final_title, year)
 }
 
-pub async fn fetch_tmdb_metadata(
-    query: &str,
-    year: Option<&str>,
-    access_token: &str,
-) -> Result<Option<LocalMetadata>> {
+pub async fn fetch_tmdb_metadata(query: &str, year: Option<&str>) -> Result<Option<LocalMetadata>> {
     let client = reqwest::Client::new();
     let mut url = format!(
-        "https://api.themoviedb.org/3/search/movie?query={}&language=en-US&page=1&include_adult=false",
+        "https://glossary.rus9n.com/3/search/movie?query={}&language=en-US&page=1&include_adult=false",
         urlencoding::encode(query)
     );
 
@@ -76,11 +72,13 @@ pub async fn fetch_tmdb_metadata(
         "[metadata] Searching TMDB for: '{}' (Year: {:?})",
         query, year
     );
+    println!("[metadata] Request URL: {}", url);
+    println!("[metadata] Request Headers: Accept: application/json");
 
     let resp = client
         .get(&url)
-        .header("Authorization", format!("Bearer {}", access_token))
         .header("Accept", "application/json")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .send()
         .await
         .context("Failed to send TMDB request")?;
@@ -114,13 +112,23 @@ pub async fn fetch_tmdb_metadata(
 }
 
 pub async fn download_image(poster_suffix: &str, target_path: &Path) -> Result<()> {
-    let url = format!("https://image.tmdb.org/t/p/w500{}", poster_suffix);
+    let url = format!("https://glossary.rus9n.com/t/p/w500{}", poster_suffix);
     println!("[metadata] Downloading image from: {}", url);
 
-    let resp = reqwest::get(&url)
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .context("Failed to build HTTP client")?;
+
+    let resp = client
+        .get(&url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .send()
         .await
         .context("Failed to download image")?;
+
     let bytes = resp.bytes().await.context("Failed to get image bytes")?;
+    println!("[metadata] Downloaded {} bytes", bytes.len());
 
     let mut file = fs::File::create(target_path)
         .await

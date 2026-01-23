@@ -46,30 +46,33 @@ header {
     letter-spacing: 2px;
     background: linear-gradient(to right, #fff, #6366f1);
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
 /* Movies Grid */
 .movies-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
     gap: 2rem;
 }
 
 .movie-card {
     background: var(--card-bg);
     border-radius: 1rem;
-    padding: 1.5rem;
+    padding: 1rem;
     cursor: pointer;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     border: 1px solid rgba(255, 255, 255, 0.05);
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
-    height: 180px;
+    justify-content: flex-end;
+    aspect-ratio: 2 / 3;
     position: relative;
     overflow: hidden;
+    background-size: cover;
+    background-position: center;
 }
 
 .movie-card:hover {
@@ -145,6 +148,7 @@ header {
 
 .movie-card.folder {
     border-color: rgba(255, 215, 0, 0.2);
+    justify-content: center;
     /* Golden tint for folders */
 }
 
@@ -154,6 +158,36 @@ header {
 
 .movie-card.back {
     opacity: 0.7;
+    justify-content: center;
+}
+
+.lookup-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 32px;
+    height: 32px;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    font-size: 1rem;
+    transition: all 0.2s;
+    opacity: 0;
+    transform: translateY(-5px);
+}
+
+.movie-card:hover .lookup-btn {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.lookup-btn:hover {
+    background: var(--accent);
+    transform: scale(1.1) !important;
 }
 
 @keyframes fadeIn {
