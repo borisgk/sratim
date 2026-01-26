@@ -76,6 +76,7 @@ pub struct AppState {
     pub movies_dir: PathBuf,
     pub dash_temp_dir: PathBuf,
     pub ffmpeg_process: Arc<Mutex<Option<Child>>>,
+    pub auth: crate::auth::AuthState,
 }
 
 // --- Models ---

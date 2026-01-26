@@ -400,3 +400,22 @@ header {
     background: #222;
     color: white;
 }
+
+.logout-btn {
+    margin-left: 10px;
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 5px 12px;
+    border-radius: 4px;
+    /* Matches other buttons */
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+    font-family: var(--font-body);
+}
+
+.logout-btn:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+}

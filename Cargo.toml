@@ -30,4 +30,9 @@ tokio-util = "0.7.18"
 futures-core = "0.3.31"
 percent-encoding = "2.3.2"
 axum-macros = "0.5.0"
+bcrypt = "0.18.0"
+jsonwebtoken = { version = "10.2.0", features = ["rust_crypto"] }
+axum-extra = { version = "0.9", features = ["cookie"] }
+chrono = "0.4.43"
+time = "0.3.46"
 

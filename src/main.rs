@@ -26,19 +26,35 @@ async fn main() {
     let dash_temp_dir = std::env::temp_dir().join("sratim_dash");
     std::fs::create_dir_all(&dash_temp_dir).expect("Failed to create dash temp directory");
 
+    let auth_state = sratim::auth::AuthState::new().await;
+
     let shared_state = AppState {
         movies_dir: movies_dir.clone(),
         dash_temp_dir,
         ffmpeg_process: Arc::new(Mutex::new(None)),
+        auth: auth_state,
     };
 
-    let app = Router::new()
+    let protected_routes = Router::new()
         .route("/api/movies", get(video::list_files))
         .route("/api/metadata", get(video::get_metadata))
         .route("/api/stream", get(video::stream_video))
         .route("/api/subtitles", get(video::get_subtitles))
         .route("/api/lookup", get(video::lookup_metadata))
+        .route("/api/me", get(sratim::auth::me_handler))
         .nest_service("/content", ServeDir::new(&movies_dir))
+        .layer(axum::middleware::from_fn(sratim::auth::auth_middleware));
+
+    let app = Router::new()
+        .merge(protected_routes)
+        .route(
+            "/api/login",
+            axum::routing::post(sratim::auth::login_handler),
+        )
+        .route(
+            "/api/logout",
+            axum::routing::post(sratim::auth::logout_handler),
+        )
         .fallback_service(
             ServiceBuilder::new()
                 .layer(SetResponseHeaderLayer::overriding(

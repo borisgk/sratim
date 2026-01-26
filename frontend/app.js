@@ -12,6 +12,10 @@ async function fetchMovies(path = '') {
     }
     try {
         const response = await fetch(`/api/movies?path=${encodeURIComponent(path)}`);
+        if (response.status === 401) {
+            window.location.href = '/login.html';
+            return null;
+        }
         if (!response.ok) throw new Error('Fetch failed');
         const nodes = await response.json();
         folderCache.set(path, nodes);
@@ -224,6 +228,10 @@ async function lookupMovie(node, cardElement, silent = false) {
 
     try {
         const response = await fetch(`/api/lookup?path=${encodeURIComponent(node.path)}`);
+        if (response.status === 401) {
+            window.location.href = '/login.html';
+            return;
+        }
         if (!response.ok) throw new Error('Lookup failed');
         const data = await response.json();
 
@@ -255,4 +263,28 @@ async function lookupMovie(node, cardElement, silent = false) {
 
 
 
+// Check user session
+async function checkUser() {
+    try {
+        const res = await fetch('/api/me');
+        if (res.ok) {
+            const user = await res.json();
+            const profile = document.getElementById('userProfile');
+            if (profile) {
+                profile.innerHTML = `
+                    <span style="margin-right: 1rem; color: #fff; font-weight: bold;">User: ${user.username}</span>
+                    <button id="logoutBtn" class="logout-btn">Logout</button>
+                `;
+                document.getElementById('logoutBtn').addEventListener('click', async () => {
+                    await fetch('/api/logout', { method: 'POST' });
+                    window.location.reload();
+                });
+            }
+        }
+    } catch (e) {
+        console.error("Failed to fetch user", e);
+    }
+}
+
+checkUser();
 initLibrary();
