@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Add Library</title>
+    <style>
+        body {
+            background-color: #121212;
+            color: #e0e0e0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .container {
+            background: #1e1e1e;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 600px;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 2rem;
+            color: #fff;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #aaa;
+        }
+
+        input,
+        select {
+            width: 100%;
+            padding: 0.8rem;
+            background: #2d2d2d;
+            border: 1px solid #333;
+            border-radius: 4px;
+            color: #fff;
+            box-sizing: border-box;
+        }
+
+        button {
+            width: 100%;
+            padding: 1rem;
+            background: #e50914;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: bold;
+            margin-top: 1rem;
+        }
+
+        button:hover {
+            background: #f40612;
+        }
+
+        button.secondary {
+            background: #333;
+        }
+
+        button.secondary:hover {
+            background: #444;
+        }
+
+        .browser {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #333;
+            background: #252525;
+            margin-top: 0.5rem;
+            border-radius: 4px;
+        }
+
+        .browser-item {
+            padding: 0.5rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+        }
+
+        .browser-item:hover {
+            background: #333;
+        }
+
+        .browser-item.selected {
+            background: #444;
+            font-weight: bold;
+        }
+
+        .icon {
+            margin-right: 0.5rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Add New Library</h1>
+        <form id="addLibraryForm">
+            <div class="form-group">
+                <label for="name">Library Name</label>
+                <input type="text" id="name" name="name" required placeholder="e.g., Action Movies">
+            </div>
+            <div class="form-group">
+                <label for="type">Content Type</label>
+                <select id="type" name="type">
+                    <option value="Movies">Movies</option>
+                    <option value="TVShows">TV Shows</option>
+                    <option value="Other">Other Videos</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Folder Path</label>
+                <input type="text" id="pathDisplay" readonly required placeholder="Select a folder below...">
+                <div class="browser" id="fileBrowser">
+                    <!-- Browser items injected here -->
+                </div>
+            </div>
+            <button type="submit">Add Library</button>
+            <button type="button" class="secondary" onclick="window.location.href='/'">Cancel</button>
+        </form>
+    </div>
+
+    <script>
+        const fileBrowser = document.getElementById('fileBrowser');
+        const pathDisplay = document.getElementById('pathDisplay');
+        const form = document.getElementById('addLibraryForm');
+        let currentPath = '';
+
+        async function loadBrowser(path = '') {
+            try {
+                const url = `/api/fs/browse?path=${encodeURIComponent(path)}`;
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('Failed to browse');
+                const entries = await res.json();
+
+                fileBrowser.innerHTML = '';
+
+                // If it's not root, usually we get '..' from backend.
+                // Assuming backend returns '..' as first item for parents.
+
+                entries.forEach(entry => {
+                    const div = document.createElement('div');
+                    div.className = 'browser-item';
+                    const icon = entry.is_dir ? '📁' : '📄';
+                    div.innerHTML = `<span class="icon">${icon}</span> ${entry.name}`;
+
+                    if (entry.is_dir) {
+                        div.onclick = () => {
+                            // Correctly handle ".." vs new path
+                            if (entry.name === '..') {
+                                loadBrowser(entry.path);
+                                currentPath = entry.path;
+                            } else {
+                                // Update path logic
+                                loadBrowser(entry.path);
+                                currentPath = entry.path;
+                            }
+                            updateSelectedPath();
+                        };
+                    } else {
+                        div.style.opacity = '0.5';
+                        div.style.cursor = 'default';
+                    }
+                    fileBrowser.appendChild(div);
+                });
+
+                // Update current path reference if we moved - wait, we set currentPath on click
+                // But for initial load?
+                // The backend doesn't explicitly return CURRENT dir path in list, but we can assume logic.
+                // Actually backend browse_filesystem returns entries.
+                // We should store currentPath based on what requested? or derive from entries?
+                // Backend entries have full path.
+            } catch (err) {
+                console.error(err);
+                fileBrowser.innerHTML = '<div style="padding:1rem; color:#cf6679;">Error loading browser</div>';
+            }
+        }
+
+        function updateSelectedPath() {
+            // Wait, clicking a folder navigates INTO it.
+            // We want to SELECT a folder.
+            // Maybe add a "Select This Folder" button or header?
+            // "Folder Path" input shows currentPath.
+            pathDisplay.value = currentPath;
+        }
+
+        // Initial load
+        // We'll call browse with empty logic to get default/root
+        loadBrowser().then(() => {
+            // We need to know the starting path. 
+            // The browser API returns entries. Let's assume user starts at root/home.
+            // We don't verify 'currentPath' from response yet.
+            // Let's modify browser to just set pathDisplay when directory loaded?
+            // The recursive logic updates currentPath.
+        });
+
+        // Better logic: each click updates currentPath and reloads list.
+        // We always assume the user wants to add the folder they are currently viewing?
+        // Or select a child?
+        // Usually: Navigate to parent, select child folder? Or Navigate INTO folder to select it?
+        // Let's allow navigating into, and use current path as selection.
+
+        // Intercept clicks
+        const origLoad = loadBrowser;
+        loadBrowser = async (p) => {
+            await origLoad(p);
+            // Verify the path if needed?
+            // Since we don't get 'current path' metadata, we rely on 'p' or last entry parent.
+            if (p) {
+                pathDisplay.value = p;
+                currentPath = p;
+            }
+        };
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = form.name.value;
+            const type = form.type.value;
+            const path = pathDisplay.value;
+
+            if (!path) {
+                alert('Please select a folder');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/libraries', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, type: type, kind: type, path }) // type enum matches?
+                });
+
+                if (res.ok) {
+                    window.location.href = '/';
+                } else {
+                    alert('Failed to create library');
+                }
+            } catch (err) {
+                console.error(err);
+                alert('Error creating library');
+            }
+        });
+
+    </script>
+</body>
+
+</html>

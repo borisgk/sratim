@@ -21,21 +21,35 @@ use crate::streaming::{
 
 // ...
 
+async fn get_base_path(state: &AppState, library_id: Option<&str>) -> std::path::PathBuf {
+    if let Some(id) = library_id {
+        let libraries = state.libraries.read().await;
+        if let Some(lib) = libraries.iter().find(|l| l.id == id) {
+            return lib.path.clone();
+        }
+    }
+    state.movies_dir.clone()
+}
+
 pub async fn list_files(
     State(state): State<AppState>,
     Query(params): Query<ListParams>,
 ) -> impl IntoResponse {
-    let mut abs_path = state.movies_dir.clone();
-    if !params.path.is_empty() {
-        abs_path.push(&params.path);
+    if params.library_id.is_none() && params.path.is_empty() {
+        // "Add Library" initial state: Return empty list for root
+        return Json(Vec::<FileEntry>::new()).into_response();
     }
+
+    let base_path = get_base_path(&state, params.library_id.as_deref()).await;
+    let mut abs_path = base_path.clone();
+    abs_path.push(&params.path);
 
     // Security check: ensure we didn't escape movies_dir
     let Ok(canonical_path) = abs_path.canonicalize() else {
         return (StatusCode::NOT_FOUND, Json(Vec::<FileEntry>::new())).into_response();
     };
 
-    let Ok(canonical_root) = state.movies_dir.canonicalize() else {
+    let Ok(canonical_root) = base_path.canonicalize() else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
 
@@ -140,7 +154,8 @@ pub async fn get_metadata(
     State(state): State<AppState>,
     Query(params): Query<MetadataParams>,
 ) -> impl IntoResponse {
-    let abs_path = state.movies_dir.join(&params.path);
+    let base_path = get_base_path(&state, params.library_id.as_deref()).await;
+    let abs_path = base_path.join(&params.path);
     if !abs_path.exists() {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -166,7 +181,8 @@ pub async fn stream_video(
     State(state): State<AppState>,
     Query(params): Query<StreamParams>,
 ) -> Response {
-    let abs_path = state.movies_dir.join(&params.path);
+    let base_path = get_base_path(&state, params.library_id.as_deref()).await;
+    let abs_path = base_path.join(&params.path);
     if !abs_path.exists() {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -228,7 +244,7 @@ pub async fn stream_video(
                     if n == 0 {
                         break;
                     }
-                    eprint!("[ffmpeg] {}", line);
+                    // eprint!("[ffmpeg] {}", line); // silenced logging
                     line.clear();
                 }
             });
@@ -254,13 +270,12 @@ pub async fn stream_video(
     }
 }
 
-// ...
-
 pub async fn get_subtitles(
     State(state): State<AppState>,
     Query(params): Query<SubtitleParams>,
 ) -> impl IntoResponse {
-    let abs_path = state.movies_dir.join(&params.path);
+    let base_path = get_base_path(&state, params.library_id.as_deref()).await;
+    let abs_path = base_path.join(&params.path);
     if !abs_path.exists() {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -304,13 +319,14 @@ pub async fn lookup_metadata(
     State(state): State<AppState>,
     Query(params): Query<LookupParams>,
 ) -> impl IntoResponse {
-    let abs_path = state.movies_dir.join(&params.path);
+    let base_path = get_base_path(&state, params.library_id.as_deref()).await;
+    let abs_path = base_path.join(&params.path);
     if !abs_path.exists() {
         return (StatusCode::NOT_FOUND, Json(None::<LocalMetadata>)).into_response();
     }
 
     let is_dir = abs_path.is_dir();
-    let is_tv = is_dir && params.path.contains("Shows/");
+    let is_tv = is_dir && params.path.contains("Shows/"); // Heuristic, maybe refine later?
 
     let file_name = abs_path.file_name().unwrap().to_string_lossy().to_string();
     let (cleaned_name, year) = cleanup_filename(&file_name);

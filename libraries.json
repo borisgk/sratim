@@ -1,0 +1,20 @@
+[
+  {
+    "id": "7a459896-1da4-44e1-88fa-f630d94b614c",
+    "name": "My Movies",
+    "path": "/Users/borisk/Movies/Movies",
+    "kind": "Movies"
+  },
+  {
+    "id": "49fbf76c-00e3-4a04-a713-17a5ad65beea",
+    "name": "My TV Shows",
+    "path": "/Users/borisk/Movies/TV Shows",
+    "kind": "TVShows"
+  },
+  {
+    "id": "bd35882e-e3a8-4245-8df7-e3049e5d2287",
+    "name": "Test Videos",
+    "path": "/Users/borisk/Movies/Test Videos",
+    "kind": "Other"
+  }
+]

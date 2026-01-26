@@ -77,6 +77,24 @@ pub struct AppState {
     pub dash_temp_dir: PathBuf,
     pub ffmpeg_process: Arc<Mutex<Option<Child>>>,
     pub auth: crate::auth::AuthState,
+    pub libraries: Arc<tokio::sync::RwLock<Vec<Library>>>,
+}
+
+// --- Library Models ---
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum LibraryType {
+    Movies,
+    TVShows,
+    Other,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Library {
+    pub id: String,
+    pub name: String,
+    pub path: PathBuf,
+    pub kind: LibraryType,
 }
 
 // --- Models ---
@@ -114,17 +132,20 @@ pub struct StreamParams {
     pub start: f64,
     #[serde(default)]
     pub audio_track: Option<usize>,
+    pub library_id: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct MetadataParams {
     pub path: String,
+    pub library_id: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct SubtitleParams {
     pub path: String,
     pub index: usize,
+    pub library_id: Option<String>,
 }
 
 // --- Handler Models ---
@@ -133,6 +154,7 @@ pub struct SubtitleParams {
 pub struct ListParams {
     #[serde(default)]
     pub path: String,
+    pub library_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -148,4 +170,5 @@ pub struct FileEntry {
 #[derive(Deserialize)]
 pub struct LookupParams {
     pub path: String,
+    pub library_id: Option<String>,
 }

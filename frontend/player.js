@@ -5,6 +5,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const audioSelect = document.getElementById('audioTrackSelect');
     const subtitleSelect = document.getElementById('subtitleTrackSelect');
 
+    // Parse library_id from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const libraryId = urlParams.get('library_id');
+
     if (!moviePath) {
         console.error('No movie path found');
         window.location.href = 'index.html';
@@ -50,7 +54,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             try {
                 // Fetch Metadata
                 console.log(`Fetching metadata for: ${moviePath}`);
-                const metaResponse = await fetch(`/api/metadata?path=${encodeURIComponent(moviePath)}`);
+                let metaUrl = `/api/metadata?path=${encodeURIComponent(moviePath)}`;
+                if (libraryId) metaUrl += `&library_id=${libraryId}`;
+
+                const metaResponse = await fetch(metaUrl);
                 if (!metaResponse.ok) throw new Error(`Metadata fetch failed: ${metaResponse.status}`);
                 const metadata = await metaResponse.json();
 
@@ -128,7 +135,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 track.kind = 'subtitles';
                                 track.label = trackData.label || trackData.language || `Track ${trackIndex + 1}`;
                                 track.srclang = trackData.language || 'en';
-                                track.src = `/api/subtitles?path=${encodeURIComponent(moviePath)}&index=${trackIndex}`;
+                                let subUrl = `/api/subtitles?path=${encodeURIComponent(moviePath)}&index=${trackIndex}`;
+                                if (libraryId) subUrl += `&library_id=${libraryId}`;
+                                track.src = subUrl;
                                 track.default = true;
                                 videoElement.appendChild(track);
 
@@ -285,7 +294,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                             }
 
                             console.log(`Fetching stream: ${timeToStart}s`);
-                            const response = await fetch(`/api/stream?path=${encodeURIComponent(moviePath)}&start=${timeToStart}&audio_track=${currentAudioTrackIndex}`, { signal });
+                            let streamUrl = `/api/stream?path=${encodeURIComponent(moviePath)}&start=${timeToStart}&audio_track=${currentAudioTrackIndex}`;
+                            if (libraryId) streamUrl += `&library_id=${libraryId}`;
+
+                            const response = await fetch(streamUrl, { signal });
                             if (!response.ok) throw new Error(`Stream fetch failed: ${response.status}`);
 
                             const actualStartHeader = response.headers.get('X-Actual-Start');

@@ -28,11 +28,20 @@ async fn main() {
 
     let auth_state = sratim::auth::AuthState::new().await;
 
+    // Load libraries
+    let libraries_file = "libraries.json";
+    let libraries = if let Ok(content) = tokio::fs::read_to_string(libraries_file).await {
+        serde_json::from_str::<Vec<sratim::models::Library>>(&content).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
     let shared_state = AppState {
         movies_dir: movies_dir.clone(),
         dash_temp_dir,
         ffmpeg_process: Arc::new(Mutex::new(None)),
         auth: auth_state,
+        libraries: Arc::new(tokio::sync::RwLock::new(libraries)),
     };
 
     let protected_routes = Router::new()
@@ -45,6 +54,27 @@ async fn main() {
         .route(
             "/api/change-password",
             axum::routing::post(sratim::auth::change_password_handler),
+        )
+        // Library Routes
+        .route(
+            "/api/libraries",
+            get(sratim::routes::library::get_libraries),
+        )
+        .route(
+            "/api/libraries",
+            axum::routing::post(sratim::routes::library::create_library),
+        )
+        .route(
+            "/api/libraries/:id",
+            axum::routing::delete(sratim::routes::library::delete_library),
+        )
+        .route(
+            "/api/libraries/:id/content/*path",
+            get(sratim::routes::library::serve_content),
+        )
+        .route(
+            "/api/fs/browse",
+            get(sratim::routes::library::browse_filesystem),
         )
         .nest_service("/content", ServeDir::new(&movies_dir))
         .layer(axum::middleware::from_fn(sratim::auth::auth_middleware));
