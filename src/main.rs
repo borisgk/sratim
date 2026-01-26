@@ -42,6 +42,10 @@ async fn main() {
         .route("/api/subtitles", get(video::get_subtitles))
         .route("/api/lookup", get(video::lookup_metadata))
         .route("/api/me", get(sratim::auth::me_handler))
+        .route(
+            "/api/change-password",
+            axum::routing::post(sratim::auth::change_password_handler),
+        )
         .nest_service("/content", ServeDir::new(&movies_dir))
         .layer(axum::middleware::from_fn(sratim::auth::auth_middleware));
 

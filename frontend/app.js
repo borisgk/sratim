@@ -273,8 +273,12 @@ async function checkUser() {
             if (profile) {
                 profile.innerHTML = `
                     <span style="margin-right: 1rem; color: #fff; font-weight: bold;">User: ${user.username}</span>
+                    <button id="profileBtn" class="logout-btn" style="margin-right: 0.5rem; background-color: #444;">Profile</button>
                     <button id="logoutBtn" class="logout-btn">Logout</button>
                 `;
+                document.getElementById('profileBtn').addEventListener('click', () => {
+                    window.location.href = '/profile.html';
+                });
                 document.getElementById('logoutBtn').addEventListener('click', async () => {
                     await fetch('/api/logout', { method: 'POST' });
                     window.location.reload();

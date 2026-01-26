@@ -54,15 +54,15 @@ impl AuthState {
     }
 
     async fn load_or_create_default(&self) {
-        if let Ok(content) = tokio::fs::read_to_string(USERS_FILE).await {
-            if let Ok(loaded_users) = serde_json::from_str::<Vec<User>>(&content) {
-                let mut map = self.users.write().await;
-                for user in loaded_users {
-                    map.insert(user.username.clone(), user);
-                }
-                println!("Loaded {} users from {}", map.len(), USERS_FILE);
-                return;
+        if let Ok(content) = tokio::fs::read_to_string(USERS_FILE).await
+            && let Ok(loaded_users) = serde_json::from_str::<Vec<User>>(&content)
+        {
+            let mut map = self.users.write().await;
+            for user in loaded_users {
+                map.insert(user.username.clone(), user);
             }
+            println!("Loaded {} users from {}", map.len(), USERS_FILE);
+            return;
         }
 
         // Create default admin user
@@ -97,37 +97,37 @@ pub async fn login_handler(
 ) -> impl IntoResponse {
     let auth_map = state.auth.users.read().await;
 
-    if let Some(user) = auth_map.get(&payload.username) {
-        if bcrypt::verify(&payload.password, &user.password_hash).unwrap_or(false) {
-            // Create JWT
-            let expiration = chrono::Utc::now()
-                .checked_add_signed(chrono::Duration::hours(24))
-                .expect("valid timestamp")
-                .timestamp();
+    if let Some(user) = auth_map.get(&payload.username)
+        && bcrypt::verify(&payload.password, &user.password_hash).unwrap_or(false)
+    {
+        // Create JWT
+        let expiration = chrono::Utc::now()
+            .checked_add_signed(chrono::Duration::hours(24))
+            .expect("valid timestamp")
+            .timestamp();
 
-            let claims = Claims {
-                sub: user.username.clone(),
-                exp: expiration as usize,
-            };
+        let claims = Claims {
+            sub: user.username.clone(),
+            exp: expiration as usize,
+        };
 
-            let token = encode(
-                &Header::default(),
-                &claims,
-                &EncodingKey::from_secret(JWT_SECRET),
-            )
-            .unwrap();
+        let token = encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(JWT_SECRET),
+        )
+        .unwrap();
 
-            let cookie = Cookie::build((COOKIE_NAME, token))
-                .path("/")
-                .http_only(true)
-                .same_site(axum_extra::extract::cookie::SameSite::Lax)
-                .build();
+        let cookie = Cookie::build((COOKIE_NAME, token))
+            .path("/")
+            .http_only(true)
+            .same_site(axum_extra::extract::cookie::SameSite::Lax)
+            .build();
 
-            let mut response = Json("Login successful").into_response();
-            let cookie_res = jar.add(cookie).into_response();
-            response.headers_mut().extend(cookie_res.headers().clone());
-            return response;
-        }
+        let mut response = Json("Login successful").into_response();
+        let cookie_res = jar.add(cookie).into_response();
+        response.headers_mut().extend(cookie_res.headers().clone());
+        return response;
     }
 
     (StatusCode::UNAUTHORIZED, "Invalid credentials").into_response()
@@ -181,4 +181,58 @@ pub async fn me_handler(jar: CookieJar) -> impl IntoResponse {
         }
     }
     StatusCode::UNAUTHORIZED.into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChangePasswordPayload {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+pub async fn change_password_handler(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<ChangePasswordPayload>,
+) -> impl IntoResponse {
+    let user_name = if let Some(token) = jar.get(COOKIE_NAME) {
+        let validation = Validation::default();
+        if let Ok(data) = decode::<Claims>(
+            token.value(),
+            &DecodingKey::from_secret(JWT_SECRET),
+            &validation,
+        ) {
+            data.claims.sub
+        } else {
+            return (StatusCode::UNAUTHORIZED, "Invalid token").into_response();
+        }
+    } else {
+        return (StatusCode::UNAUTHORIZED, "Not logged in").into_response();
+    };
+
+    let mut users = state.auth.users.write().await;
+
+    if let Some(user) = users.get_mut(&user_name) {
+        if !bcrypt::verify(&payload.current_password, &user.password_hash).unwrap_or(false) {
+            return (StatusCode::UNAUTHORIZED, "Invalid current password").into_response();
+        }
+
+        match bcrypt::hash(&payload.new_password, bcrypt::DEFAULT_COST) {
+            Ok(hash) => {
+                user.password_hash = hash;
+                // Manual save logic since we hold the write lock
+                let all_users: Vec<User> = users.values().cloned().collect();
+                if let Ok(content) = serde_json::to_string_pretty(&all_users) {
+                    let _ = tokio::fs::write(USERS_FILE, content).await;
+                }
+
+                return Json("Password changed successfully").into_response();
+            }
+            Err(_) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to hash password")
+                    .into_response();
+            }
+        }
+    }
+
+    (StatusCode::UNAUTHORIZED, "User not found").into_response()
 }
