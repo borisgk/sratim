@@ -118,10 +118,35 @@ function renderGrid(nodes) {
                     saveNavigationState();
                 }
             };
+
+            // FOLDER POSTER LOGIC
+            if (node.poster) {
+                const lastSlash = node.path.lastIndexOf('/');
+                const parentPath = lastSlash !== -1 ? node.path.substring(0, lastSlash + 1) : '';
+                const posterUrl = `/content/${parentPath}${node.poster}`;
+
+                card.style.backgroundImage = `linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.8) 100%), url('${encodeURI(posterUrl)}')`;
+                card.style.backgroundSize = 'cover';
+                card.style.backgroundPosition = 'center';
+            }
+
+            const displayTitle = node.title || node.name;
+
             card.innerHTML = `
-                <div class="movie-icon">📁</div>
-                <div class="movie-title">${node.name}</div>
+                <div class="movie-icon" ${node.poster ? 'style="opacity:0"' : ''}>📁</div>
+                <div class="movie-title">${displayTitle}</div>
             `;
+
+            // LOOKUP BUTTON FOR FOLDER
+            const lookupBtn = document.createElement('div');
+            lookupBtn.className = 'lookup-btn';
+            lookupBtn.innerHTML = '🔍';
+            lookupBtn.title = 'Lookup Metadata';
+            lookupBtn.onclick = (e) => {
+                e.stopPropagation();
+                lookupMovie(node, card);
+            };
+            card.appendChild(lookupBtn);
         } else {
             card.onclick = () => playMovie(node);
 
@@ -195,6 +220,10 @@ async function lookupMovie(node, cardElement) {
             // Success, invalidate cache and reload current folder
             const currentPath = navigationStack[navigationStack.length - 1].path;
             folderCache.delete(currentPath);
+            // Also delete the folder itself from cache if it was there? 
+            // folderCache stores nodes of children. If we looked up a folder 'Ted Lasso', 
+            // its parent folder's cache needs to be cleared.
+            // currentPath is the parent folder. That's correct.
 
             const nodes = await fetchMovies(currentPath);
             if (nodes) {

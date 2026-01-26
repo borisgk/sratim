@@ -60,12 +60,31 @@ pub async fn list_files(
             rel_path.push_str(&file_name);
 
             if is_dir {
+                let mut title = None;
+                let mut poster = None;
+
+                // Check for Sidecar JSON in folder
+                let json_path = canonical_path.join(format!("{}.json", file_name));
+                if json_path.exists() {
+                    if let Ok(content) = tokio::fs::read_to_string(&json_path).await {
+                        if let Ok(meta) = serde_json::from_str::<LocalMetadata>(&content) {
+                            title = Some(meta.title);
+                            if meta.poster_path.is_some() {
+                                let img_path = canonical_path.join(format!("{}.jpg", file_name));
+                                if img_path.exists() {
+                                    poster = Some(format!("{}.jpg", file_name));
+                                }
+                            }
+                        }
+                    }
+                }
+
                 entries.push(FileEntry {
                     name: file_name,
                     path: rel_path,
                     entry_type: "folder".to_string(),
-                    title: None,
-                    poster: None,
+                    title,
+                    poster,
                 });
             } else if is_file {
                 if let Some(ext) = std::path::Path::new(&file_name)
@@ -319,22 +338,25 @@ pub async fn lookup_metadata(
         return (StatusCode::NOT_FOUND, Json(None::<LocalMetadata>)).into_response();
     }
 
+    let is_dir = abs_path.is_dir();
+    let is_tv = is_dir && params.path.contains("Shows/");
+
     let file_name = abs_path.file_name().unwrap().to_string_lossy().to_string();
     let (cleaned_name, year) = cleanup_filename(&file_name);
 
     println!(
-        "Lookup metadata for: {} -> cleaned: '{}', year: {:?}",
-        file_name, cleaned_name, year
+        "Lookup metadata for: {} (is_dir: {}, is_tv: {}) -> cleaned: '{}', year: {:?}",
+        file_name, is_dir, is_tv, cleaned_name, year
     );
 
     // 1. Search by filename with separated year
-    let mut best_match = fetch_tmdb_metadata(&cleaned_name, year.as_deref())
+    let mut best_match = fetch_tmdb_metadata(&cleaned_name, year.as_deref(), is_tv)
         .await
         .ok()
         .flatten();
 
-    // 2. Fallback: Probe internal title
-    if best_match.is_none() {
+    // 2. Fallback: Probe internal title (only for files)
+    if best_match.is_none() && !is_dir {
         println!("No match for filename, probing internal title...");
         if let Ok(meta) = probe_metadata(&abs_path).await {
             if let Some(internal_title) = meta.title {
@@ -343,7 +365,7 @@ pub async fn lookup_metadata(
                 // or we could try to clean it too?
                 // Let's clean the internal title as well to extract year if present.
                 let (clean_int_title, int_year) = cleanup_filename(&internal_title);
-                best_match = fetch_tmdb_metadata(&clean_int_title, int_year.as_deref())
+                best_match = fetch_tmdb_metadata(&clean_int_title, int_year.as_deref(), false)
                     .await
                     .ok()
                     .flatten();

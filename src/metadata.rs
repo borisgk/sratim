@@ -15,12 +15,13 @@ pub struct LocalMetadata {
 
 #[derive(Debug, Deserialize)]
 struct TmdbSearchResponse {
-    results: Vec<TmdbMovie>,
+    results: Vec<TmdbResult>,
 }
 
 #[derive(Debug, Deserialize)]
-struct TmdbMovie {
+struct TmdbResult {
     id: u64,
+    #[serde(alias = "name")]
     title: String,
     overview: String,
     poster_path: Option<String>,
@@ -57,20 +58,28 @@ pub fn cleanup_filename(filename: &str) -> (String, Option<String>) {
     (final_title, year)
 }
 
-pub async fn fetch_tmdb_metadata(query: &str, year: Option<&str>) -> Result<Option<LocalMetadata>> {
+pub async fn fetch_tmdb_metadata(
+    query: &str,
+    year: Option<&str>,
+    is_tv: bool,
+) -> Result<Option<LocalMetadata>> {
     let client = reqwest::Client::new();
+    let endpoint = if is_tv { "tv" } else { "movie" };
+    let year_param = if is_tv { "first_air_date_year" } else { "year" };
+
     let mut url = format!(
-        "https://glossary.rus9n.com/3/search/movie?query={}&language=en-US&page=1&include_adult=false",
+        "https://glossary.rus9n.com/3/search/{}?query={}&language=en-US&page=1&include_adult=false",
+        endpoint,
         urlencoding::encode(query)
     );
 
     if let Some(y) = year {
-        url.push_str(&format!("&year={}", y));
+        url.push_str(&format!("&{}={}", year_param, y));
     }
 
     println!(
-        "[metadata] Searching TMDB for: '{}' (Year: {:?})",
-        query, year
+        "[metadata] Searching TMDB ({}) for: '{}' (Year: {:?})",
+        endpoint, query, year
     );
     println!("[metadata] Request URL: {}", url);
     println!("[metadata] Request Headers: Accept: application/json");
