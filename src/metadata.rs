@@ -27,6 +27,14 @@ struct TmdbResult {
     poster_path: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct TmdbSeasonResponse {
+    id: u64,
+    name: String,
+    overview: String,
+    poster_path: Option<String>,
+}
+
 pub fn cleanup_filename(filename: &str) -> (String, Option<String>) {
     // 1. Find the year (19xx or 20xx)
     let year_re = Regex::new(r"[\(\[\.]*(19|20)\d{2}[\)\]\.]*").unwrap();
@@ -118,6 +126,52 @@ pub async fn fetch_tmdb_metadata(
     } else {
         Ok(None)
     }
+}
+
+pub async fn fetch_tmdb_season_metadata(
+    tmdb_id: u64,
+    season_number: u32,
+) -> Result<Option<LocalMetadata>> {
+    let client = reqwest::Client::new();
+    let url = format!(
+        "https://glossary.rus9n.com/3/tv/{}/season/{}?language=en-US",
+        tmdb_id, season_number
+    );
+
+    println!(
+        "[metadata] Fetching TMDB Season: Show={}, Season={}",
+        tmdb_id, season_number
+    );
+    println!("[metadata] Request URL: {}", url);
+
+    let resp = client
+        .get(&url)
+        .header("Accept", "application/json")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .send()
+        .await
+        .context("Failed to send TMDB season request")?;
+
+    println!("[metadata] Response status: {}", resp.status());
+
+    if !resp.status().is_success() {
+        if resp.status() == 404 {
+            return Ok(None);
+        }
+        let error_text = resp.text().await.unwrap_or_else(|_| "Unknown error".into());
+        println!("[metadata] API Error Body: {}", error_text);
+        return Err(anyhow::anyhow!("TMDB API Error"));
+    }
+
+    let season_res: TmdbSeasonResponse =
+        resp.json().await.context("Failed to parse TMDB response")?;
+
+    Ok(Some(LocalMetadata {
+        title: season_res.name,
+        overview: season_res.overview,
+        poster_path: season_res.poster_path,
+        tmdb_id: season_res.id,
+    }))
 }
 
 pub async fn download_image(poster_suffix: &str, target_path: &Path) -> Result<()> {

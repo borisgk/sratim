@@ -4,10 +4,14 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use regex::Regex;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_util::io::ReaderStream;
 
-use crate::metadata::{LocalMetadata, cleanup_filename, download_image, fetch_tmdb_metadata};
+use crate::metadata::{
+    LocalMetadata, cleanup_filename, download_image, fetch_tmdb_metadata,
+    fetch_tmdb_season_metadata,
+};
 use crate::models::{
     AppState, FileEntry, ListParams, LookupParams, MetadataParams, StreamParams, SubtitleParams,
 };
@@ -349,11 +353,59 @@ pub async fn lookup_metadata(
         file_name, is_dir, is_tv, cleaned_name, year
     );
 
-    // 1. Search by filename with separated year
-    let mut best_match = fetch_tmdb_metadata(&cleaned_name, year.as_deref(), is_tv)
-        .await
-        .ok()
-        .flatten();
+    let mut best_match = None;
+
+    // Detect Season
+    if is_tv
+        && (cleaned_name.to_lowercase().contains("season")
+            || cleaned_name.to_lowercase().starts_with("s") && cleaned_name.len() <= 4)
+    {
+        println!("Potential season folder detected: {}", cleaned_name);
+        // Try to extract season number
+        let season_re = Regex::new(r"(?i)season\s*(\d+)|s(\d+)").unwrap();
+        if let Some(caps) = season_re.captures(&cleaned_name) {
+            let season_num = caps
+                .get(1)
+                .or(caps.get(2))
+                .and_then(|m| m.as_str().parse::<u32>().ok());
+
+            if let Some(s_num) = season_num {
+                println!("Extracted season number: {}", s_num);
+                // We need parent show's TMDB ID.
+                // It should be in the parent's .json file.
+                if let Some(parent) = abs_path.parent() {
+                    let parent_name = parent.file_name().unwrap().to_string_lossy().to_string();
+                    let parent_json = parent
+                        .parent()
+                        .unwrap()
+                        .join(format!("{}.json", parent_name));
+                    println!("Looking for parent metadata at: {:?}", parent_json);
+
+                    if parent_json.exists() {
+                        if let Ok(content) = tokio::fs::read_to_string(&parent_json).await {
+                            if let Ok(parent_meta) = serde_json::from_str::<LocalMetadata>(&content)
+                            {
+                                println!("Found parent show TMDB ID: {}", parent_meta.tmdb_id);
+                                best_match = fetch_tmdb_season_metadata(parent_meta.tmdb_id, s_num)
+                                    .await
+                                    .ok()
+                                    .flatten();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback to regular movie/tv search if no season match
+    if best_match.is_none() {
+        // 1. Search by filename with separated year
+        best_match = fetch_tmdb_metadata(&cleaned_name, year.as_deref(), is_tv)
+            .await
+            .ok()
+            .flatten();
+    }
 
     // 2. Fallback: Probe internal title (only for files)
     if best_match.is_none() && !is_dir {

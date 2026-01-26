@@ -149,6 +149,13 @@ function renderGrid(nodes) {
                 lookupMovie(node, card);
             };
             card.appendChild(lookupBtn);
+
+            // AUTO LOOKUP FOR SEASONS (Folders without posters in Shows/ directory)
+            const isSeason = node.path.includes('Shows/') && (node.name.toLowerCase().includes('season') || /^s\d+/i.test(node.name));
+            if (!node.poster && isSeason) {
+                // We trigger it "silently"
+                setTimeout(() => lookupMovie(node, card, true), 100);
+            }
         } else {
             card.onclick = () => playMovie(node);
 
@@ -210,10 +217,10 @@ function saveNavigationState() {
     sessionStorage.setItem('navigationStack', JSON.stringify(stackData));
 }
 
-async function lookupMovie(node, cardElement) {
+async function lookupMovie(node, cardElement, silent = false) {
     const btn = cardElement.querySelector('.lookup-btn');
-    const originalIcon = btn.innerHTML;
-    btn.innerHTML = '⏳';
+    const originalIcon = btn ? btn.innerHTML : '🔍';
+    if (btn) btn.innerHTML = '⏳';
 
     try {
         const response = await fetch(`/api/lookup?path=${encodeURIComponent(node.path)}`);
@@ -236,13 +243,13 @@ async function lookupMovie(node, cardElement) {
                 renderUI();
             }
         } else {
-            alert('No metadata found for this movie.');
-            btn.innerHTML = originalIcon;
+            if (!silent) alert('No metadata found for this item.');
+            if (btn) btn.innerHTML = originalIcon;
         }
     } catch (e) {
         console.error("Lookup error:", e);
-        alert('Lookup failed.');
-        btn.innerHTML = originalIcon;
+        if (!silent) alert('Lookup failed.');
+        if (btn) btn.innerHTML = originalIcon;
     }
 }
 
