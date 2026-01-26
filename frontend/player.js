@@ -59,6 +59,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                     mediaSource.duration = metadata.duration;
                 }
 
+                // Setup Movie Title
+                const titleElement = document.getElementById('movieTitle');
+                if (titleElement) {
+                    if (metadata.title) {
+                        titleElement.textContent = metadata.title;
+                    } else {
+                        // Fallback: cleanup filename
+                        const name = moviePath.split('/').pop();
+                        titleElement.textContent = name.replace(/\.[^/.]+$/, "").replace(/[._]/g, ' ');
+                    }
+                }
+
                 // Setup Video Codec
                 let videoCodec = 'avc1.4d4028';
                 if (metadata.video_codec === 'hevc') {

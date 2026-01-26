@@ -143,7 +143,28 @@ pub async fn get_metadata(
     }
 
     match probe_metadata(&abs_path).await {
-        Ok(metadata) => Json(metadata).into_response(),
+        Ok(mut metadata) => {
+            // Check for sidecar JSON
+            if let Some(file_name) = abs_path
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+            {
+                let json_path = abs_path
+                    .parent()
+                    .unwrap()
+                    .join(format!("{}.json", file_name));
+                if json_path.exists() {
+                    if let Ok(content) = tokio::fs::read_to_string(&json_path).await {
+                        if let Ok(meta) = serde_json::from_str::<LocalMetadata>(&content) {
+                            if !meta.title.is_empty() {
+                                metadata.title = Some(meta.title);
+                            }
+                        }
+                    }
+                }
+            }
+            Json(metadata).into_response()
+        }
         Err(e) => {
             eprintln!("Metadata probe failed: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()

@@ -319,10 +319,30 @@ header {
 }
 
 .player-container {
-    width: 50vw;
-    /* Half page width */
+    width: 60vw;
+    /* Increased slightly for better look */
     margin: auto;
     position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+.movie-info-bottom {
+    margin-top: 1.5rem;
+    padding-bottom: 2rem;
+    animation: fadeIn 0.8s ease-out;
+}
+
+#movieTitle {
+    font-family: var(--font-heading);
+    font-size: 2.2rem;
+    font-weight: 700;
+    color: var(--text-main);
+    letter-spacing: -0.5px;
+    background: linear-gradient(to right, #fff, #94a3b8);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
 }
 
 .video-wrapper {
