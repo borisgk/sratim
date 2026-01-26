@@ -21,14 +21,14 @@ use crate::streaming::{
 
 // ...
 
-async fn get_base_path(state: &AppState, library_id: Option<&str>) -> std::path::PathBuf {
+async fn get_base_path(state: &AppState, library_id: Option<&str>) -> Option<std::path::PathBuf> {
     if let Some(id) = library_id {
         let libraries = state.libraries.read().await;
         if let Some(lib) = libraries.iter().find(|l| l.id == id) {
-            return lib.path.clone();
+            return Some(lib.path.clone());
         }
     }
-    state.movies_dir.clone()
+    None
 }
 
 pub async fn list_files(
@@ -40,7 +40,10 @@ pub async fn list_files(
         return Json(Vec::<FileEntry>::new()).into_response();
     }
 
-    let base_path = get_base_path(&state, params.library_id.as_deref()).await;
+    let Some(base_path) = get_base_path(&state, params.library_id.as_deref()).await else {
+        return (StatusCode::BAD_REQUEST, "Library not found").into_response();
+    };
+
     let mut abs_path = base_path.clone();
     abs_path.push(&params.path);
 
@@ -154,7 +157,9 @@ pub async fn get_metadata(
     State(state): State<AppState>,
     Query(params): Query<MetadataParams>,
 ) -> impl IntoResponse {
-    let base_path = get_base_path(&state, params.library_id.as_deref()).await;
+    let Some(base_path) = get_base_path(&state, params.library_id.as_deref()).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
     let abs_path = base_path.join(&params.path);
     if !abs_path.exists() {
         return StatusCode::NOT_FOUND.into_response();
@@ -181,7 +186,9 @@ pub async fn stream_video(
     State(state): State<AppState>,
     Query(params): Query<StreamParams>,
 ) -> Response {
-    let base_path = get_base_path(&state, params.library_id.as_deref()).await;
+    let Some(base_path) = get_base_path(&state, params.library_id.as_deref()).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
     let abs_path = base_path.join(&params.path);
     if !abs_path.exists() {
         return StatusCode::NOT_FOUND.into_response();
@@ -274,7 +281,9 @@ pub async fn get_subtitles(
     State(state): State<AppState>,
     Query(params): Query<SubtitleParams>,
 ) -> impl IntoResponse {
-    let base_path = get_base_path(&state, params.library_id.as_deref()).await;
+    let Some(base_path) = get_base_path(&state, params.library_id.as_deref()).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
     let abs_path = base_path.join(&params.path);
     if !abs_path.exists() {
         return StatusCode::NOT_FOUND.into_response();
@@ -319,7 +328,9 @@ pub async fn lookup_metadata(
     State(state): State<AppState>,
     Query(params): Query<LookupParams>,
 ) -> impl IntoResponse {
-    let base_path = get_base_path(&state, params.library_id.as_deref()).await;
+    let Some(base_path) = get_base_path(&state, params.library_id.as_deref()).await else {
+        return (StatusCode::NOT_FOUND, Json(None::<LocalMetadata>)).into_response();
+    };
     let abs_path = base_path.join(&params.path);
     if !abs_path.exists() {
         return (StatusCode::NOT_FOUND, Json(None::<LocalMetadata>)).into_response();

@@ -60,6 +60,36 @@ pub async fn create_library(
     StatusCode::CREATED.into_response()
 }
 
+#[derive(Deserialize)]
+pub struct UpdateLibraryPayload {
+    pub name: String,
+    pub path: String,
+    pub kind: LibraryType,
+}
+
+pub async fn update_library(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<UpdateLibraryPayload>,
+) -> impl IntoResponse {
+    let mut libraries = state.libraries.write().await;
+
+    if let Some(lib) = libraries.iter_mut().find(|l| l.id == id) {
+        lib.name = payload.name;
+        lib.path = PathBuf::from(payload.path);
+        lib.kind = payload.kind;
+
+        // Persist
+        if let Ok(content) = serde_json::to_string_pretty(&*libraries) {
+            let _ = tokio::fs::write(LIBRARIES_FILE, content).await;
+        }
+
+        return StatusCode::OK.into_response();
+    }
+
+    StatusCode::NOT_FOUND.into_response()
+}
+
 pub async fn delete_library(
     State(state): State<AppState>,
     Path(id): Path<String>,

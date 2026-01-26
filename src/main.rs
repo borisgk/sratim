@@ -18,11 +18,6 @@ async fn main() {
 
     let config = AppConfig::load().expect("Failed to load configuration");
 
-    let movies_dir = config.movies_dir.clone();
-    if !movies_dir.exists() {
-        std::fs::create_dir_all(&movies_dir).expect("Failed to create movies directory");
-    }
-
     let dash_temp_dir = std::env::temp_dir().join("sratim_dash");
     std::fs::create_dir_all(&dash_temp_dir).expect("Failed to create dash temp directory");
 
@@ -37,7 +32,6 @@ async fn main() {
     };
 
     let shared_state = AppState {
-        movies_dir: movies_dir.clone(),
         dash_temp_dir,
         ffmpeg_process: Arc::new(Mutex::new(None)),
         auth: auth_state,
@@ -66,7 +60,8 @@ async fn main() {
         )
         .route(
             "/api/libraries/:id",
-            axum::routing::delete(sratim::routes::library::delete_library),
+            axum::routing::delete(sratim::routes::library::delete_library)
+                .put(sratim::routes::library::update_library),
         )
         .route(
             "/api/libraries/:id/content/*path",
@@ -76,7 +71,6 @@ async fn main() {
             "/api/fs/browse",
             get(sratim::routes::library::browse_filesystem),
         )
-        .nest_service("/content", ServeDir::new(&movies_dir))
         .layer(axum::middleware::from_fn(sratim::auth::auth_middleware));
 
     let app = Router::new()

@@ -229,6 +229,37 @@
             }
         };
 
+        // Check for edit mode
+        const urlParams = new URLSearchParams(window.location.search);
+        const editId = urlParams.get('id');
+
+        if (editId) {
+            document.title = 'Edit Library';
+            document.querySelector('h1').textContent = 'Edit Library';
+            document.querySelector('button[type="submit"]').textContent = 'Save Changes';
+            loadLibraryDetails(editId);
+        }
+
+        async function loadLibraryDetails(id) {
+            try {
+                const res = await fetch('/api/libraries');
+                if (res.ok) {
+                    const libs = await res.json();
+                    const lib = libs.find(l => l.id === id);
+                    if (lib) {
+                        form.name.value = lib.name;
+                        form.type.value = lib.kind;
+                        pathDisplay.value = lib.path;
+                        currentPath = lib.path;
+                        // Load browser at this path
+                        loadBrowser(lib.path);
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to load library details', err);
+            }
+        }
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             const name = form.name.value;
@@ -241,20 +272,23 @@
             }
 
             try {
-                const res = await fetch('/api/libraries', {
-                    method: 'POST',
+                const url = editId ? `/api/libraries/${editId}` : '/api/libraries';
+                const method = editId ? 'PUT' : 'POST';
+
+                const res = await fetch(url, {
+                    method: method,
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, type: type, kind: type, path }) // type enum matches?
+                    body: JSON.stringify({ name, kind: type, path })
                 });
 
                 if (res.ok) {
                     window.location.href = '/';
                 } else {
-                    alert('Failed to create library');
+                    alert('Failed to save library');
                 }
             } catch (err) {
                 console.error(err);
-                alert('Error creating library');
+                alert('Error saving library');
             }
         });
 

@@ -1,7 +1,6 @@
 # Sratim Configuration
 
-# Directory where your movie files are stored
-movies_dir = "movies"
+
 
 # Frontend directory (relative to current directory)
 frontend_dir = "frontend"

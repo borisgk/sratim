@@ -10,18 +10,12 @@ use tokio::sync::Mutex;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
-    #[serde(default = "default_movies_dir")]
-    pub movies_dir: PathBuf,
     #[serde(default = "default_frontend_dir")]
     pub frontend_dir: PathBuf,
     #[serde(default = "default_port")]
     pub port: u16,
     #[serde(default = "default_host")]
     pub host: String,
-}
-
-fn default_movies_dir() -> PathBuf {
-    PathBuf::from("movies")
 }
 
 fn default_frontend_dir() -> PathBuf {
@@ -61,7 +55,6 @@ impl AppConfig {
 
     fn default_settings() -> Self {
         Self {
-            movies_dir: default_movies_dir(),
             frontend_dir: default_frontend_dir(),
             port: default_port(),
             host: default_host(),
@@ -73,7 +66,6 @@ impl AppConfig {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub movies_dir: PathBuf,
     pub dash_temp_dir: PathBuf,
     pub ffmpeg_process: Arc<Mutex<Option<Child>>>,
     pub auth: crate::auth::AuthState,

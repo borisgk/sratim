@@ -119,6 +119,9 @@ function renderLibraries() {
         menuContainer.innerHTML = `
             <button class="card-menu-btn">⋮</button>
             <div class="card-menu-dropdown">
+                <div class="card-menu-item edit">
+                    <span>✏️</span> Edit
+                </div>
                 <div class="card-menu-item delete">
                     <span>🗑️</span> Delete
                 </div>
@@ -127,6 +130,7 @@ function renderLibraries() {
 
         const btn = menuContainer.querySelector('.card-menu-btn');
         const dropdown = menuContainer.querySelector('.card-menu-dropdown');
+        const editBtn = menuContainer.querySelector('.card-menu-item.edit');
         const deleteBtn = menuContainer.querySelector('.card-menu-item.delete');
 
         btn.onclick = (e) => {
@@ -136,6 +140,11 @@ function renderLibraries() {
                 if (d !== dropdown) d.classList.remove('show');
             });
             dropdown.classList.toggle('show');
+        };
+
+        editBtn.onclick = (e) => {
+            e.stopPropagation();
+            window.location.href = `/add-library.html?id=${lib.id}`;
         };
 
         deleteBtn.onclick = async (e) => {
