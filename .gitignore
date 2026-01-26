@@ -3,3 +3,5 @@
 
 deploy.sh
 sratim.service
+libraries.json
+users.json
