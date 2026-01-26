@@ -7,9 +7,11 @@ Sratim (Hebrew for "Movies") is a powerful, lightweight media server built with 
 
 ## ✨ Key Features
 
+- 📚 **Library Management**: Configure multiple libraries (Movies, TV Shows, Other) pointing to any folder on your server.
 - ⚡ **Direct Stream Copy**: Streams video data directly from the source file (H.264/HEVC) without transcoding, ensuring 100% original quality and minimal CPU usage.
 - 🍏 **Smart Compatibility**: Automatically detects codec (H.264 vs HEVC) and configures the MSE player for Apple/Safari support (`hvc1`) or standard AVC (`avc1`).
-- 📂 **Auto-Discovery**: Automatically scans your `movies` directory for video files and builds a navigable library.
+- 🔐 **Secure Access**: Built-in authentication with robust password hashing and session management.
+- 📝 **Metadata Lookup**: integrated TMDB lookup for metadata and cover art fetching.
 - 🎨 **Premium UI**: A sleek, modern frontend built with Inter & Outfit typography, featuring glassmorphism and smooth animations.
 - ⏩ **Advanced Player**: Custom-built HTML5 MSE player with instant seeking, duration tracking, and robust buffering management.
 
@@ -36,20 +38,16 @@ Sratim (Hebrew for "Movies") is a powerful, lightweight media server built with 
    cd sratim
    ```
 
-2. **Add your movies**:
-   Place your MKV, MP4, or AVI files in the `movies/` directory (created automatically on first run).
-   ```bash
-   mkdir movies
-   # Copy your movies here
-   ```
-
-3. **Run the server**:
+2. **Run the server**:
    ```bash
    cargo run --release
    ```
 
-4. **Access the library**:
-   Open your browser and navigate to `http://localhost:3000`.
+3. **Login and Configure**:
+   - Open `http://localhost:3000`.
+   - Log in with default credentials: `admin` / `admin`.
+   - Use the "Add Library" button to configure your media folders.
+   - **Important**: Change your password immediately after logging in!
 
 ---
 
