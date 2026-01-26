@@ -35,6 +35,31 @@ struct TmdbSeasonResponse {
     poster_path: Option<String>,
 }
 
+pub async fn read_local_metadata(path: &Path) -> Option<LocalMetadata> {
+    let file_name = path.file_name()?.to_string_lossy();
+    let parent = path.parent()?;
+    let json_path = parent.join(format!("{}.json", file_name));
+
+    if json_path.exists()
+        && let Ok(content) = fs::read_to_string(&json_path).await
+        && let Ok(meta) = serde_json::from_str::<LocalMetadata>(&content)
+    {
+        return Some(meta);
+    }
+    None
+}
+
+pub async fn save_local_metadata(path: &Path, metadata: &LocalMetadata) -> Result<()> {
+    let file_name = path.file_name().context("No filename")?.to_string_lossy();
+    let parent = path.parent().context("No parent")?;
+    let json_path = parent.join(format!("{}.json", file_name));
+
+    let content = serde_json::to_string_pretty(metadata)?;
+    fs::write(json_path, content)
+        .await
+        .context("Failed to write metadata json")
+}
+
 pub fn cleanup_filename(filename: &str) -> (String, Option<String>) {
     // 1. Find the year (19xx or 20xx)
     let year_re = Regex::new(r"[\(\[\.]*(19|20)\d{2}[\)\]\.]*").unwrap();

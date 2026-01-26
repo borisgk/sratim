@@ -10,7 +10,7 @@ use tokio_util::io::ReaderStream;
 
 use crate::metadata::{
     LocalMetadata, cleanup_filename, download_image, fetch_tmdb_metadata,
-    fetch_tmdb_season_metadata,
+    fetch_tmdb_season_metadata, read_local_metadata, save_local_metadata,
 };
 use crate::models::{
     AppState, FileEntry, ListParams, LookupParams, MetadataParams, StreamParams, SubtitleParams,
@@ -67,18 +67,13 @@ pub async fn list_files(
                 let mut title = None;
                 let mut poster = None;
 
-                // Check for Sidecar JSON in folder
-                let json_path = canonical_path.join(format!("{}.json", file_name));
-                if json_path.exists() {
-                    if let Ok(content) = tokio::fs::read_to_string(&json_path).await {
-                        if let Ok(meta) = serde_json::from_str::<LocalMetadata>(&content) {
-                            title = Some(meta.title);
-                            if meta.poster_path.is_some() {
-                                let img_path = canonical_path.join(format!("{}.jpg", file_name));
-                                if img_path.exists() {
-                                    poster = Some(format!("{}.jpg", file_name));
-                                }
-                            }
+                let item_path = canonical_path.join(&file_name);
+                if let Some(meta) = read_local_metadata(&item_path).await {
+                    title = Some(meta.title);
+                    if meta.poster_path.is_some() {
+                        let img_path = canonical_path.join(format!("{}.jpg", file_name));
+                        if img_path.exists() {
+                            poster = Some(format!("{}.jpg", file_name));
                         }
                     }
                 }
@@ -90,51 +85,38 @@ pub async fn list_files(
                     title,
                     poster,
                 });
-            } else if is_file {
-                if let Some(ext) = std::path::Path::new(&file_name)
+            } else if is_file
+                && let Some(ext) = std::path::Path::new(&file_name)
                     .extension()
                     .and_then(|s| s.to_str())
-                {
-                    match ext.to_lowercase().as_str() {
-                        "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "flv" | "wmv" => {
-                            let mut title = None;
-                            let mut poster = None;
+            {
+                match ext.to_lowercase().as_str() {
+                    "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "flv" | "wmv" => {
+                        let mut title = None;
+                        let mut poster = None;
 
-                            // Check for Sidecar JSON
-                            let json_path = canonical_path.join(format!("{}.json", file_name));
-                            if json_path.exists() {
-                                if let Ok(content) = tokio::fs::read_to_string(&json_path).await {
-                                    if let Ok(meta) =
-                                        serde_json::from_str::<LocalMetadata>(&content)
-                                    {
-                                        title = Some(meta.title);
-                                        // Poster path is relative to movie? No, we might store it as absolute or relative.
-                                        // Let's assume we store it as local file name like "movie.jpg"
-                                        // But the frontend needs a way to access it.
-                                        // The frontend will construct URL.
-                                        // We just say "yes we have poster".
-                                        if meta.poster_path.is_some() {
-                                            // Check if image exists
-                                            let img_path =
-                                                canonical_path.join(format!("{}.jpg", file_name));
-                                            if img_path.exists() {
-                                                poster = Some(format!("{}.jpg", file_name));
-                                            }
-                                        }
-                                    }
+                        // Check for Sidecar JSON
+                        let item_path = canonical_path.join(&file_name);
+                        if let Some(meta) = read_local_metadata(&item_path).await {
+                            title = Some(meta.title);
+                            if meta.poster_path.is_some() {
+                                // Check if image exists
+                                let img_path = canonical_path.join(format!("{}.jpg", file_name));
+                                if img_path.exists() {
+                                    poster = Some(format!("{}.jpg", file_name));
                                 }
                             }
-
-                            entries.push(FileEntry {
-                                name: file_name,
-                                path: rel_path,
-                                entry_type: "file".to_string(),
-                                title,
-                                poster,
-                            });
                         }
-                        _ => {}
+
+                        entries.push(FileEntry {
+                            name: file_name,
+                            path: rel_path,
+                            entry_type: "file".to_string(),
+                            title,
+                            poster,
+                        });
                     }
+                    _ => {}
                 }
             }
         }
@@ -144,12 +126,10 @@ pub async fn list_files(
     entries.sort_by(|a, b| {
         if a.entry_type == b.entry_type {
             a.name.to_lowercase().cmp(&b.name.to_lowercase())
+        } else if a.entry_type == "folder" {
+            std::cmp::Ordering::Less
         } else {
-            if a.entry_type == "folder" {
-                std::cmp::Ordering::Less
-            } else {
-                std::cmp::Ordering::Greater
-            }
+            std::cmp::Ordering::Greater
         }
     });
 
@@ -168,23 +148,10 @@ pub async fn get_metadata(
     match probe_metadata(&abs_path).await {
         Ok(mut metadata) => {
             // Check for sidecar JSON
-            if let Some(file_name) = abs_path
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string())
+            if let Some(meta) = read_local_metadata(&abs_path).await
+                && !meta.title.is_empty()
             {
-                let json_path = abs_path
-                    .parent()
-                    .unwrap()
-                    .join(format!("{}.json", file_name));
-                if json_path.exists() {
-                    if let Ok(content) = tokio::fs::read_to_string(&json_path).await {
-                        if let Ok(meta) = serde_json::from_str::<LocalMetadata>(&content) {
-                            if !meta.title.is_empty() {
-                                metadata.title = Some(meta.title);
-                            }
-                        }
-                    }
-                }
+                metadata.title = Some(meta.title);
             }
             Json(metadata).into_response()
         }
@@ -373,26 +340,14 @@ pub async fn lookup_metadata(
                 println!("Extracted season number: {}", s_num);
                 // We need parent show's TMDB ID.
                 // It should be in the parent's .json file.
-                if let Some(parent) = abs_path.parent() {
-                    let parent_name = parent.file_name().unwrap().to_string_lossy().to_string();
-                    let parent_json = parent
-                        .parent()
-                        .unwrap()
-                        .join(format!("{}.json", parent_name));
-                    println!("Looking for parent metadata at: {:?}", parent_json);
-
-                    if parent_json.exists() {
-                        if let Ok(content) = tokio::fs::read_to_string(&parent_json).await {
-                            if let Ok(parent_meta) = serde_json::from_str::<LocalMetadata>(&content)
-                            {
-                                println!("Found parent show TMDB ID: {}", parent_meta.tmdb_id);
-                                best_match = fetch_tmdb_season_metadata(parent_meta.tmdb_id, s_num)
-                                    .await
-                                    .ok()
-                                    .flatten();
-                            }
-                        }
-                    }
+                if let Some(parent) = abs_path.parent()
+                    && let Some(parent_meta) = read_local_metadata(parent).await
+                {
+                    println!("Found parent show TMDB ID: {}", parent_meta.tmdb_id);
+                    best_match = fetch_tmdb_season_metadata(parent_meta.tmdb_id, s_num)
+                        .await
+                        .ok()
+                        .flatten();
                 }
             }
         }
@@ -410,18 +365,18 @@ pub async fn lookup_metadata(
     // 2. Fallback: Probe internal title (only for files)
     if best_match.is_none() && !is_dir {
         println!("No match for filename, probing internal title...");
-        if let Ok(meta) = probe_metadata(&abs_path).await {
-            if let Some(internal_title) = meta.title {
-                println!("Internal title found: {}", internal_title);
-                // For internal title, we might not have a year explicitly separated,
-                // or we could try to clean it too?
-                // Let's clean the internal title as well to extract year if present.
-                let (clean_int_title, int_year) = cleanup_filename(&internal_title);
-                best_match = fetch_tmdb_metadata(&clean_int_title, int_year.as_deref(), false)
-                    .await
-                    .ok()
-                    .flatten();
-            }
+        if let Ok(meta) = probe_metadata(&abs_path).await
+            && let Some(internal_title) = meta.title
+        {
+            println!("Internal title found: {}", internal_title);
+            // For internal title, we might not have a year explicitly separated,
+            // or we could try to clean it too?
+            // Let's clean the internal title as well to extract year if present.
+            let (clean_int_title, int_year) = cleanup_filename(&internal_title);
+            best_match = fetch_tmdb_metadata(&clean_int_title, int_year.as_deref(), false)
+                .await
+                .ok()
+                .flatten();
         }
     }
 
@@ -429,11 +384,6 @@ pub async fn lookup_metadata(
         // Save to JSON
         // We want to match the logic in list_files, which looks for format!("{}.json", file_name)
         // file_name includes extension, e.g. "Movie.mkv". So we want "Movie.mkv.json"
-
-        let json_path = abs_path
-            .parent()
-            .unwrap()
-            .join(format!("{}.json", file_name));
 
         // Download poster if available
         if let Some(poster_suffix) = &m.poster_path {
@@ -452,8 +402,7 @@ pub async fn lookup_metadata(
         // We should store suffix so we know we have it? Or store what we want to return?
         // Let's store what we got from TMDB.
 
-        let content = serde_json::to_string_pretty(&m).unwrap();
-        if let Err(e) = tokio::fs::write(&json_path, content).await {
+        if let Err(e) = save_local_metadata(&abs_path, &m).await {
             eprintln!("Failed to write metadata json: {}", e);
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }

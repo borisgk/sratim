@@ -151,7 +151,7 @@ pub async fn find_keyframe(path: &Path, target: f64) -> Result<f64> {
     let interval = format!("{}%{}", start_scan, end_scan);
 
     let output = tokio::process::Command::new("ffprobe")
-        .args(&[
+        .args([
             "-v",
             "error",
             "-select_streams",
@@ -258,7 +258,7 @@ struct FFProbeTags {
 
 pub async fn probe_metadata(path: &Path) -> Result<MovieMetadata> {
     let output = tokio::process::Command::new("ffprobe")
-        .args(&[
+        .args([
             "-v",
             "quiet",
             "-print_format",
@@ -308,7 +308,7 @@ pub async fn probe_metadata(path: &Path) -> Result<MovieMetadata> {
             audio_tracks.push(AudioTrack {
                 index: audio_idx_counter,
                 language: lang,
-                label: label,
+                label,
                 codec: stream
                     .codec_name
                     .clone()
@@ -337,7 +337,7 @@ pub async fn probe_metadata(path: &Path) -> Result<MovieMetadata> {
             subtitle_tracks.push(SubtitleTrack {
                 index: subtitle_idx_counter,
                 language: lang,
-                label: label,
+                label,
                 codec: stream
                     .codec_name
                     .clone()
