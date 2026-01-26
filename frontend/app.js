@@ -124,8 +124,10 @@ function renderGrid(nodes) {
                 const lastSlash = node.path.lastIndexOf('/');
                 const parentPath = lastSlash !== -1 ? node.path.substring(0, lastSlash + 1) : '';
                 const posterUrl = `/content/${parentPath}${node.poster}`;
+                // Escape single quotes to avoid breaking CSS url('') 
+                const escapedUrl = encodeURI(posterUrl).replace(/'/g, "%27");
 
-                card.style.backgroundImage = `linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.8) 100%), url('${encodeURI(posterUrl)}')`;
+                card.style.backgroundImage = `linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.8) 100%), url('${escapedUrl}')`;
                 card.style.backgroundSize = 'cover';
                 card.style.backgroundPosition = 'center';
             }
@@ -165,8 +167,10 @@ function renderGrid(nodes) {
                 const lastSlash = node.path.lastIndexOf('/');
                 const parentPath = lastSlash !== -1 ? node.path.substring(0, lastSlash + 1) : '';
                 const posterUrl = `/content/${parentPath}${node.poster}`;
+                // Escape single quotes to avoid breaking CSS url('')
+                const escapedUrl = encodeURI(posterUrl).replace(/'/g, "%27");
 
-                card.style.backgroundImage = `linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.8) 100%), url('${encodeURI(posterUrl)}')`;
+                card.style.backgroundImage = `linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.8) 100%), url('${escapedUrl}')`;
                 card.style.backgroundSize = 'cover';
                 card.style.backgroundPosition = 'center';
             }
