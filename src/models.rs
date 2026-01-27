@@ -1,10 +1,9 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::process::Child;
-use tokio::sync::Mutex;
 
 // --- Config ---
 
@@ -16,6 +15,11 @@ pub struct AppConfig {
     pub port: u16,
     #[serde(default = "default_host")]
     pub host: String,
+    #[serde(default = "default_libraries_file")]
+    pub libraries_file: PathBuf,
+    pub tmdb_api_key: Option<String>,
+    #[serde(default = "default_tmdb_base_url")]
+    pub tmdb_base_url: String,
 }
 
 fn default_frontend_dir() -> PathBuf {
@@ -28,6 +32,14 @@ fn default_port() -> u16 {
 
 fn default_host() -> String {
     "0.0.0.0".to_string()
+}
+
+fn default_libraries_file() -> PathBuf {
+    PathBuf::from("libraries.json")
+}
+
+fn default_tmdb_base_url() -> String {
+    "https://glossary.rus9n.com/3".to_string()
 }
 
 impl AppConfig {
@@ -58,6 +70,9 @@ impl AppConfig {
             frontend_dir: default_frontend_dir(),
             port: default_port(),
             host: default_host(),
+            libraries_file: default_libraries_file(),
+            tmdb_api_key: None,
+            tmdb_base_url: default_tmdb_base_url(),
         }
     }
 }
@@ -67,9 +82,10 @@ impl AppConfig {
 #[derive(Clone)]
 pub struct AppState {
     pub dash_temp_dir: PathBuf,
-    pub ffmpeg_process: Arc<Mutex<Option<Child>>>,
     pub auth: crate::auth::AuthState,
     pub libraries: Arc<tokio::sync::RwLock<Vec<Library>>>,
+    pub metadata_cache: Arc<tokio::sync::RwLock<HashMap<PathBuf, MovieMetadata>>>,
+    pub config: AppConfig,
 }
 
 // --- Library Models ---
@@ -91,7 +107,7 @@ pub struct Library {
 
 // --- Models ---
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct AudioTrack {
     pub index: usize,
     pub language: Option<String>,
@@ -100,7 +116,7 @@ pub struct AudioTrack {
     pub channels: Option<usize>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct SubtitleTrack {
     pub index: usize,
     pub language: Option<String>,
@@ -108,7 +124,7 @@ pub struct SubtitleTrack {
     pub codec: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct MovieMetadata {
     pub duration: f64,
     pub video_codec: String,
