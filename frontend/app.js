@@ -381,16 +381,9 @@ async function lookupMovie(node, cardElement, silent = false) {
         const data = await response.json();
 
         if (data) {
-            const currentRec = navigationStack[navigationStack.length - 1];
-            // Invalidate cache
-            const cacheKey = `${currentLibraryId}:${currentRec.path}`;
-            folderCache.delete(cacheKey);
-
-            const nodes = await fetchMovies(currentRec.path);
-            if (nodes) {
-                navigationStack[navigationStack.length - 1].children = nodes;
-                renderUI();
-            }
+            if (data.title) node.title = data.title;
+            if (data.poster_path) node.poster = `${node.name}.jpg`;
+            renderUI();
         } else {
             if (!silent) alert('No metadata found for this item.');
             if (btn) btn.innerHTML = originalIcon;
