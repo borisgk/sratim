@@ -60,82 +60,96 @@ pub async fn list_files(
         return StatusCode::FORBIDDEN.into_response();
     }
 
-    let mut entries = Vec::new();
+    let mut tasks = tokio::task::JoinSet::new();
 
     if let Ok(mut read_dir) = tokio::fs::read_dir(&canonical_path).await {
         while let Ok(Some(entry)) = read_dir.next_entry().await {
-            let file_name = entry.file_name().to_string_lossy().to_string();
-            // Skip hidden files
-            if file_name.starts_with('.') {
-                continue;
-            }
+            let params_path = params.path.clone();
+            let canonical_path = canonical_path.clone();
 
-            let file_type = entry.file_type().await.ok();
-            let is_dir = file_type.map(|t| t.is_dir()).unwrap_or(false);
-            let is_file = file_type.map(|t| t.is_file()).unwrap_or(false);
-
-            let mut rel_path = params.path.clone();
-            if !rel_path.is_empty() && !rel_path.ends_with('/') {
-                rel_path.push('/');
-            }
-            rel_path.push_str(&file_name);
-
-            if is_dir {
-                let mut title = None;
-                let mut poster = None;
-
-                let item_path = canonical_path.join(&file_name);
-                if let Some(meta) = read_local_metadata(&item_path).await {
-                    title = Some(meta.title);
-                    if meta.poster_path.is_some() {
-                        let img_path = canonical_path.join(format!("{}.jpg", file_name));
-                        if img_path.exists() {
-                            poster = Some(format!("{}.jpg", file_name));
-                        }
-                    }
+            tasks.spawn(async move {
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                // Skip hidden files
+                if file_name.starts_with('.') {
+                    return None;
                 }
 
-                entries.push(FileEntry {
-                    name: file_name,
-                    path: rel_path,
-                    entry_type: "folder".to_string(),
-                    title,
-                    poster,
-                });
-            } else if is_file
-                && let Some(ext) = std::path::Path::new(&file_name)
-                    .extension()
-                    .and_then(|s| s.to_str())
-            {
-                match ext.to_lowercase().as_str() {
-                    "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "flv" | "wmv" => {
-                        let mut title = None;
-                        let mut poster = None;
+                let file_type = entry.file_type().await.ok();
+                let is_dir = file_type.map(|t| t.is_dir()).unwrap_or(false);
+                let is_file = file_type.map(|t| t.is_file()).unwrap_or(false);
 
-                        // Check for Sidecar JSON
-                        let item_path = canonical_path.join(&file_name);
-                        if let Some(meta) = read_local_metadata(&item_path).await {
-                            title = Some(meta.title);
-                            if meta.poster_path.is_some() {
-                                // Check if image exists
-                                let img_path = canonical_path.join(format!("{}.jpg", file_name));
-                                if img_path.exists() {
-                                    poster = Some(format!("{}.jpg", file_name));
-                                }
+                let mut rel_path = params_path;
+                if !rel_path.is_empty() && !rel_path.ends_with('/') {
+                    rel_path.push('/');
+                }
+                rel_path.push_str(&file_name);
+
+                if is_dir {
+                    let mut title = None;
+                    let mut poster = None;
+
+                    let item_path = canonical_path.join(&file_name);
+                    if let Some(meta) = read_local_metadata(&item_path).await {
+                        title = Some(meta.title);
+                        if meta.poster_path.is_some() {
+                            let img_path = canonical_path.join(format!("{}.jpg", file_name));
+                            if tokio::fs::try_exists(&img_path).await.unwrap_or(false) {
+                                poster = Some(format!("{}.jpg", file_name));
                             }
                         }
-
-                        entries.push(FileEntry {
-                            name: file_name,
-                            path: rel_path,
-                            entry_type: "file".to_string(),
-                            title,
-                            poster,
-                        });
                     }
-                    _ => {}
+
+                    Some(FileEntry {
+                        name: file_name,
+                        path: rel_path,
+                        entry_type: "folder".to_string(),
+                        title,
+                        poster,
+                    })
+                } else if is_file
+                    && let Some(ext) = std::path::Path::new(&file_name)
+                        .extension()
+                        .and_then(|s| s.to_str())
+                {
+                    match ext.to_lowercase().as_str() {
+                        "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "flv" | "wmv" => {
+                            let mut title = None;
+                            let mut poster = None;
+
+                            // Check for Sidecar JSON
+                            let item_path = canonical_path.join(&file_name);
+                            if let Some(meta) = read_local_metadata(&item_path).await {
+                                title = Some(meta.title);
+                                if meta.poster_path.is_some() {
+                                    // Check if image exists
+                                    let img_path = canonical_path.join(format!("{}.jpg", file_name));
+                                    if tokio::fs::try_exists(&img_path).await.unwrap_or(false) {
+                                        poster = Some(format!("{}.jpg", file_name));
+                                    }
+                                }
+                            }
+
+                            Some(FileEntry {
+                                name: file_name,
+                                path: rel_path,
+                                entry_type: "file".to_string(),
+                                title,
+                                poster,
+                            })
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
                 }
-            }
+            });
+        }
+    }
+
+    let mut entries = Vec::new();
+    while let Some(res) = tasks.join_next().await {
+        if let Ok(Some(entry)) = res {
+            entries.push(entry);
         }
     }
 
