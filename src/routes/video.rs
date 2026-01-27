@@ -165,14 +165,6 @@ pub async fn get_metadata(
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    // Check cache
-    {
-        let cache = state.metadata_cache.read().await;
-        if let Some(meta) = cache.get(&abs_path) {
-            return Json(meta.clone()).into_response();
-        }
-    }
-
     match probe_metadata(&abs_path).await {
         Ok(mut metadata) => {
             // Check for sidecar JSON
@@ -180,11 +172,6 @@ pub async fn get_metadata(
                 && !meta.title.is_empty()
             {
                 metadata.title = Some(meta.title);
-            }
-            // Update cache
-            {
-                let mut cache = state.metadata_cache.write().await;
-                cache.insert(abs_path.clone(), metadata.clone());
             }
             Json(metadata).into_response()
         }
@@ -208,23 +195,11 @@ pub async fn stream_video(
     }
 
     // Detect codec & audio & duration via unified probe
-    let metadata = {
-        let cache = state.metadata_cache.read().await;
-        if let Some(m) = cache.get(&abs_path) {
-            m.clone()
-        } else {
-            drop(cache); // Release read lock before write
-            match probe_metadata(&abs_path).await {
-                Ok(m) => {
-                    let mut cache = state.metadata_cache.write().await;
-                    cache.insert(abs_path.clone(), m.clone());
-                    m
-                }
-                Err(e) => {
-                    eprintln!("Probe failed: {}", e);
-                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-                }
-            }
+    let metadata = match probe_metadata(&abs_path).await {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("Probe failed: {}", e);
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
 
@@ -396,15 +371,10 @@ pub async fn lookup_metadata(
                     && let Some(parent_meta) = read_local_metadata(parent).await
                 {
                     println!("Found parent show TMDB ID: {}", parent_meta.tmdb_id);
-                    best_match = fetch_tmdb_season_metadata(
-                        parent_meta.tmdb_id,
-                        s_num,
-                        state.config.tmdb_api_key.as_deref(),
-                        &state.config.tmdb_base_url,
-                    )
-                    .await
-                    .ok()
-                    .flatten();
+                    best_match = fetch_tmdb_season_metadata(parent_meta.tmdb_id, s_num)
+                        .await
+                        .ok()
+                        .flatten();
                 }
             }
         }
@@ -413,16 +383,10 @@ pub async fn lookup_metadata(
     // Fallback to regular movie/tv search if no season match
     if best_match.is_none() {
         // 1. Search by filename with separated year
-        best_match = fetch_tmdb_metadata(
-            &cleaned_name,
-            year.as_deref(),
-            is_tv,
-            state.config.tmdb_api_key.as_deref(),
-            &state.config.tmdb_base_url,
-        )
-        .await
-        .ok()
-        .flatten();
+        best_match = fetch_tmdb_metadata(&cleaned_name, year.as_deref(), is_tv)
+            .await
+            .ok()
+            .flatten();
     }
 
     // 2. Fallback: Probe internal title (only for files)
@@ -436,16 +400,10 @@ pub async fn lookup_metadata(
             // or we could try to clean it too?
             // Let's clean the internal title as well to extract year if present.
             let (clean_int_title, int_year) = cleanup_filename(&internal_title);
-            best_match = fetch_tmdb_metadata(
-                &clean_int_title,
-                int_year.as_deref(),
-                false,
-                state.config.tmdb_api_key.as_deref(),
-                &state.config.tmdb_base_url,
-            )
-            .await
-            .ok()
-            .flatten();
+            best_match = fetch_tmdb_metadata(&clean_int_title, int_year.as_deref(), false)
+                .await
+                .ok()
+                .flatten();
         }
     }
 
@@ -461,13 +419,7 @@ pub async fn lookup_metadata(
                 .parent()
                 .unwrap()
                 .join(format!("{}.jpg", file_name));
-            if let Err(e) = download_image(
-                poster_suffix,
-                &img_path,
-                state.config.tmdb_api_key.as_deref(),
-            )
-            .await
-            {
+            if let Err(e) = download_image(poster_suffix, &img_path).await {
                 eprintln!("Failed to download image: {}", e);
             }
         }

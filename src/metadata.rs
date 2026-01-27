@@ -95,26 +95,19 @@ pub async fn fetch_tmdb_metadata(
     query: &str,
     year: Option<&str>,
     is_tv: bool,
-    api_key: Option<&str>,
-    base_url: &str,
 ) -> Result<Option<LocalMetadata>> {
     let client = reqwest::Client::new();
     let endpoint = if is_tv { "tv" } else { "movie" };
     let year_param = if is_tv { "first_air_date_year" } else { "year" };
 
     let mut url = format!(
-        "{}/search/{}?query={}&language=en-US&page=1&include_adult=false",
-        base_url,
+        "https://glossary.rus9n.com/3/search/{}?query={}&language=en-US&page=1&include_adult=false",
         endpoint,
         urlencoding::encode(query)
     );
 
     if let Some(y) = year {
         url.push_str(&format!("&{}={}", year_param, y));
-    }
-
-    if let Some(key) = api_key {
-        url.push_str(&format!("&api_key={}", key));
     }
 
     println!(
@@ -163,18 +156,12 @@ pub async fn fetch_tmdb_metadata(
 pub async fn fetch_tmdb_season_metadata(
     tmdb_id: u64,
     season_number: u32,
-    api_key: Option<&str>,
-    base_url: &str,
 ) -> Result<Option<LocalMetadata>> {
     let client = reqwest::Client::new();
-    let mut url = format!(
-        "{}/tv/{}/season/{}?language=en-US",
-        base_url, tmdb_id, season_number
+    let url = format!(
+        "https://glossary.rus9n.com/3/tv/{}/season/{}?language=en-US",
+        tmdb_id, season_number
     );
-
-    if let Some(key) = api_key {
-        url.push_str(&format!("&api_key={}", key));
-    }
 
     println!(
         "[metadata] Fetching TMDB Season: Show={}, Season={}",
@@ -212,13 +199,8 @@ pub async fn fetch_tmdb_season_metadata(
     }))
 }
 
-pub async fn download_image(poster_suffix: &str, target_path: &Path, api_key: Option<&str>) -> Result<()> {
-    let base = if api_key.is_some() {
-        "https://image.tmdb.org/t/p/w500"
-    } else {
-        "https://glossary.rus9n.com/t/p/w500"
-    };
-    let url = format!("{}{}", base, poster_suffix);
+pub async fn download_image(poster_suffix: &str, target_path: &Path) -> Result<()> {
+    let url = format!("https://glossary.rus9n.com/t/p/w500{}", poster_suffix);
     println!("[metadata] Downloading image from: {}", url);
 
     let client = reqwest::Client::builder()
