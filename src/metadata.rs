@@ -40,8 +40,7 @@ pub async fn read_local_metadata(path: &Path) -> Option<LocalMetadata> {
     let parent = path.parent()?;
     let json_path = parent.join(format!("{}.json", file_name));
 
-    if json_path.exists()
-        && let Ok(content) = fs::read_to_string(&json_path).await
+    if let Ok(content) = fs::read_to_string(&json_path).await
         && let Ok(meta) = serde_json::from_str::<LocalMetadata>(&content)
     {
         return Some(meta);
