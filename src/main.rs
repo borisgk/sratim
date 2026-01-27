@@ -24,8 +24,7 @@ async fn main() {
     let auth_state = sratim::auth::AuthState::new().await;
 
     // Load libraries
-    let libraries_file = "libraries.json";
-    let libraries = if let Ok(content) = tokio::fs::read_to_string(libraries_file).await {
+    let libraries = if let Ok(content) = tokio::fs::read_to_string(&config.libraries_file).await {
         serde_json::from_str::<Vec<sratim::models::Library>>(&content).unwrap_or_default()
     } else {
         Vec::new()
@@ -36,6 +35,7 @@ async fn main() {
         ffmpeg_process: Arc::new(Mutex::new(None)),
         auth: auth_state,
         libraries: Arc::new(tokio::sync::RwLock::new(libraries)),
+        libraries_file: config.libraries_file,
     };
 
     let protected_routes = Router::new()

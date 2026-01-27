@@ -10,8 +10,6 @@ use uuid::Uuid;
 
 use crate::models::{AppState, Library, LibraryType};
 
-const LIBRARIES_FILE: &str = "libraries.json";
-
 #[derive(Deserialize)]
 pub struct CreateLibraryPayload {
     pub name: String,
@@ -54,7 +52,7 @@ pub async fn create_library(
 
     // Persist
     if let Ok(content) = serde_json::to_string_pretty(&*libraries) {
-        let _ = tokio::fs::write(LIBRARIES_FILE, content).await;
+        let _ = tokio::fs::write(&state.libraries_file, content).await;
     }
 
     StatusCode::CREATED.into_response()
@@ -81,7 +79,7 @@ pub async fn update_library(
 
         // Persist
         if let Ok(content) = serde_json::to_string_pretty(&*libraries) {
-            let _ = tokio::fs::write(LIBRARIES_FILE, content).await;
+            let _ = tokio::fs::write(&state.libraries_file, content).await;
         }
 
         return StatusCode::OK.into_response();
@@ -101,7 +99,7 @@ pub async fn delete_library(
 
         // Persist
         if let Ok(content) = serde_json::to_string_pretty(&*libraries) {
-            let _ = tokio::fs::write(LIBRARIES_FILE, content).await;
+            let _ = tokio::fs::write(&state.libraries_file, content).await;
         }
 
         return StatusCode::OK.into_response();
