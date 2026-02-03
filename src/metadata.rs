@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::OnceLock;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
@@ -62,13 +63,17 @@ pub async fn save_local_metadata(path: &Path, metadata: &LocalMetadata) -> Resul
 
 pub fn cleanup_filename(filename: &str) -> (String, Option<String>) {
     // 1. Find the year (19xx or 20xx)
-    let year_re = Regex::new(r"[\(\[\.]*(19|20)\d{2}[\)\]\.]*").unwrap();
+    static YEAR_RE: OnceLock<Regex> = OnceLock::new();
+    let year_re = YEAR_RE.get_or_init(|| Regex::new(r"[\(\[\.]*(19|20)\d{2}[\)\]\.]*").unwrap());
 
     let (base_name, year) = if let Some(mat) = year_re.find(filename) {
         // Extract year string (clean it of brackets/dots)
         let raw_year = mat.as_str();
-        let clean_year_re = Regex::new(r"\d{4}").unwrap();
-        let year_val = clean_year_re.find(raw_year).map(|m| m.as_str().to_string());
+        static CLEAN_YEAR_RE: OnceLock<Regex> = OnceLock::new();
+        let clean_year_re = CLEAN_YEAR_RE.get_or_init(|| Regex::new(r"\d{4}").unwrap());
+        let year_val = clean_year_re
+            .find(raw_year)
+            .map(|m| m.as_str().to_string());
 
         // Keep everything up to the START of the year match for title
         let start = mat.start();
@@ -78,14 +83,18 @@ pub fn cleanup_filename(filename: &str) -> (String, Option<String>) {
     };
 
     // 2. Remove tags from the remaining base_name
-    let re = Regex::new(r"(?i)[\s\.]*(1080p|720p|4k|2160p|bluray|web-dl|webrip|remux|hdr|x264|x265|hevc|aac|ac3|dts|eng|sub|subs)[\s\.]*").unwrap();
+    static TAGS_RE: OnceLock<Regex> = OnceLock::new();
+    let re = TAGS_RE.get_or_init(|| {
+        Regex::new(r"(?i)[\s\.]*(1080p|720p|4k|2160p|bluray|web-dl|webrip|remux|hdr|x264|x265|hevc|aac|ac3|dts|eng|sub|subs)[\s\.]*").unwrap()
+    });
     let no_tags = re.replace_all(base_name, " ");
 
     // 3. Cleanup dots/underscores
     let clean = no_tags.replace(['.', '_', '(', ')', '[', ']'], " ");
 
     // 4. Trim spaces
-    let space_re = Regex::new(r"\s+").unwrap();
+    static SPACE_RE: OnceLock<Regex> = OnceLock::new();
+    let space_re = SPACE_RE.get_or_init(|| Regex::new(r"\s+").unwrap());
     let final_title = space_re.replace_all(&clean, " ").trim().to_string();
 
     (final_title, year)
