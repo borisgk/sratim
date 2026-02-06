@@ -5,3 +5,5 @@ deploy.sh
 sratim.service
 libraries.json
 users.json
+.DS_Store
+.DS_Store
