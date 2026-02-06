@@ -6,6 +6,7 @@ let navigationStack = []; // Stack of { name, path, children }
 let folderCache = new Map(); // path -> nodes[]
 let currentLibraryId = null;
 let libraries = [];
+let currentUserIsAdmin = false;
 
 // Fetch configured libraries
 async function fetchLibraries() {
@@ -113,56 +114,59 @@ function renderLibraries() {
         const card = document.createElement('div');
         card.className = 'movie-card folder';
 
-        // Menu handling
-        const menuContainer = document.createElement('div');
-        menuContainer.className = 'card-menu';
-        menuContainer.innerHTML = `
-            <button class="card-menu-btn">⋮</button>
-            <div class="card-menu-dropdown">
-                <div class="card-menu-item edit">
-                    <span>✏️</span> Edit
+        if (currentUserIsAdmin) {
+            // Menu handling
+            const menuContainer = document.createElement('div');
+            menuContainer.className = 'card-menu';
+            menuContainer.innerHTML = `
+                <button class="card-menu-btn">⋮</button>
+                <div class="card-menu-dropdown">
+                    <div class="card-menu-item edit">
+                        <span>✏️</span> Edit
+                    </div>
+                    <div class="card-menu-item delete">
+                        <span>🗑️</span> Delete
+                    </div>
                 </div>
-                <div class="card-menu-item delete">
-                    <span>🗑️</span> Delete
-                </div>
-            </div>
-        `;
+            `;
 
-        const btn = menuContainer.querySelector('.card-menu-btn');
-        const dropdown = menuContainer.querySelector('.card-menu-dropdown');
-        const editBtn = menuContainer.querySelector('.card-menu-item.edit');
-        const deleteBtn = menuContainer.querySelector('.card-menu-item.delete');
+            const btn = menuContainer.querySelector('.card-menu-btn');
+            const dropdown = menuContainer.querySelector('.card-menu-dropdown');
+            const editBtn = menuContainer.querySelector('.card-menu-item.edit');
+            const deleteBtn = menuContainer.querySelector('.card-menu-item.delete');
 
-        btn.onclick = (e) => {
-            e.stopPropagation();
-            // Close other dropdowns
-            document.querySelectorAll('.card-menu-dropdown.show').forEach(d => {
-                if (d !== dropdown) d.classList.remove('show');
-            });
-            dropdown.classList.toggle('show');
-        };
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                // Close other dropdowns
+                document.querySelectorAll('.card-menu-dropdown.show').forEach(d => {
+                    if (d !== dropdown) d.classList.remove('show');
+                });
+                dropdown.classList.toggle('show');
+            };
 
-        editBtn.onclick = (e) => {
-            e.stopPropagation();
-            window.location.href = `/add-library.html?id=${lib.id}`;
-        };
+            editBtn.onclick = (e) => {
+                e.stopPropagation();
+                window.location.href = `/add-library.html?id=${lib.id}`;
+            };
 
-        deleteBtn.onclick = async (e) => {
-            e.stopPropagation();
-            if (confirm(`Are you sure you want to delete library "${lib.name}"?`)) {
-                try {
-                    const res = await fetch(`/api/libraries/${lib.id}`, { method: 'DELETE' });
-                    if (res.ok) {
-                        await initLibrary(); // Reload
-                    } else {
-                        alert('Failed to delete library');
+            deleteBtn.onclick = async (e) => {
+                e.stopPropagation();
+                if (confirm(`Are you sure you want to delete library "${lib.name}"?`)) {
+                    try {
+                        const res = await fetch(`/api/libraries/${lib.id}`, { method: 'DELETE' });
+                        if (res.ok) {
+                            await initLibrary(); // Reload
+                        } else {
+                            alert('Failed to delete library');
+                        }
+                    } catch (err) {
+                        console.error(err);
+                        alert('Error deleting library');
                     }
-                } catch (err) {
-                    console.error(err);
-                    alert('Error deleting library');
                 }
-            }
-        };
+            };
+            card.appendChild(menuContainer);
+        }
 
         // Close dropdown when clicking elsewhere (handled globally ideally, but we can do per-setup or simple)
         // Ideally global listener. Let's add one global listener in init?
@@ -182,21 +186,23 @@ function renderLibraries() {
             <div class="movie-icon" style="opacity:0">📚</div>
             <div class="movie-title">${lib.name}</div>
         `;
-        card.appendChild(menuContainer);
+        // card.appendChild(menuContainer); // Logic moved inside if(currentUserIsAdmin)
 
         card.onclick = () => enterLibrary(lib);
         moviesGrid.appendChild(card);
-    });
+    }); // Close libraries loop
 
-    // Add Library Card
-    const addCard = document.createElement('div');
-    addCard.className = 'movie-card';
-    addCard.innerHTML = `
-        <div class="movie-icon">➕</div>
-        <div class="movie-title">Add Library</div>
-    `;
-    addCard.onclick = () => window.location.href = '/add-library.html';
-    moviesGrid.appendChild(addCard);
+    // Add Library Card - Only if admin
+    if (currentUserIsAdmin) {
+        const addCard = document.createElement('div');
+        addCard.className = 'movie-card';
+        addCard.innerHTML = `
+            <div class="movie-icon">➕</div>
+            <div class="movie-title">Add Library</div>
+        `;
+        addCard.onclick = () => window.location.href = '/add-library.html';
+        moviesGrid.appendChild(addCard);
+    }
 }
 
 async function enterLibrary(lib, render = true) {
@@ -340,6 +346,7 @@ function renderGrid(nodes) {
 }
 
 function appendLookupBtn(node, card) {
+    if (!currentUserIsAdmin) return;
     const lookupBtn = document.createElement('div');
     lookupBtn.className = 'lookup-btn';
     lookupBtn.innerHTML = '🔍';
@@ -407,10 +414,11 @@ async function checkUser() {
         const res = await fetch('/api/me');
         if (res.ok) {
             const user = await res.json();
+            currentUserIsAdmin = user.is_admin;
             const profile = document.getElementById('userProfile');
             if (profile) {
                 profile.innerHTML = `
-                    <span style="margin-right: 1rem; color: #fff; font-weight: bold;">User: ${user.username}</span>
+                    <span style="margin-right: 1rem; color: #fff; font-weight: bold;">User: ${user.username} ${user.is_admin ? '(Admin)' : ''}</span>
                     <button id="profileBtn" class="logout-btn" style="margin-right: 0.5rem; background-color: #444;">Profile</button>
                     <button id="logoutBtn" class="logout-btn">Logout</button>
                 `;
@@ -419,7 +427,6 @@ async function checkUser() {
                 });
                 document.getElementById('logoutBtn').addEventListener('click', async () => {
                     await fetch('/api/logout', { method: 'POST' });
-                    // Clear session storage
                     sessionStorage.clear();
                     window.location.reload();
                 });
@@ -430,8 +437,14 @@ async function checkUser() {
     }
 }
 
-checkUser();
-initLibrary();
+Promise.all([checkUser(), fetchLibraries()]).then(() => {
+    const savedLibId = sessionStorage.getItem('currentLibraryId');
+    if (savedLibId && libraries.some(l => l.id === savedLibId)) {
+        initLibrary();
+    } else {
+        renderLibraries();
+    }
+});
 
 // Global click listener to close dropdowns
 document.addEventListener('click', (e) => {

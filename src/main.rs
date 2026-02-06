@@ -54,6 +54,19 @@ async fn main() {
             "/api/libraries",
             get(sratim::routes::library::get_libraries),
         )
+        // User Management Routes
+        .route(
+            "/api/users",
+            get(sratim::auth::list_users_handler).post(sratim::auth::create_user_handler),
+        )
+        .route(
+            "/api/users/:username",
+            axum::routing::delete(sratim::auth::delete_user_handler),
+        )
+        .route(
+            "/api/users/:username/password",
+            axum::routing::put(sratim::auth::admin_change_password_handler),
+        )
         .route(
             "/api/libraries",
             axum::routing::post(sratim::routes::library::create_library),

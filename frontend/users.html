@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sratim - User Management</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .users-container {
+            max-width: 800px;
+            margin: 2rem auto;
+            background: #1e1e1e;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        
+        .header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .user-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .user-item {
+            background: rgba(255,255,255,0.05);
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .user-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn-small {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.85rem;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            color: white;
+        }
+
+        .btn-edit { background: #6366f1; }
+        .btn-delete { background: #ef4444; }
+        
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 100;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .modal-content {
+            background: #1e1e1e;
+            padding: 2rem;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 400px;
+            position: relative;
+        }
+        
+        .close-modal {
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #aaa;
+        }
+        
+        .form-group { margin-bottom: 1rem; }
+        
+        input {
+            width: 100%;
+            padding: 0.8rem;
+            background: #2d2d2d;
+            border: 1px solid #333;
+            border-radius: 4px;
+            color: white;
+            box-sizing: border-box;
+            margin-top: 0.5rem;
+        }
+
+        h2, h3 { color: white; margin-bottom: 1rem; }
+    </style>
+</head>
+<body>
+    <div class="users-container">
+        <div class="header-row">
+            <h2>User Management</h2>
+            <div>
+                <button class="btn-small bg-gray-700" onclick="window.location.href='/profile.html'">Back to Profile</button>
+                <button class="btn-small btn-edit" onclick="openAddUserModal()">Add User</button>
+            </div>
+        </div>
+        
+        <ul id="userList" class="user-list">
+            <!-- Users will be populated here -->
+        </ul>
+        
+        <div id="message" class="message"></div>
+    </div>
+
+    <!-- Add/Edit User Modal -->
+    <div id="userModal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeUserModal()">&times;</span>
+            <h3 id="modalTitle">Add User</h3>
+            <form id="userForm">
+                <input type="hidden" id="editMode" value="false">
+                
+                <div class="form-group">
+                    <label for="usernameInput" style="color: #ccc;">Username</label>
+                    <input type="text" id="usernameInput" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="passwordInput" style="color: #ccc;">Password</label>
+                    <input type="password" id="passwordInput" placeholder="Leave empty to keep unchanged (edit mode)">
+                </div>
+                
+                <button type="submit" style="width:100%; padding:0.8rem; background:#6366f1; color:white; border:none; border-radius:4px; margin-top:1rem; cursor:pointer;">Save</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="users.js"></script>
+</body>
+</html>

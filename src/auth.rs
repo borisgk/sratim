@@ -24,6 +24,8 @@ const COOKIE_NAME: &str = "session";
 pub struct User {
     pub username: String,
     pub password_hash: String,
+    #[serde(default)]
+    pub is_admin: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,10 +34,11 @@ pub struct LoginPayload {
     pub password: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    sub: String,
-    exp: usize,
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Claims {
+    pub sub: String,
+    pub is_admin: bool,
+    pub exp: usize,
 }
 
 #[derive(Clone)]
@@ -58,7 +61,11 @@ impl AuthState {
             && let Ok(loaded_users) = serde_json::from_str::<Vec<User>>(&content)
         {
             let mut map = self.users.write().await;
-            for user in loaded_users {
+            for mut user in loaded_users {
+                // Temporary migration: if username is admin, make sure is_admin is true
+                if user.username == "admin" && !user.is_admin {
+                    user.is_admin = true;
+                }
                 map.insert(user.username.clone(), user);
             }
             println!("Loaded {} users from {}", map.len(), USERS_FILE);
@@ -71,6 +78,7 @@ impl AuthState {
         let admin = User {
             username: "admin".to_string(),
             password_hash: hash,
+            is_admin: true,
         };
 
         let mut map = self.users.write().await;
@@ -108,6 +116,7 @@ pub async fn login_handler(
 
         let claims = Claims {
             sub: user.username.clone(),
+            is_admin: user.is_admin,
             exp: expiration as usize,
         };
 
@@ -133,16 +142,15 @@ pub async fn login_handler(
     (StatusCode::UNAUTHORIZED, "Invalid credentials").into_response()
 }
 
-pub async fn auth_middleware(jar: CookieJar, req: Request<Body>, next: Next) -> Response {
+pub async fn auth_middleware(jar: CookieJar, mut req: Request<Body>, next: Next) -> Response {
     if let Some(token) = jar.get(COOKIE_NAME) {
         let validation = Validation::default();
-        if decode::<Claims>(
+        if let Ok(data) = decode::<Claims>(
             token.value(),
             &DecodingKey::from_secret(JWT_SECRET),
             &validation,
-        )
-        .is_ok()
-        {
+        ) {
+            req.extensions_mut().insert(data.claims);
             return next.run(req).await;
         }
     }
@@ -176,6 +184,7 @@ pub async fn me_handler(jar: CookieJar) -> impl IntoResponse {
             return Json(User {
                 username: data.claims.sub,
                 password_hash: "".to_string(),
+                is_admin: data.claims.is_admin,
             })
             .into_response();
         }
@@ -235,4 +244,111 @@ pub async fn change_password_handler(
     }
 
     (StatusCode::UNAUTHORIZED, "User not found").into_response()
+}
+
+// --- User Management API ---
+
+#[derive(Serialize)]
+pub struct UserListDTO {
+    pub username: String,
+}
+
+#[derive(Deserialize)]
+pub struct ManageUserPayload {
+    pub username: String,
+    pub password: Option<String>,
+}
+
+pub async fn list_users_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let users = state.auth.users.read().await;
+    let list: Vec<UserListDTO> = users
+        .keys()
+        .map(|k| UserListDTO {
+            username: k.clone(),
+        })
+        .collect();
+    Json(list)
+}
+
+pub async fn create_user_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<ManageUserPayload>,
+) -> impl IntoResponse {
+    let mut users = state.auth.users.write().await;
+
+    if users.contains_key(&payload.username) {
+        return (StatusCode::CONFLICT, "User already exists").into_response();
+    }
+
+    let password = payload.password.unwrap_or_else(|| "123456".to_string()); // Default password if not provided
+
+    match bcrypt::hash(&password, bcrypt::DEFAULT_COST) {
+        Ok(hash) => {
+            let new_user = User {
+                username: payload.username.clone(),
+                password_hash: hash,
+                is_admin: false,
+            };
+            users.insert(payload.username.clone(), new_user);
+
+            // Manual save logic
+            let all_users: Vec<User> = users.values().cloned().collect();
+            if let Ok(content) = serde_json::to_string_pretty(&all_users) {
+                let _ = tokio::fs::write(USERS_FILE, content).await;
+            }
+
+            Json("User created").into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Failed to hash password").into_response(),
+    }
+}
+
+pub async fn delete_user_handler(
+    State(state): State<AppState>,
+    axum::extract::Path(username): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    let mut users = state.auth.users.write().await;
+
+    if users.remove(&username).is_some() {
+        // Manual save logic
+        let all_users: Vec<User> = users.values().cloned().collect();
+        if let Ok(content) = serde_json::to_string_pretty(&all_users) {
+            let _ = tokio::fs::write(USERS_FILE, content).await;
+        }
+        return Json("User deleted").into_response();
+    }
+
+    (StatusCode::NOT_FOUND, "User not found").into_response()
+}
+
+pub async fn admin_change_password_handler(
+    State(state): State<AppState>,
+    axum::extract::Path(username): axum::extract::Path<String>,
+    Json(payload): Json<ManageUserPayload>,
+) -> impl IntoResponse {
+    let mut users = state.auth.users.write().await;
+
+    if let Some(user) = users.get_mut(&username) {
+        if let Some(new_pass) = payload.password {
+            match bcrypt::hash(&new_pass, bcrypt::DEFAULT_COST) {
+                Ok(hash) => {
+                    user.password_hash = hash;
+                    // Manual save logic
+                    let all_users: Vec<User> = users.values().cloned().collect();
+                    if let Ok(content) = serde_json::to_string_pretty(&all_users) {
+                        let _ = tokio::fs::write(USERS_FILE, content).await;
+                    }
+                    return Json("Password updated").into_response();
+                }
+                Err(_) => {
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to hash password")
+                        .into_response();
+                }
+            }
+        } else {
+            return (StatusCode::BAD_REQUEST, "No password provided").into_response();
+        }
+    }
+
+    (StatusCode::NOT_FOUND, "User not found").into_response()
 }

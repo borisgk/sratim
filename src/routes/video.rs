@@ -326,8 +326,12 @@ pub async fn get_subtitles(
 
 pub async fn lookup_metadata(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<crate::auth::Claims>,
     Query(params): Query<LookupParams>,
 ) -> impl IntoResponse {
+    if !claims.is_admin {
+        return (StatusCode::FORBIDDEN, "Admin access required").into_response();
+    }
     let Some(base_path) = get_base_path(&state, params.library_id.as_deref()).await else {
         return (StatusCode::NOT_FOUND, Json(None::<LocalMetadata>)).into_response();
     };

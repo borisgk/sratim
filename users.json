@@ -1,5 +1,9 @@
 [
   {
+    "username": "ondatr",
+    "password_hash": "$2b$12$/UpldGDxvnPetecsb8jnx.Pezw9VwPJ7dO/xUkr62x5aNsVRQuk5G"
+  },
+  {
     "username": "admin",
     "password_hash": "$2b$12$hZKb960G1eGKJcUgqiIRj.jZ6mQgHz6VdwWmAwgl0L49zA6TB.ZaW"
   }

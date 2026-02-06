@@ -38,8 +38,12 @@ pub async fn get_libraries(State(state): State<AppState>) -> impl IntoResponse {
 
 pub async fn create_library(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<crate::auth::Claims>,
     Json(payload): Json<CreateLibraryPayload>,
 ) -> impl IntoResponse {
+    if !claims.is_admin {
+        return (StatusCode::FORBIDDEN, "Admin access required").into_response();
+    }
     let mut libraries = state.libraries.write().await;
 
     let id = Uuid::new_v4().to_string();
@@ -69,9 +73,13 @@ pub struct UpdateLibraryPayload {
 
 pub async fn update_library(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<crate::auth::Claims>,
     Path(id): Path<String>,
     Json(payload): Json<UpdateLibraryPayload>,
 ) -> impl IntoResponse {
+    if !claims.is_admin {
+        return (StatusCode::FORBIDDEN, "Admin access required").into_response();
+    }
     let mut libraries = state.libraries.write().await;
 
     if let Some(lib) = libraries.iter_mut().find(|l| l.id == id) {
@@ -92,8 +100,12 @@ pub async fn update_library(
 
 pub async fn delete_library(
     State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<crate::auth::Claims>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
+    if !claims.is_admin {
+        return (StatusCode::FORBIDDEN, "Admin access required").into_response();
+    }
     let mut libraries = state.libraries.write().await;
 
     if let Some(pos) = libraries.iter().position(|l| l.id == id) {
