@@ -67,11 +67,9 @@ async function initLibrary() {
         if (savedStack) {
             try {
                 const stackData = JSON.parse(savedStack);
-                // Reconstruct stack logic... similarly to before but with library context
-                // For simplicity, let's start at library root if simple restore fails or just load root.
-                // Or implement full restore:
-
                 const rootNodes = await fetchMovies('');
+                if (!rootNodes) throw new Error("Failed to load root");
+
                 navigationStack = [{ name: getLibraryName(savedLibId), path: '', children: rootNodes }];
 
                 // Rebuild levels
@@ -87,11 +85,16 @@ async function initLibrary() {
                 renderUI();
                 return;
             } catch (e) {
-                console.error("Restore failed", e);
+                console.error("Restore failed, falling back to library root", e);
             }
         }
+
         // Fallback to library root
-        await enterLibrary(libraries.find(l => l.id === savedLibId), false);
+        const lib = libraries.find(l => l.id === savedLibId);
+        await enterLibrary(lib, true).catch(e => {
+            console.error("Failed to enter library, going home", e);
+            renderLibraries();
+        });
     } else {
         renderLibraries();
     }
@@ -237,6 +240,8 @@ async function enterLibrary(lib, render = true) {
     if (rootNodes) {
         navigationStack = [{ name: lib.name, path: '', children: rootNodes }];
         if (render) renderUI();
+    } else {
+        throw new Error("Failed to load library root");
     }
 }
 

@@ -87,6 +87,9 @@ impl Scanner {
                     continue;
                 }
 
+                // Throttle: sleep 1ms per file check to act as "low priority" background task
+                sleep(Duration::from_millis(1)).await;
+
                 if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                     let lower_ext = ext.to_lowercase();
                     match lower_ext.as_str() {
@@ -124,6 +127,8 @@ impl Scanner {
         while let Ok(Some(entry)) = entries.next_entry().await {
             // Yield per entry to be polite
             tokio::task::yield_now().await;
+            // Throttle TV scan too
+            sleep(Duration::from_millis(1)).await;
 
             let path = entry.path();
             // TV Shows: we only look at top-level directories
