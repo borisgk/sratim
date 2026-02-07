@@ -35,6 +35,18 @@ struct TmdbSeasonResponse {
     poster_path: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct TmdbEpisodeResponse {
+    id: u64,
+    name: String,
+    overview: String,
+    still_path: Option<String>,
+    #[allow(dead_code)]
+    episode_number: u32,
+    #[allow(dead_code)]
+    season_number: u32,
+}
+
 pub async fn read_local_metadata(path: &Path) -> Option<LocalMetadata> {
     let file_name = path.file_name()?.to_string_lossy();
     let parent = path.parent()?;
@@ -54,10 +66,21 @@ pub async fn save_local_metadata(path: &Path, metadata: &LocalMetadata) -> Resul
     let parent = path.parent().context("No parent")?;
     let json_path = parent.join(format!("{}.json", file_name));
 
+    println!("[metadata] Saving metadata to: {:?}", json_path);
     let content = serde_json::to_string_pretty(metadata)?;
-    fs::write(json_path, content)
-        .await
-        .context("Failed to write metadata json")
+    match fs::write(&json_path, content).await {
+        Ok(_) => {
+            println!("[metadata] Successfully saved metadata to {:?}", json_path);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!(
+                "[metadata] Failed to write metadata json to {:?}: {}",
+                json_path, e
+            );
+            Err(e.into())
+        }
+    }
 }
 
 pub fn cleanup_filename(filename: &str) -> (String, Option<String>) {
@@ -220,6 +243,60 @@ pub async fn fetch_tmdb_season_metadata(
         overview: season_res.overview,
         poster_path: season_res.poster_path,
         tmdb_id: season_res.id,
+    }))
+}
+
+pub async fn fetch_tmdb_episode_metadata(
+    config: &crate::models::AppConfig,
+    tmdb_id: u64,
+    season_number: u32,
+    episode_number: u32,
+) -> Result<Option<LocalMetadata>> {
+    let client = reqwest::Client::new();
+    let url = format!(
+        "{}/tv/{}/season/{}/episode/{}?language=en-US",
+        config.tmdb_base_url, tmdb_id, season_number, episode_number
+    );
+
+    println!(
+        "[metadata] Fetching TMDB Episode: Show={}, S{:02}E{:02}",
+        tmdb_id, season_number, episode_number
+    );
+
+    let mut req = client
+        .get(&url)
+        .header("Accept", "application/json")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+
+    let token = if !config.tmdb_access_token.is_empty() {
+        &config.tmdb_access_token
+    } else {
+        crate::models::DEFAULT_TMDB_ACCESS_TOKEN
+    };
+
+    if !token.is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let resp = req
+        .send()
+        .await
+        .context("Failed to send TMDB episode request")?;
+
+    if !resp.status().is_success() {
+        if resp.status() == 404 {
+            return Ok(None);
+        }
+        return Err(anyhow::anyhow!("TMDB API Error: {}", resp.status()));
+    }
+
+    let ep_res: TmdbEpisodeResponse = resp.json().await.context("Failed to parse TMDB response")?;
+
+    Ok(Some(LocalMetadata {
+        title: ep_res.name,
+        overview: ep_res.overview,
+        poster_path: ep_res.still_path, // Use still_path for episodes
+        tmdb_id: ep_res.id,
     }))
 }
 
