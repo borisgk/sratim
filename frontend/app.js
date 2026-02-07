@@ -202,6 +202,30 @@ function renderLibraries() {
         `;
         addCard.onclick = () => window.location.href = '/add-library.html';
         moviesGrid.appendChild(addCard);
+
+        const rescanCard = document.createElement('div');
+        rescanCard.className = 'movie-card';
+        rescanCard.innerHTML = `
+            <div class="movie-icon">🔄</div>
+            <div class="movie-title">Rescan Libraries</div>
+        `;
+        rescanCard.onclick = async () => {
+            if (confirm('Rescan all "Movies" libraries for missing metadata?')) {
+                try {
+                    const res = await fetch('/api/rescan', { method: 'POST' });
+                    if (res.ok) {
+                        const txt = await res.text();
+                        alert(txt);
+                    } else {
+                        alert('Failed to start rescan');
+                    }
+                } catch (e) {
+                    console.error(e);
+                    alert('Error starting rescan');
+                }
+            }
+        };
+        moviesGrid.appendChild(rescanCard);
     }
 }
 

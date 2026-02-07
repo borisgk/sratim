@@ -90,6 +90,7 @@ pub struct AppState {
     pub auth: crate::auth::AuthState,
     pub libraries: Arc<tokio::sync::RwLock<Vec<Library>>>,
     pub config: AppConfig,
+    pub scanner: Arc<crate::scanner::Scanner>,
 }
 
 // --- Library Models ---

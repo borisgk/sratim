@@ -31,17 +31,18 @@ async fn main() {
         Vec::new()
     };
 
+    // --- Background Scanner ---
+    let (scanner, _worker_handle) = sratim::scanner::Scanner::new(config.clone());
+    let scanner = Arc::new(scanner);
+
     let shared_state = AppState {
         dash_temp_dir,
         ffmpeg_process: Arc::new(Mutex::new(None)),
         auth: auth_state,
         libraries: Arc::new(tokio::sync::RwLock::new(libraries)),
         config: config.clone(),
+        scanner: scanner.clone(),
     };
-
-    // --- Background Scanner ---
-    let (scanner, _worker_handle) = sratim::scanner::Scanner::new(config.clone());
-    let scanner = Arc::new(scanner);
 
     // Initial Scan
     {
@@ -63,6 +64,10 @@ async fn main() {
         .route("/api/stream", get(video::stream_video))
         .route("/api/subtitles", get(video::get_subtitles))
         .route("/api/lookup", get(video::lookup_metadata))
+        .route(
+            "/api/rescan",
+            axum::routing::post(sratim::routes::library::rescan_libraries),
+        )
         .route("/api/me", get(sratim::auth::me_handler))
         .route(
             "/api/change-password",

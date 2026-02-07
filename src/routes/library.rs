@@ -218,3 +218,27 @@ pub async fn serve_content(
 
     StatusCode::NOT_FOUND.into_response()
 }
+
+pub async fn rescan_libraries(
+    State(state): State<AppState>,
+    axum::Extension(claims): axum::Extension<crate::auth::Claims>,
+) -> impl IntoResponse {
+    if !claims.is_admin {
+        return (StatusCode::FORBIDDEN, "Admin access required").into_response();
+    }
+
+    let libraries = state.libraries.read().await;
+    let mut count = 0;
+    for lib in libraries.iter() {
+        if lib.kind == crate::models::LibraryType::Movies {
+            state.scanner.scan_library(lib).await;
+            count += 1;
+        }
+    }
+
+    (
+        StatusCode::OK,
+        format!("Started rescan for {} libraries", count),
+    )
+        .into_response()
+}
