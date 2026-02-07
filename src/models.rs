@@ -16,6 +16,12 @@ pub struct AppConfig {
     pub port: u16,
     #[serde(default = "default_host")]
     pub host: String,
+    #[serde(default = "default_tmdb_base_url")]
+    pub tmdb_base_url: String,
+    #[serde(default = "default_tmdb_image_base_url")]
+    pub tmdb_image_base_url: String,
+    #[serde(default)]
+    pub tmdb_access_token: String,
 }
 
 fn default_frontend_dir() -> PathBuf {
@@ -29,6 +35,16 @@ fn default_port() -> u16 {
 fn default_host() -> String {
     "0.0.0.0".to_string()
 }
+
+fn default_tmdb_base_url() -> String {
+    "https://api.themoviedb.org/3".to_string()
+}
+
+fn default_tmdb_image_base_url() -> String {
+    "https://image.tmdb.org/t/p/w500".to_string()
+}
+
+pub const DEFAULT_TMDB_ACCESS_TOKEN: &str = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI0YjY4NjgwZDI3MzVlYjdiMWVkNjIwZTQwZDNiMjYxMCIsIm5iZiI6MTY5MjE5NTc4Ny41MjQsInN1YiI6IjY0ZGNkYmNiMDAxYmJkMDQxYmY0NjhlOCIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.3kiXVao5QsftRTtLu2H5mfmO8K35tCtD0siaWdeCbTw";
 
 impl AppConfig {
     pub fn load() -> Result<Self> {
@@ -58,6 +74,9 @@ impl AppConfig {
             frontend_dir: default_frontend_dir(),
             port: default_port(),
             host: default_host(),
+            tmdb_base_url: default_tmdb_base_url(),
+            tmdb_image_base_url: default_tmdb_image_base_url(),
+            tmdb_access_token: String::new(),
         }
     }
 }
@@ -70,6 +89,7 @@ pub struct AppState {
     pub ffmpeg_process: Arc<Mutex<Option<Child>>>,
     pub auth: crate::auth::AuthState,
     pub libraries: Arc<tokio::sync::RwLock<Vec<Library>>>,
+    pub config: AppConfig,
 }
 
 // --- Library Models ---

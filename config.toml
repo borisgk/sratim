@@ -10,3 +10,8 @@ port = 3000
 
 # Server listening host (set to 127.0.0.1 for local only, 0.0.0.0 for public)
 host = "0.0.0.0"
+
+# TMDB API Configuration
+tmdb_base_url = "https://api.themoviedb.org/3"
+tmdb_image_base_url = "https://image.tmdb.org/t/p/w500"
+tmdb_access_token = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI0YjY4NjgwZDI3MzVlYjdiMWVkNjIwZTQwZDNiMjYxMCIsIm5iZiI6MTY5MjE5NTc4Ny41MjQsInN1YiI6IjY0ZGNkYmNiMDAxYmJkMDQxYmY0NjhlOCIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.3kiXVao5QsftRTtLu2H5mfmO8K35tCtD0siaWdeCbTw"

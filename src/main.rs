@@ -36,7 +36,26 @@ async fn main() {
         ffmpeg_process: Arc::new(Mutex::new(None)),
         auth: auth_state,
         libraries: Arc::new(tokio::sync::RwLock::new(libraries)),
+        config: config.clone(),
     };
+
+    // --- Background Scanner ---
+    let (scanner, _worker_handle) = sratim::scanner::Scanner::new(config.clone());
+    let scanner = Arc::new(scanner);
+
+    // Initial Scan
+    {
+        let libraries = shared_state.libraries.read().await;
+        for lib in libraries.iter() {
+            if lib.kind == sratim::models::LibraryType::Movies {
+                let scanner_ref = scanner.clone();
+                let lib_clone = lib.clone();
+                tokio::spawn(async move {
+                    scanner_ref.scan_library(&lib_clone).await;
+                });
+            }
+        }
+    }
 
     let protected_routes = Router::new()
         .route("/api/movies", get(video::list_files))

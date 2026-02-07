@@ -92,6 +92,7 @@ pub fn cleanup_filename(filename: &str) -> (String, Option<String>) {
 }
 
 pub async fn fetch_tmdb_metadata(
+    config: &crate::models::AppConfig,
     query: &str,
     year: Option<&str>,
     is_tv: bool,
@@ -101,7 +102,8 @@ pub async fn fetch_tmdb_metadata(
     let year_param = if is_tv { "first_air_date_year" } else { "year" };
 
     let mut url = format!(
-        "https://glossary.rus9n.com/3/search/{}?query={}&language=en-US&page=1&include_adult=false",
+        "{}/search/{}?query={}&language=en-US&page=1&include_adult=false",
+        config.tmdb_base_url,
         endpoint,
         urlencoding::encode(query)
     );
@@ -117,13 +119,22 @@ pub async fn fetch_tmdb_metadata(
     println!("[metadata] Request URL: {}", url);
     println!("[metadata] Request Headers: Accept: application/json");
 
-    let resp = client
+    let mut req = client
         .get(&url)
         .header("Accept", "application/json")
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .send()
-        .await
-        .context("Failed to send TMDB request")?;
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+
+    let token = if !config.tmdb_access_token.is_empty() {
+        &config.tmdb_access_token
+    } else {
+        crate::models::DEFAULT_TMDB_ACCESS_TOKEN
+    };
+
+    if !token.is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let resp = req.send().await.context("Failed to send TMDB request")?;
 
     println!("[metadata] Response status: {}", resp.status());
 
@@ -154,13 +165,14 @@ pub async fn fetch_tmdb_metadata(
 }
 
 pub async fn fetch_tmdb_season_metadata(
+    config: &crate::models::AppConfig,
     tmdb_id: u64,
     season_number: u32,
 ) -> Result<Option<LocalMetadata>> {
     let client = reqwest::Client::new();
     let url = format!(
-        "https://glossary.rus9n.com/3/tv/{}/season/{}?language=en-US",
-        tmdb_id, season_number
+        "{}/tv/{}/season/{}?language=en-US",
+        config.tmdb_base_url, tmdb_id, season_number
     );
 
     println!(
@@ -169,10 +181,22 @@ pub async fn fetch_tmdb_season_metadata(
     );
     println!("[metadata] Request URL: {}", url);
 
-    let resp = client
+    let mut req = client
         .get(&url)
         .header("Accept", "application/json")
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+
+    let token = if !config.tmdb_access_token.is_empty() {
+        &config.tmdb_access_token
+    } else {
+        crate::models::DEFAULT_TMDB_ACCESS_TOKEN
+    };
+
+    if !token.is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let resp = req
         .send()
         .await
         .context("Failed to send TMDB season request")?;
@@ -199,8 +223,12 @@ pub async fn fetch_tmdb_season_metadata(
     }))
 }
 
-pub async fn download_image(poster_suffix: &str, target_path: &Path) -> Result<()> {
-    let url = format!("https://glossary.rus9n.com/t/p/w500{}", poster_suffix);
+pub async fn download_image(
+    config: &crate::models::AppConfig,
+    poster_suffix: &str,
+    target_path: &Path,
+) -> Result<()> {
+    let url = format!("{}{}", config.tmdb_image_base_url, poster_suffix);
     println!("[metadata] Downloading image from: {}", url);
 
     let client = reqwest::Client::builder()
@@ -226,6 +254,57 @@ pub async fn download_image(poster_suffix: &str, target_path: &Path) -> Result<(
         .context("Failed to write image data")?;
 
     Ok(())
+}
+
+pub async fn process_file(
+    path: &Path,
+    config: &crate::models::AppConfig,
+    is_tv: bool,
+) -> Result<Option<LocalMetadata>> {
+    let file_name = path
+        .file_name()
+        .context("No filename")?
+        .to_string_lossy()
+        .to_string();
+    let (cleaned_name, year) = cleanup_filename(&file_name);
+
+    println!(
+        "[process_file] Processing: {} (cleaned: '{}', year: {:?}, is_tv: {})",
+        file_name, cleaned_name, year, is_tv
+    );
+
+    // 1. Fetch Metadata
+    // For now, only basic fetch (no season logic here yet, scanner skips season logic for now or we add it later)
+    // Actually, let's keep it simple: if is_tv is true, we treat it as a show search.
+    // NOTE: This basic processor doesn't handle the sophisticated season detection from video.rs yet.
+    // For "Movies" library, is_tv will be false.
+
+    let best_match = fetch_tmdb_metadata(config, &cleaned_name, year.as_deref(), is_tv)
+        .await
+        .ok()
+        .flatten();
+
+    if let Some(m) = best_match {
+        // 2. Download Poster
+        if let Some(poster_suffix) = &m.poster_path {
+            let img_path = path.parent().unwrap().join(format!("{}.jpg", file_name));
+            if let Err(e) = download_image(config, poster_suffix, &img_path).await {
+                eprintln!("[process_file] Failed to download image: {}", e);
+            }
+        }
+
+        // 3. Save JSON
+        if let Err(e) = save_local_metadata(path, &m).await {
+            eprintln!("[process_file] Failed to write metadata json: {}", e);
+            return Err(e);
+        }
+
+        println!("[process_file] Successfully processed: {}", file_name);
+        Ok(Some(m))
+    } else {
+        println!("[process_file] No match found for: {}", file_name);
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
