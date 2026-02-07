@@ -230,7 +230,9 @@ pub async fn rescan_libraries(
     let libraries = state.libraries.read().await;
     let mut count = 0;
     for lib in libraries.iter() {
-        if lib.kind == crate::models::LibraryType::Movies {
+        if lib.kind == crate::models::LibraryType::Movies
+            || lib.kind == crate::models::LibraryType::TVShows
+        {
             state.scanner.scan_library(lib).await;
             count += 1;
         }

@@ -48,7 +48,9 @@ async fn main() {
     {
         let libraries = shared_state.libraries.read().await;
         for lib in libraries.iter() {
-            if lib.kind == sratim::models::LibraryType::Movies {
+            if lib.kind == sratim::models::LibraryType::Movies
+                || lib.kind == sratim::models::LibraryType::TVShows
+            {
                 let scanner_ref = scanner.clone();
                 let lib_clone = lib.clone();
                 tokio::spawn(async move {
