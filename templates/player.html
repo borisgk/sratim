@@ -4,12 +4,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sratim - Playing Movie</title>
+    <title>Sratim - Playing {{ title }}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Outfit:wght@500;700&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="/style.css">
+    <script>
+        window.serverConfig = {
+            path: "{{ path_encoded }}",
+            libraryId: "{{ library_id }}",
+            title: "{{ title }}"
+        };
+    </script>
 </head>
 
 <body>
@@ -22,18 +29,18 @@
                 </select>
                 <select id="audioTrackSelect" class="track-select" style="display: none;"
                     aria-label="Audio Track"></select>
-                <a href="index.html" class="close-btn" aria-label="Close">&times;</a>
+                <a href="{{ back_link }}" class="close-btn" aria-label="Close">&times;</a>
             </div>
             <div class="video-wrapper">
                 <video id="mainVideo" controls></video>
             </div>
             <div class="movie-info-bottom">
-                <h1 id="movieTitle"></h1>
+                <h1 id="movieTitle">{{ title }}</h1>
             </div>
         </div>
     </div>
 
-    <script src="player.js"></script>
+    <script src="/player.js"></script>
 </body>
 
 </html>

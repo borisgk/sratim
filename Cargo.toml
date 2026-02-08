@@ -35,4 +35,5 @@ jsonwebtoken = { version = "10.2.0", features = ["rust_crypto"] }
 axum-extra = { version = "0.9", features = ["cookie"] }
 chrono = "0.4.43"
 time = "0.3.46"
+askama = "0.15.4"
 

@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sratim - Movie Streamer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Outfit:wght@500;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        /* Re-adding styles that might be missing or need adjustment */
+        .lookup-btn {
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app-container">
+        <header>
+            <div class="logo"><a href="/" style="text-decoration: none; color: inherit;">SRATIM</a></div>
+            <div id="userProfile" class="user-profile">
+                <!-- User info -->
+                <span style="margin-right: 1rem; color: #fff; font-weight: bold;">User: {{ username }} {% if is_admin
+                    %}(Admin){% endif %}</span>
+                <button onclick="window.location.href='/profile.html'" class="logout-btn"
+                    style="margin-right: 0.5rem; background-color: #444;">Profile</button>
+                <button onclick="logout()" class="logout-btn">Logout</button>
+            </div>
+        </header>
+
+        <nav class="breadcrumbs">
+            <a href="/" class="breadcrumb-item">Home</a>
+            {% for crumb in breadcrumbs %}
+            <a href="/?library_id={{ crumb.library_id }}&path={{ crumb.path }}"
+                class="breadcrumb-item {% if loop.last %}active{% endif %}">{{ crumb.name }}</a>
+            {% endfor %}
+        </nav>
+
+        <main>
+            <div class="movies-grid">
+                {% if mode == "libraries" %}
+                <!-- Libraries View -->
+                {% for lib in libraries %}
+                <div class="movie-card folder"
+                    style="background-image: linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.8) 100%), url('{{ lib.image }}'); background-size: cover; background-position: center;"
+                    onclick="window.location.href='/?library_id={{ lib.id }}'">
+                    <div class="movie-icon" style="opacity:0">📚</div>
+                    <div class="movie-title">{{ lib.name }}</div>
+
+                    {% if is_admin %}
+                    <div class="card-menu">
+                        <button class="card-menu-btn" onclick="event.stopPropagation(); toggleMenu(this)">⋮</button>
+                        <div class="card-menu-dropdown">
+                            <div class="card-menu-item edit"
+                                onclick="event.stopPropagation(); window.location.href='/add-library.html?id={{ lib.id }}'">
+                                <span>✏️</span> Edit
+                            </div>
+                            <div class="card-menu-item delete"
+                                onclick="event.stopPropagation(); deleteLibrary('{{ lib.id }}', '{{ lib.name }}')">
+                                <span>🗑️</span> Delete
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+
+                {% if is_admin %}
+                <!-- Add Library Card -->
+                <div class="movie-card" onclick="window.location.href='/add-library.html'">
+                    <div class="movie-icon">➕</div>
+                    <div class="movie-title">Add Library</div>
+                </div>
+                <!-- Rescan Card -->
+                <div class="movie-card" onclick="rescanLibraries(event)">
+                    <div class="movie-icon">🔄</div>
+                    <div class="movie-title">Rescan Libraries</div>
+                </div>
+                {% endif %}
+
+                {% else %}
+                <!-- Files/Folders View -->
+                {% if parent_link.is_some() %}
+                <div class="movie-card folder back"
+                    onclick="window.location.href='{{ parent_link.as_ref().unwrap() }}'">
+                    <div class="movie-icon">⬅️</div>
+                    <div class="movie-title">Back</div>
+                </div>
+                {% else %}
+                <div class="movie-card folder back" onclick="window.location.href='/'">
+                    <div class="movie-icon">🏠</div>
+                    <div class="movie-title">Libraries</div>
+                </div>
+                {% endif %}
+
+                {% if files.is_empty() %}
+                <p style="grid-column: 1/-1; text-align: center; color: var(--text-muted);">This folder is empty.</p>
+                {% endif %}
+
+                {% for file in files %}
+                {% if file.is_dir %}
+                <div class="movie-card folder" {% if file.poster_url.is_some() %}
+                    style="background-image: linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.8) 100%), url('{{ file.poster_url.as_ref().unwrap() }}'); background-size: cover; background-position: center;"
+                    {% endif %}
+                    onclick="window.location.href='/?library_id={{ library_id.as_ref().unwrap() }}&path={{ file.path_encoded }}'">
+                    <div class="movie-icon" {% if file.poster_url.is_some() %}style="opacity:0" {% endif %}>📁</div>
+                    <div class="movie-title">{{ file.display_name }}</div>
+
+                    {% if is_admin %}
+                    <div class="lookup-btn" title="Lookup Metadata"
+                        onclick="event.stopPropagation(); lookupMovie('{{ file.path_encoded }}', '{{ library_id.as_ref().unwrap() }}', this)">
+                        🔍</div>
+                    {% endif %}
+                </div>
+                {% else %}
+                <div class="movie-card" {% if file.poster_url.is_some() %}
+                    style="background-image: linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.8) 100%), url('{{ file.poster_url.as_ref().unwrap() }}'); background-size: cover; background-position: center;"
+                    {% endif %} onclick="playVideo('{{ file.path_encoded }}', '{{ library_id.as_ref().unwrap() }}')">
+                    <div class="movie-icon" {% if file.poster_url.is_some() %}style="opacity:0" {% endif %}>🎬</div>
+                    <div class="movie-title">{{ file.display_name }}</div>
+
+                    {% if is_admin %}
+                    <div class="lookup-btn" title="Lookup Metadata"
+                        onclick="event.stopPropagation(); lookupMovie('{{ file.path_encoded }}', '{{ library_id.as_ref().unwrap() }}', this)">
+                        🔍</div>
+                    {% endif %}
+                </div>
+                {% endif %}
+                {% endfor %}
+
+                {% endif %}
+            </div>
+        </main>
+    </div>
+
+    <script>
+        async function logout() {
+            await fetch('/api/logout', { method: 'POST' });
+            sessionStorage.clear(); // Clear any leftover
+            window.location.href = '/login.html';
+        }
+
+        function toggleMenu(btn) {
+            const dropdown = btn.nextElementSibling;
+            // Close others
+            document.querySelectorAll('.card-menu-dropdown.show').forEach(d => {
+                if (d !== dropdown) d.classList.remove('show');
+            });
+            dropdown.classList.toggle('show');
+        }
+
+        // Close dropdowns on global click
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.card-menu')) {
+                document.querySelectorAll('.card-menu-dropdown.show').forEach(d => {
+                    d.classList.remove('show');
+                });
+            }
+        });
+
+        async function deleteLibrary(id, name) {
+            if (confirm(`Are you sure you want to delete library "${name}"?`)) {
+                try {
+                    const res = await fetch(`/api/libraries/${id}`, { method: 'DELETE' });
+                    if (res.ok) {
+                        window.location.reload();
+                    } else {
+                        alert('Failed to delete library');
+                    }
+                } catch (err) {
+                    console.error(err);
+                    alert('Error deleting library');
+                }
+            }
+        }
+
+        async function rescanLibraries(e) {
+            e.stopPropagation();
+            if (confirm('Rescan all "Movies" libraries for missing metadata?')) {
+                try {
+                    const res = await fetch('/api/rescan', { method: 'POST' });
+                    if (res.ok) {
+                        const txt = await res.text();
+                        alert(txt);
+                    } else {
+                        alert('Failed to start rescan');
+                    }
+                } catch (e) {
+                    console.error(e);
+                    alert('Error starting rescan');
+                }
+            }
+        }
+
+        async function lookupMovie(path, libId, btn) {
+            const originalIcon = btn.innerHTML;
+            btn.innerHTML = '⏳';
+
+            try {
+                const response = await fetch(`/api/lookup?path=${encodeURIComponent(path)}&library_id=${libId}`);
+                if (response.status === 401) {
+                    window.location.href = '/login.html';
+                    return;
+                }
+                if (!response.ok) throw new Error('Lookup failed');
+                const data = await response.json();
+
+                if (data) {
+                    window.location.reload();
+                } else {
+                    alert('No metadata found for this item.');
+                    btn.innerHTML = originalIcon;
+                }
+            } catch (e) {
+                console.error("Lookup error:", e);
+                alert('Lookup failed.');
+                btn.innerHTML = originalIcon;
+            }
+        }
+
+        function playVideo(pathEncoded, libraryId) {
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = '/watch';
+            form.style.display = 'none';
+
+            const pathInput = document.createElement('input');
+            pathInput.type = 'hidden';
+            pathInput.name = 'path';
+            pathInput.value = decodeURIComponent(pathEncoded);
+            form.appendChild(pathInput);
+
+            const libInput = document.createElement('input');
+            libInput.type = 'hidden';
+            libInput.name = 'library_id';
+            libInput.value = libraryId;
+            form.appendChild(libInput);
+
+            document.body.appendChild(form);
+            form.submit();
+        }
+    </script>
+</body>
+
+</html>

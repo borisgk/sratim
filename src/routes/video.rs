@@ -21,7 +21,10 @@ use crate::streaming::{
 
 // ...
 
-async fn get_base_path(state: &AppState, library_id: Option<&str>) -> Option<std::path::PathBuf> {
+pub async fn get_base_path(
+    state: &AppState,
+    library_id: Option<&str>,
+) -> Option<std::path::PathBuf> {
     if let Some(id) = library_id {
         let libraries = state.libraries.read().await;
         if let Some(lib) = libraries.iter().find(|l| l.id == id) {
@@ -115,7 +118,13 @@ pub async fn list_files(
                         // Check for Sidecar JSON
                         let item_path = canonical_path.join(&file_name);
                         if let Some(meta) = read_local_metadata(&item_path).await {
-                            title = Some(meta.title);
+                            if !meta.title.is_empty() {
+                                if let Some(ep_num) = meta.episode_number {
+                                    title = Some(format!("{}. {}", ep_num, meta.title));
+                                } else {
+                                    title = Some(meta.title);
+                                }
+                            }
                             if meta.poster_path.is_some() {
                                 // Check if image exists
                                 let img_path = canonical_path.join(format!("{}.jpg", file_name));

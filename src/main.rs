@@ -12,6 +12,10 @@ use tower_http::{cors::CorsLayer, services::ServeDir, set_header::SetResponseHea
 use sratim::models::{AppConfig, AppState};
 use sratim::routes::video;
 
+async fn debug_hash_handler(axum::extract::Path(password): axum::extract::Path<String>) -> String {
+    bcrypt::hash(password, bcrypt::DEFAULT_COST).unwrap()
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
@@ -76,10 +80,6 @@ async fn main() {
             axum::routing::post(sratim::auth::change_password_handler),
         )
         // Library Routes
-        .route(
-            "/api/libraries",
-            get(sratim::routes::library::get_libraries),
-        )
         // User Management Routes
         .route(
             "/api/users",
@@ -95,7 +95,8 @@ async fn main() {
         )
         .route(
             "/api/libraries",
-            axum::routing::post(sratim::routes::library::create_library),
+            get(sratim::routes::library::get_libraries)
+                .post(sratim::routes::library::create_library),
         )
         .route(
             "/api/libraries/:id",
@@ -114,6 +115,12 @@ async fn main() {
 
     let app = Router::new()
         .merge(protected_routes)
+        .route("/api/debug/hash/:password", get(debug_hash_handler))
+        .route("/", get(sratim::routes::ui::index_handler))
+        .route(
+            "/watch",
+            axum::routing::post(sratim::routes::ui::watch_handler),
+        )
         .route(
             "/api/login",
             axum::routing::post(sratim::auth::login_handler),

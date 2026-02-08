@@ -1,23 +1,54 @@
 document.addEventListener('DOMContentLoaded', async () => {
+    // Error Logging Utility
+    const logError = (msg) => {
+        console.error(msg);
+        const errDiv = document.createElement('div');
+        errDiv.style.position = 'absolute';
+        errDiv.style.top = '10px';
+        errDiv.style.left = '10px';
+        errDiv.style.color = 'red';
+        errDiv.style.background = 'rgba(0,0,0,0.7)';
+        errDiv.style.padding = '5px';
+        errDiv.style.zIndex = '9999';
+        errDiv.innerText = msg;
+        document.body.appendChild(errDiv);
+    };
+
+    window.onerror = (msg, url, line) => {
+        logError(`Global Error: ${msg} (${url}:${line})`);
+    };
+
     // Basic UI Setup
     const videoElement = document.getElementById('mainVideo');
-    const moviePath = sessionStorage.getItem('currentMoviePath');
-    const audioSelect = document.getElementById('audioTrackSelect');
     const subtitleSelect = document.getElementById('subtitleTrackSelect');
+    const audioSelect = document.getElementById('audioTrackSelect');
+    let libraryId = null;
+    let moviePath = null;
+    // 1. Server Config (SSR)
+    if (window.serverConfig) {
+        moviePath = decodeURIComponent(window.serverConfig.path);
+        libraryId = window.serverConfig.libraryId;
+        console.log("Using Server Config:", moviePath);
+    } else {
+        // 2. Fallback: URL params
+        const urlParams = new URLSearchParams(window.location.search);
+        libraryId = urlParams.get('library_id');
+        moviePath = urlParams.get('path');
 
-    // Parse library_id from URL
-    const urlParams = new URLSearchParams(window.location.search);
-    const libraryId = urlParams.get('library_id');
+        // 3. Fallback: Session Storage
+        if (!moviePath) {
+            moviePath = sessionStorage.getItem('currentMoviePath');
+        }
+    }
 
     if (!moviePath) {
-        console.error('No movie path found');
-        window.location.href = 'index.html';
+        logError('No movie path found');
+        // window.location.href = '/'; // Keep on page to see error
         return;
     }
 
     if (!window.MediaSource) {
-        console.error('MSE not supported');
-        alert('MSE not supported by browser');
+        logError('MSE not supported');
         return;
     }
 
@@ -158,7 +189,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 outputMime += '"';
 
                 if (!MediaSource.isTypeSupported(outputMime)) {
-                    alert(`Browser does not support codec: ${outputMime}`);
+                    logError(`Browser does not support codec: ${outputMime}`);
                     return;
                 }
 
@@ -186,6 +217,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                     // Error Check Phase
                     if (videoElement.error) {
+                        const errCode = videoElement.error.code;
+                        const errMsg = videoElement.error.message;
                         console.error('Playback Error detected:', videoElement.error);
 
                         // Recovery Logic
@@ -204,7 +237,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 return;
                             }
                         } else {
-                            console.error("Fatal playback error.");
+                            logError(`Fatal playback error: ${errCode} - ${errMsg}`);
                             return;
                         }
                     }
@@ -393,7 +426,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 videoElement.addEventListener('canplaythrough', tryPlay, { once: true });
 
             } catch (e) {
-                console.error("Setup error in sourceopen:", e);
+                logError("Setup error in sourceopen: " + e.message);
             }
         });
     };

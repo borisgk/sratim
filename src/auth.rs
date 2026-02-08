@@ -17,8 +17,8 @@ use tokio::sync::RwLock;
 use crate::models::AppState;
 
 const USERS_FILE: &str = "users.json";
-const JWT_SECRET: &[u8] = b"secret_key_change_me_in_prod"; // In a real app, load from env
-const COOKIE_NAME: &str = "session";
+pub const JWT_SECRET: &[u8] = b"secret_key_change_me_in_prod"; // In real app, use env var
+pub const COOKIE_NAME: &str = "session";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct User {
