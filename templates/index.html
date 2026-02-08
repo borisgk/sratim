@@ -201,7 +201,8 @@
             btn.innerHTML = '⏳';
 
             try {
-                const response = await fetch(`/api/lookup?path=${encodeURIComponent(path)}&library_id=${libId}`);
+                // Ensure backend handles decoding, frontend sends raw path
+                const response = await fetch(`/api/lookup?path=${path}&library_id=${libId}`);
                 if (response.status === 401) {
                     window.location.href = '/login.html';
                     return;
