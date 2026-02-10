@@ -21,24 +21,88 @@
 
 <body>
     <div class="player-page">
-        <div id="playerContainer" class="player-container">
-            <div class="player-controls-top">
-                <select id="subtitleTrackSelect" class="track-select" style="display: none;"
-                    aria-label="Subtitle Track">
-                    <option value="-1">Subtitles: Off</option>
-                </select>
-                <select id="audioTrackSelect" class="track-select" style="display: none;"
-                    aria-label="Audio Track"></select>
-                <a href="{{ back_link }}" class="close-btn" aria-label="Close">&times;</a>
+        <div class="player-layout">
+            <div id="playerContainer" class="player-container">
+                <div class="player-controls-top">
+                    <select id="subtitleTrackSelect" class="track-select" style="display: none;"
+                        aria-label="Subtitle Track">
+                        <option value="-1">Subtitles: Off</option>
+                    </select>
+                    <select id="audioTrackSelect" class="track-select" style="display: none;"
+                        aria-label="Audio Track"></select>
+                    <a href="{{ back_link }}" class="close-btn" aria-label="Close">&times;</a>
+                </div>
+                <div class="video-wrapper">
+                    <video id="mainVideo" controls></video>
+                </div>
+                <div class="movie-info-bottom">
+                    <h1 id="movieTitle">{{ title }}</h1>
+                </div>
             </div>
-            <div class="video-wrapper">
-                <video id="mainVideo" controls></video>
+
+            {% if !description.is_empty() %}
+            <div class="player-sidebar">
+                <h2>Overview</h2>
+                <div class="description-text">{{ description }}</div>
             </div>
-            <div class="movie-info-bottom">
-                <h1 id="movieTitle">{{ title }}</h1>
-            </div>
+            {% endif %}
         </div>
     </div>
+
+    <style>
+        .player-layout {
+            display: flex;
+            flex-direction: row;
+            width: 100%;
+            max-width: 1600px;
+            gap: 2rem;
+            padding: 2rem;
+            align-items: flex-start;
+        }
+
+        .player-container {
+            flex: 3;
+            min-width: 0;
+            /* Fix flex item overflow */
+        }
+
+        .player-sidebar {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 1.5rem;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            color: #eee;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .player-sidebar h2 {
+            margin-top: 0;
+            font-size: 1.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            padding-bottom: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .description-text {
+            line-height: 1.6;
+            font-size: 1rem;
+            color: #ccc;
+        }
+
+        @media (max-width: 1000px) {
+            .player-layout {
+                flex-direction: column;
+            }
+
+            .player-sidebar {
+                width: 100%;
+                max-height: none;
+            }
+        }
+    </style>
 
     <script src="/player.js"></script>
 </body>

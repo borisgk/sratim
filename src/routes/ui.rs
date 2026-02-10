@@ -10,6 +10,7 @@ use serde::Deserialize;
 
 use crate::{
     auth::{COOKIE_NAME, Claims, JWT_SECRET},
+    metadata::read_local_metadata,
     models::AppState,
     routes::video::get_base_path,
 };
@@ -360,6 +361,7 @@ async fn get_files_for_ui(state: &AppState, lib_id: &str, path: &str) -> Vec<Fil
 #[template(path = "player.html")]
 pub struct PlayerTemplate {
     pub title: String,
+    pub description: String,
     pub path_encoded: String,
     pub library_id: String,
     pub back_link: String,
@@ -385,7 +387,7 @@ pub struct WatchParams {
 }
 
 pub async fn watch_handler(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     jar: CookieJar,
     axum::Form(params): axum::Form<WatchParams>,
 ) -> Response {
@@ -433,8 +435,17 @@ pub async fn watch_handler(
         )
     };
 
+    let mut description = String::new();
+    if let Some(base_path) = get_base_path(&state, Some(&params.library_id)).await {
+        let abs_path = base_path.join(&params.path);
+        if let Some(meta) = read_local_metadata(&abs_path).await {
+            description = meta.overview;
+        }
+    }
+
     let template = PlayerTemplate {
         title,
+        description,
         path_encoded: urlencoding::encode(&params.path).to_string(),
         library_id: params.library_id,
         back_link,
