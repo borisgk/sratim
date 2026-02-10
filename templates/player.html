@@ -35,17 +35,15 @@
                 <div class="video-wrapper">
                     <video id="mainVideo" controls></video>
                 </div>
-                <div class="movie-info-bottom">
-                    <h1 id="movieTitle">{{ title }}</h1>
-                </div>
             </div>
 
-            {% if !description.is_empty() %}
+            <!-- Sidebar always visible -->
             <div class="player-sidebar">
-                <h2>Overview</h2>
+                <h2>{{ title }}</h2>
+                {% if !description.is_empty() %}
                 <div class="description-text">{{ description }}</div>
+                {% endif %}
             </div>
-            {% endif %}
         </div>
     </div>
 

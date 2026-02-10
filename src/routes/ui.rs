@@ -413,7 +413,7 @@ pub async fn watch_handler(
     }
 
     // 2. Prepare Template
-    let title = std::path::Path::new(&params.path)
+    let mut title = std::path::Path::new(&params.path)
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "Movie".to_string());
@@ -440,6 +440,13 @@ pub async fn watch_handler(
         let abs_path = base_path.join(&params.path);
         if let Some(meta) = read_local_metadata(&abs_path).await {
             description = meta.overview;
+            if !meta.title.is_empty() {
+                if let Some(ep_num) = meta.episode_number {
+                    title = format!("{}. {}", ep_num, meta.title);
+                } else {
+                    title = meta.title;
+                }
+            }
         }
     }
 
