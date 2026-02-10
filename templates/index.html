@@ -110,10 +110,16 @@
                     <div class="movie-icon" {% if file.poster_url.is_some() %}style="opacity:0" {% endif %}>📁</div>
                     <div class="movie-title">{{ file.display_name }}</div>
 
-                    {% if is_admin %}
-                    <div class="lookup-btn" title="Lookup Metadata"
-                        onclick="event.stopPropagation(); lookupMovie('{{ file.path_encoded }}', '{{ library_id.as_ref().unwrap() }}', this)">
-                        🔍</div>
+                    {% if is_admin && current_library_type.as_deref() != Some("Movies") %}
+                    <div class="card-menu">
+                        <button class="card-menu-btn" onclick="event.stopPropagation(); toggleMenu(this)">⋮</button>
+                        <div class="card-menu-dropdown">
+                            <div class="card-menu-item"
+                                onclick="event.stopPropagation(); lookupMovie('{{ file.path_encoded }}', '{{ library_id.as_ref().unwrap() }}', this)">
+                                <span>🔍</span> Lookup
+                            </div>
+                        </div>
+                    </div>
                     {% endif %}
                 </div>
                 {% else %}
@@ -124,9 +130,15 @@
                     <div class="movie-title">{{ file.display_name }}</div>
 
                     {% if is_admin %}
-                    <div class="lookup-btn" title="Lookup Metadata"
-                        onclick="event.stopPropagation(); lookupMovie('{{ file.path_encoded }}', '{{ library_id.as_ref().unwrap() }}', this)">
-                        🔍</div>
+                    <div class="card-menu">
+                        <button class="card-menu-btn" onclick="event.stopPropagation(); toggleMenu(this)">⋮</button>
+                        <div class="card-menu-dropdown">
+                            <div class="card-menu-item"
+                                onclick="event.stopPropagation(); lookupMovie('{{ file.path_encoded }}', '{{ library_id.as_ref().unwrap() }}', this)">
+                                <span>🔍</span> Lookup
+                            </div>
+                        </div>
+                    </div>
                     {% endif %}
                 </div>
                 {% endif %}
@@ -197,8 +209,9 @@
         }
 
         async function lookupMovie(path, libId, btn) {
-            const originalIcon = btn.innerHTML;
-            btn.innerHTML = '⏳';
+            const originalContent = btn.innerHTML;
+            btn.innerHTML = '<span>⏳</span> Looking up...';
+            btn.style.pointerEvents = 'none';
 
             try {
                 // Ensure backend handles decoding, frontend sends raw path
@@ -214,12 +227,14 @@
                     window.location.reload();
                 } else {
                     alert('No metadata found for this item.');
-                    btn.innerHTML = originalIcon;
+                    btn.innerHTML = originalContent;
+                    btn.style.pointerEvents = 'auto';
                 }
             } catch (e) {
                 console.error("Lookup error:", e);
                 alert('Lookup failed.');
-                btn.innerHTML = originalIcon;
+                btn.innerHTML = originalContent;
+                btn.style.pointerEvents = 'auto';
             }
         }
 

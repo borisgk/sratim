@@ -15,6 +15,7 @@ use crate::{
     routes::video::get_base_path,
 };
 use askama::Template;
+use futures::{StreamExt, stream};
 
 #[derive(Template)]
 #[template(path = "index.html")]
@@ -28,6 +29,7 @@ pub struct IndexTemplate {
     pub breadcrumbs: Vec<Breadcrumb>,
     pub library_id: Option<String>,
     pub parent_link: Option<String>,
+    pub current_library_type: Option<String>,
 }
 
 impl IntoResponse for IndexTemplate {
@@ -117,11 +119,11 @@ pub async fn index_handler(
         let mut breadcrumbs = Vec::new();
         // Library Root
         let libraries = state.libraries.read().await;
-        let lib_name = libraries
+        let (lib_name, lib_type) = libraries
             .iter()
             .find(|l| l.id == *lib_id)
-            .map(|l| l.name.clone())
-            .unwrap_or("Library".to_string());
+            .map(|l| (l.name.clone(), Some(format!("{:?}", l.kind))))
+            .unwrap_or(("Library".to_string(), None));
 
         breadcrumbs.push(Breadcrumb {
             name: lib_name,
@@ -174,6 +176,7 @@ pub async fn index_handler(
             breadcrumbs,
             library_id: Some(lib_id.clone()),
             parent_link,
+            current_library_type: lib_type,
         };
         return template.into_response();
     } else {
@@ -205,6 +208,7 @@ pub async fn index_handler(
             breadcrumbs: vec![], // No breadcrumbs on home
             library_id: None,
             parent_link: None,
+            current_library_type: None,
         };
         return template.into_response();
     }
@@ -230,88 +234,45 @@ async fn get_files_for_ui(state: &AppState, lib_id: &str, path: &str) -> Vec<Fil
         return vec![];
     }
 
-    let mut entries = Vec::new();
-
+    let mut dir_entries = Vec::new();
     if let Ok(mut read_dir) = tokio::fs::read_dir(&canonical_path).await {
         while let Ok(Some(entry)) = read_dir.next_entry().await {
-            let file_name = entry.file_name().to_string_lossy().to_string();
-            if file_name.starts_with('.') {
-                continue;
-            }
+            dir_entries.push(entry);
+        }
+    }
 
-            let file_type = entry.file_type().await.ok();
-            let is_dir = file_type.map(|t| t.is_dir()).unwrap_or(false);
-            let is_file = file_type.map(|t| t.is_file()).unwrap_or(false);
-
-            let mut rel_path = path.to_string();
-            if !rel_path.is_empty() && !rel_path.ends_with('/') {
-                rel_path.push('/');
-            }
-            rel_path.push_str(&file_name);
-
-            let path_encoded = urlencoding::encode(&rel_path).to_string();
-
-            if is_dir {
-                let mut display = file_name.clone();
-                let mut poster_url = None;
-
-                // Metadata check
-                let item_path = canonical_path.join(&file_name);
-                if let Some(meta) = crate::metadata::read_local_metadata(&item_path).await {
-                    if !meta.title.is_empty() {
-                        display = meta.title;
-                    }
-                    if let Some(_poster) = meta.poster_path {
-                        // Construct URL to existing content route
-                        // Poster path is e.g. /poster_path.jpg (from TMDB) or local file name?
-                        // In list_files: format!("{}.jpg", file_name)
-                        // Content route: /api/libraries/:id/content/*path
-                        // Path to image relative to library root
-                        let img_rel = format!(
-                            "{}{}.jpg",
-                            if path.is_empty() {
-                                "".to_string()
-                            } else {
-                                format!("{}/", path)
-                            },
-                            file_name
-                        );
-                        poster_url = Some(format!(
-                            "/api/libraries/{}/content/{}",
-                            lib_id,
-                            urlencoding::encode(&img_rel)
-                        ));
-                    }
+    let mut entries = stream::iter(dir_entries)
+        .map(|entry| {
+            let path = path.to_string();
+            let canonical_path = canonical_path.clone();
+            let lib_id = lib_id.to_string();
+            async move {
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                if file_name.starts_with('.') {
+                    return None;
                 }
 
-                entries.push(FileView {
-                    name: file_name,
-                    display_name: display,
-                    path_encoded,
-                    is_dir: true,
-                    poster_url,
-                });
-            } else if is_file {
-                let ext = std::path::Path::new(&file_name)
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .to_lowercase();
-                if matches!(
-                    ext.as_str(),
-                    "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "flv" | "wmv"
-                ) {
+                let file_type = entry.file_type().await.ok();
+                let is_dir = file_type.map(|t| t.is_dir()).unwrap_or(false);
+                let is_file = file_type.map(|t| t.is_file()).unwrap_or(false);
+
+                let mut rel_path = path.clone();
+                if !rel_path.is_empty() && !rel_path.ends_with('/') {
+                    rel_path.push('/');
+                }
+                rel_path.push_str(&file_name);
+
+                let path_encoded = urlencoding::encode(&rel_path).to_string();
+
+                if is_dir {
                     let mut display = file_name.clone();
                     let mut poster_url = None;
 
+                    // Metadata check
                     let item_path = canonical_path.join(&file_name);
                     if let Some(meta) = crate::metadata::read_local_metadata(&item_path).await {
                         if !meta.title.is_empty() {
-                            if let Some(ep_num) = meta.episode_number {
-                                display = format!("{}. {}", ep_num, meta.title);
-                            } else {
-                                display = meta.title;
-                            }
+                            display = meta.title;
                         }
                         if let Some(_poster) = meta.poster_path {
                             let img_rel = format!(
@@ -331,17 +292,72 @@ async fn get_files_for_ui(state: &AppState, lib_id: &str, path: &str) -> Vec<Fil
                         }
                     }
 
-                    entries.push(FileView {
+                    Some(FileView {
                         name: file_name,
                         display_name: display,
                         path_encoded,
-                        is_dir: false,
+                        is_dir: true,
                         poster_url,
-                    });
+                    })
+                } else if is_file {
+                    let ext = std::path::Path::new(&file_name)
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    if matches!(
+                        ext.as_str(),
+                        "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "flv" | "wmv"
+                    ) {
+                        let mut display = file_name.clone();
+                        let mut poster_url = None;
+
+                        let item_path = canonical_path.join(&file_name);
+                        if let Some(meta) = crate::metadata::read_local_metadata(&item_path).await {
+                            if !meta.title.is_empty() {
+                                if let Some(ep_num) = meta.episode_number {
+                                    display = format!("{}. {}", ep_num, meta.title);
+                                } else {
+                                    display = meta.title;
+                                }
+                            }
+                            if let Some(_poster) = meta.poster_path {
+                                let img_rel = format!(
+                                    "{}{}.jpg",
+                                    if path.is_empty() {
+                                        "".to_string()
+                                    } else {
+                                        format!("{}/", path)
+                                    },
+                                    file_name
+                                );
+                                poster_url = Some(format!(
+                                    "/api/libraries/{}/content/{}",
+                                    lib_id,
+                                    urlencoding::encode(&img_rel)
+                                ));
+                            }
+                        }
+
+                        Some(FileView {
+                            name: file_name,
+                            display_name: display,
+                            path_encoded,
+                            is_dir: false,
+                            poster_url,
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 }
             }
-        }
-    }
+        })
+        .buffer_unordered(20) // Process 20 items concurrently
+        .filter_map(|x| async { x })
+        .collect::<Vec<_>>()
+        .await;
 
     // Sort
     entries.sort_by(|a, b| {
