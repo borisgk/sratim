@@ -45,9 +45,9 @@
                 {% if mode == "libraries" %}
                 <!-- Libraries View -->
                 {% for lib in libraries %}
-                <div class="movie-card folder"
-                    style="background-image: linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.8) 100%), url('{{ lib.image }}'); background-size: cover; background-position: center;"
-                    onclick="window.location.href='/?library_id={{ lib.id }}'">
+                <div class="movie-card folder" onclick="window.location.href='/?library_id={{ lib.id }}'">
+                    <img src="{{ lib.image }}" alt="{{ lib.name }}" class="movie-poster" loading="lazy">
+                    <div class="movie-overlay"></div>
                     <div class="movie-icon" style="opacity:0">📚</div>
                     <div class="movie-title">{{ lib.name }}</div>
 
@@ -103,10 +103,13 @@
 
                 {% for file in files %}
                 {% if file.is_dir %}
-                <div class="movie-card folder" {% if file.poster_url.is_some() %}
-                    style="background-image: linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.8) 100%), url('{{ file.poster_url.as_ref().unwrap() }}'); background-size: cover; background-position: center;"
-                    {% endif %}
+                <div class="movie-card folder"
                     onclick="window.location.href='/?library_id={{ library_id.as_ref().unwrap() }}&path={{ file.path_encoded }}'">
+                    {% if file.poster_url.is_some() %}
+                    <img src="{{ file.poster_url.as_ref().unwrap() }}" alt="{{ file.display_name }}"
+                        class="movie-poster" loading="lazy">
+                    <div class="movie-overlay"></div>
+                    {% endif %}
                     <div class="movie-icon" {% if file.poster_url.is_some() %}style="opacity:0" {% endif %}>📁</div>
                     <div class="movie-title">{{ file.display_name }}</div>
 
@@ -123,9 +126,13 @@
                     {% endif %}
                 </div>
                 {% else %}
-                <div class="movie-card" {% if file.poster_url.is_some() %}
-                    style="background-image: linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.8) 100%), url('{{ file.poster_url.as_ref().unwrap() }}'); background-size: cover; background-position: center;"
-                    {% endif %} onclick="playVideo('{{ file.path_encoded }}', '{{ library_id.as_ref().unwrap() }}')">
+                <div class="movie-card"
+                    onclick="playVideo('{{ file.path_encoded }}', '{{ library_id.as_ref().unwrap() }}')">
+                    {% if file.poster_url.is_some() %}
+                    <img src="{{ file.poster_url.as_ref().unwrap() }}" alt="{{ file.display_name }}"
+                        class="movie-poster" loading="lazy">
+                    <div class="movie-overlay"></div>
+                    {% endif %}
                     <div class="movie-icon" {% if file.poster_url.is_some() %}style="opacity:0" {% endif %}>🎬</div>
                     <div class="movie-title">{{ file.display_name }}</div>
 

@@ -186,9 +186,9 @@ pub async fn index_handler(
             .iter()
             .map(|l| {
                 let image = match l.kind {
-                    crate::models::LibraryType::Movies => "/library_movies.png",
-                    crate::models::LibraryType::TVShows => "/library_tv.png",
-                    crate::models::LibraryType::Other => "/library_other.png",
+                    crate::models::LibraryType::Movies => "/library_movies.jpg",
+                    crate::models::LibraryType::TVShows => "/library_tv.jpg",
+                    crate::models::LibraryType::Other => "/library_other.jpg",
                 };
                 LibraryView {
                     id: l.id.clone(),

@@ -202,16 +202,34 @@ pub async fn serve_content(
             // Simple mime guessing
             let mime = mime_guess::from_path(&full_path).first_or_octet_stream();
 
-            if let Ok(file) = tokio::fs::File::open(full_path).await {
+            if let Ok(file) = tokio::fs::File::open(&full_path).await {
+                let metadata = file.metadata().await.ok();
                 let stream = tokio_util::io::ReaderStream::new(file);
                 let body = axum::body::Body::from_stream(stream);
 
-                return (
-                    StatusCode::OK,
-                    [(axum::http::header::CONTENT_TYPE, mime.as_ref())],
-                    body,
-                )
-                    .into_response();
+                let mut headers = axum::http::HeaderMap::new();
+                headers.insert(
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::HeaderValue::from_str(mime.as_ref()).unwrap(),
+                );
+                // Cache for 1 year, immutable
+                headers.insert(
+                    axum::http::header::CACHE_CONTROL,
+                    axum::http::HeaderValue::from_static("public, max-age=31536000, immutable"),
+                );
+
+                if let Some(meta) = metadata {
+                    if let Ok(modified) = meta.modified() {
+                        let datetime: chrono::DateTime<chrono::Utc> = modified.into();
+                        // RFC 2822 format (approximate standard usage for HTTP)
+                        let last_modified = datetime.to_rfc2822();
+                        if let Ok(val) = axum::http::HeaderValue::from_str(&last_modified) {
+                            headers.insert(axum::http::header::LAST_MODIFIED, val);
+                        }
+                    }
+                }
+
+                return (StatusCode::OK, headers, body).into_response();
             }
         }
     }
