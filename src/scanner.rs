@@ -12,6 +12,7 @@ use crate::models::{AppConfig, Library, LibraryType};
 pub struct Scanner {
     tx: mpsc::Sender<ScanTask>,
     config: AppConfig,
+    db: std::sync::Arc<crate::db::DbClient>,
 }
 
 #[derive(Debug)]
@@ -31,9 +32,13 @@ enum ScanTask {
 }
 
 impl Scanner {
-    pub fn new(config: AppConfig) -> (Self, tokio::task::JoinHandle<()>) {
+    pub fn new(
+        config: AppConfig,
+        db: std::sync::Arc<crate::db::DbClient>,
+    ) -> (Self, tokio::task::JoinHandle<()>) {
         let (tx, mut rx) = mpsc::channel::<ScanTask>(100);
         let worker_config = config.clone();
+        let worker_db = db.clone();
 
         let worker_handle = tokio::spawn(async move {
             println!("[scanner] Background worker started");
@@ -44,7 +49,8 @@ impl Scanner {
                 match task {
                     ScanTask::Movie(path) => {
                         println!("[scanner] Worker processing Movie: {:?}", path.file_name());
-                        if let Err(e) = process_file(&path, &worker_config, false).await {
+                        if let Err(e) = process_file(&path, &worker_config, false, &worker_db).await
+                        {
                             eprintln!("[scanner] Error processing movie {:?}: {}", path, e);
                         }
                     }
@@ -60,7 +66,8 @@ impl Scanner {
                         match fetch_tmdb_season_metadata(&worker_config, tmdb_id, season_num).await
                         {
                             Ok(Some(meta)) => {
-                                if let Err(e) = save_local_metadata(&path, &meta).await {
+                                if let Err(e) = save_local_metadata(&path, &meta, &worker_db).await
+                                {
                                     eprintln!("[scanner] Failed to save season metadata: {}", e);
                                 } else {
                                     if let Some(poster) = meta.poster_path {
@@ -98,7 +105,8 @@ impl Scanner {
                         .await
                         {
                             Ok(Some(meta)) => {
-                                if let Err(e) = save_local_metadata(&path, &meta).await {
+                                if let Err(e) = save_local_metadata(&path, &meta, &worker_db).await
+                                {
                                     eprintln!("[scanner] Failed to save episode metadata: {}", e);
                                 } else {
                                     if let Some(poster) = meta.poster_path {
@@ -125,12 +133,13 @@ impl Scanner {
             println!("[scanner] Background worker stopped");
         });
 
-        (Self { tx, config }, worker_handle)
+        (Self { tx, config, db }, worker_handle)
     }
 
     pub async fn scan_library(&self, library: &Library) {
         let tx = self.tx.clone();
         let config = self.config.clone(); // Clone config for the task
+        let db = self.db.clone();
         let lib_path = library.path.clone();
         let lib_kind = library.kind.clone();
         let lib_name = library.name.clone();
@@ -140,10 +149,10 @@ impl Scanner {
         tokio::spawn(async move {
             match lib_kind {
                 LibraryType::Movies => {
-                    Self::scan_movies(lib_path, tx).await;
+                    Self::scan_movies(lib_path, db, tx).await;
                 }
                 LibraryType::TVShows => {
-                    Self::scan_tv_shows(config, lib_path, tx).await;
+                    Self::scan_tv_shows(config, db, lib_path, tx).await;
                 }
                 _ => {
                     println!(
@@ -155,7 +164,11 @@ impl Scanner {
         });
     }
 
-    async fn scan_movies(lib_path: PathBuf, tx: mpsc::Sender<ScanTask>) {
+    async fn scan_movies(
+        lib_path: PathBuf,
+        db: std::sync::Arc<crate::db::DbClient>,
+        tx: mpsc::Sender<ScanTask>,
+    ) {
         let mut dirs = vec![lib_path];
         while let Some(dir) = dirs.pop() {
             // Yield to allow other tasks (like HTTP requests) to run
@@ -183,7 +196,7 @@ impl Scanner {
                     let lower_ext = ext.to_lowercase();
                     match lower_ext.as_str() {
                         "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "flv" | "wmv" => {
-                            if !has_metadata(&path) {
+                            if !has_metadata(&path, &db).await {
                                 println!(
                                     "[scanner] Queueing missing metadata (Movie): {:?}",
                                     path.file_name()
@@ -204,7 +217,12 @@ impl Scanner {
         println!("[scanner] Finished scanning Movies library");
     }
 
-    async fn scan_tv_shows(config: AppConfig, lib_path: PathBuf, tx: mpsc::Sender<ScanTask>) {
+    async fn scan_tv_shows(
+        config: AppConfig,
+        db: std::sync::Arc<crate::db::DbClient>,
+        lib_path: PathBuf,
+        tx: mpsc::Sender<ScanTask>,
+    ) {
         let mut entries = match tokio::fs::read_dir(&lib_path).await {
             Ok(e) => e,
             Err(e) => {
@@ -227,7 +245,7 @@ impl Scanner {
             // 1. Check if Show metadata exists
             let tmdb_id;
 
-            if let Some(meta) = read_local_metadata(&path).await {
+            if let Some(meta) = read_local_metadata(&path, &db).await {
                 // Metadata exists, use it
                 tmdb_id = Some(meta.tmdb_id);
             } else {
@@ -237,7 +255,7 @@ impl Scanner {
                 );
                 // Process inline to get ID immediately
                 // We default is_tv=true
-                match process_file(&path, &config, true).await {
+                match process_file(&path, &config, true, &db).await {
                     Ok(Some(meta)) => {
                         tmdb_id = Some(meta.tmdb_id);
                         println!(
@@ -263,13 +281,17 @@ impl Scanner {
                 None => continue,
             };
 
-            // 2. Scan Children (Seasons/Episodes)
-            Self::scan_show_children(&path, show_id, tx.clone()).await;
+            Self::scan_show_children(&path, show_id, db.clone(), tx.clone()).await;
         }
         println!("[scanner] Finished scanning TV Shows library");
     }
 
-    async fn scan_show_children(show_path: &Path, show_id: u64, tx: mpsc::Sender<ScanTask>) {
+    async fn scan_show_children(
+        show_path: &Path,
+        show_id: u64,
+        db: std::sync::Arc<crate::db::DbClient>,
+        tx: mpsc::Sender<ScanTask>,
+    ) {
         println!(
             "[scanner] Entering scan_show_children for {:?} (ID: {})",
             show_path, show_id
@@ -311,7 +333,7 @@ impl Scanner {
                         );
 
                         // Check metadata for Season Folder
-                        if !has_metadata(&path) {
+                        if !has_metadata(&path, &db).await {
                             println!(
                                 "[scanner] Queueing missing metadata (Season {}): {:?}",
                                 s_num,
@@ -336,7 +358,7 @@ impl Scanner {
                 if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                     match ext.to_lowercase().as_str() {
                         "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "flv" | "wmv" => {
-                            if !has_metadata(&path) {
+                            if !has_metadata(&path, &db).await {
                                 // Try parse SxxExx
                                 let file_name = path.file_name().unwrap().to_string_lossy();
                                 // Loose regex to catch S01E01 or 1x01
@@ -376,7 +398,7 @@ impl Scanner {
     }
 }
 
-fn has_metadata(video_path: &Path) -> bool {
+async fn has_metadata(video_path: &Path, db: &crate::db::DbClient) -> bool {
     let file_name = match video_path.file_name() {
         Some(n) => n.to_string_lossy(),
         None => return false,
@@ -388,12 +410,17 @@ fn has_metadata(video_path: &Path) -> bool {
     }
     let parent = parent.unwrap();
 
-    let json_path = parent.join(format!("{}.json", file_name));
     let jpg_path = parent.join(format!("{}.jpg", file_name));
 
-    // For now, require JSON. Image optional for existence check?
-    // Logic said "missing metadata (json AND jpg)".
-    // `read_local_metadata` needs JSON.
-    // Let's stick to existing logic:
-    json_path.exists() && jpg_path.exists()
+    // With the DB migration, we check if it is in the DB.
+    // If we want to be foolproof, we should also check if the image is valid. For now, checking DB is enough.
+    // The previous logic checked json_path.exists() && jpg_path.exists().
+    // `read_local_metadata` will automatically migrate JSON -> DB if it exists!
+    if super::metadata::read_local_metadata(video_path, db)
+        .await
+        .is_some()
+    {
+        return jpg_path.exists();
+    }
+    false
 }

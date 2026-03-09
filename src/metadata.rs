@@ -49,7 +49,11 @@ struct TmdbEpisodeResponse {
     season_number: u32,
 }
 
-pub async fn read_local_metadata(path: &Path) -> Option<LocalMetadata> {
+pub async fn read_local_metadata(path: &Path, db: &crate::db::DbClient) -> Option<LocalMetadata> {
+    if let Ok(Some(meta)) = db.get_metadata(&path.to_string_lossy()).await {
+        return Some(meta);
+    }
+
     let file_name = path.file_name()?.to_string_lossy();
     let parent = path.parent()?;
     let json_path = parent.join(format!("{}.json", file_name));
@@ -58,31 +62,18 @@ pub async fn read_local_metadata(path: &Path) -> Option<LocalMetadata> {
         && let Ok(content) = fs::read_to_string(&json_path).await
         && let Ok(meta) = serde_json::from_str::<LocalMetadata>(&content)
     {
+        let _ = db.save_metadata(&path.to_string_lossy(), &meta).await;
         return Some(meta);
     }
     None
 }
 
-pub async fn save_local_metadata(path: &Path, metadata: &LocalMetadata) -> Result<()> {
-    let file_name = path.file_name().context("No filename")?.to_string_lossy();
-    let parent = path.parent().context("No parent")?;
-    let json_path = parent.join(format!("{}.json", file_name));
-
-    println!("[metadata] Saving metadata to: {:?}", json_path);
-    let content = serde_json::to_string_pretty(metadata)?;
-    match fs::write(&json_path, content).await {
-        Ok(_) => {
-            println!("[metadata] Successfully saved metadata to {:?}", json_path);
-            Ok(())
-        }
-        Err(e) => {
-            eprintln!(
-                "[metadata] Failed to write metadata json to {:?}: {}",
-                json_path, e
-            );
-            Err(e.into())
-        }
-    }
+pub async fn save_local_metadata(
+    path: &Path,
+    metadata: &LocalMetadata,
+    db: &crate::db::DbClient,
+) -> Result<()> {
+    db.save_metadata(&path.to_string_lossy(), metadata).await
 }
 
 pub fn cleanup_filename(filename: &str) -> (String, Option<String>) {
@@ -342,6 +333,7 @@ pub async fn process_file(
     path: &Path,
     config: &crate::models::AppConfig,
     is_tv: bool,
+    db: &crate::db::DbClient,
 ) -> Result<Option<LocalMetadata>> {
     let file_name = path
         .file_name()
@@ -375,9 +367,9 @@ pub async fn process_file(
             }
         }
 
-        // 3. Save JSON
-        if let Err(e) = save_local_metadata(path, &m).await {
-            eprintln!("[process_file] Failed to write metadata json: {}", e);
+        // 3. Save to DB
+        if let Err(e) = save_local_metadata(path, &m, db).await {
+            eprintln!("[process_file] Failed to write metadata to db: {}", e);
             return Err(e);
         }
 

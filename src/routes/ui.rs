@@ -270,7 +270,9 @@ async fn get_files_for_ui(state: &AppState, lib_id: &str, path: &str) -> Vec<Fil
 
                     // Metadata check
                     let item_path = canonical_path.join(&file_name);
-                    if let Some(meta) = crate::metadata::read_local_metadata(&item_path).await {
+                    if let Some(meta) =
+                        crate::metadata::read_local_metadata(&item_path, &state.db).await
+                    {
                         if !meta.title.is_empty() {
                             display = meta.title;
                         }
@@ -313,7 +315,9 @@ async fn get_files_for_ui(state: &AppState, lib_id: &str, path: &str) -> Vec<Fil
                         let mut poster_url = None;
 
                         let item_path = canonical_path.join(&file_name);
-                        if let Some(meta) = crate::metadata::read_local_metadata(&item_path).await {
+                        if let Some(meta) =
+                            crate::metadata::read_local_metadata(&item_path, &state.db).await
+                        {
                             if !meta.title.is_empty() {
                                 if let Some(ep_num) = meta.episode_number {
                                     display = format!("{}. {}", ep_num, meta.title);
@@ -454,7 +458,7 @@ pub async fn watch_handler(
     let mut description = String::new();
     if let Some(base_path) = get_base_path(&state, Some(&params.library_id)).await {
         let abs_path = base_path.join(&params.path);
-        if let Some(meta) = read_local_metadata(&abs_path).await {
+        if let Some(meta) = read_local_metadata(&abs_path, &state.db).await {
             description = meta.overview;
             if !meta.title.is_empty() {
                 if let Some(ep_num) = meta.episode_number {

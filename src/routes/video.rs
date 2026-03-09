@@ -88,7 +88,7 @@ pub async fn list_files(
                 let mut poster = None;
 
                 let item_path = canonical_path.join(&file_name);
-                if let Some(meta) = read_local_metadata(&item_path).await {
+                if let Some(meta) = read_local_metadata(&item_path, &state.db).await {
                     title = Some(meta.title);
                     if meta.poster_path.is_some() {
                         let img_path = canonical_path.join(format!("{}.jpg", file_name));
@@ -117,7 +117,7 @@ pub async fn list_files(
 
                         // Check for Sidecar JSON
                         let item_path = canonical_path.join(&file_name);
-                        if let Some(meta) = read_local_metadata(&item_path).await {
+                        if let Some(meta) = read_local_metadata(&item_path, &state.db).await {
                             if !meta.title.is_empty() {
                                 if let Some(ep_num) = meta.episode_number {
                                     title = Some(format!("{}. {}", ep_num, meta.title));
@@ -175,7 +175,7 @@ pub async fn get_metadata(
     match probe_metadata(&abs_path).await {
         Ok(mut metadata) => {
             // Check for sidecar JSON
-            if let Some(meta) = read_local_metadata(&abs_path).await
+            if let Some(meta) = read_local_metadata(&abs_path, &state.db).await
                 && !meta.title.is_empty()
             {
                 metadata.title = Some(meta.title);
@@ -418,7 +418,7 @@ pub async fn lookup_metadata(
                     if p == base_path {
                         break;
                     } // Don't go above library root
-                    if let Some(meta) = read_local_metadata(p).await {
+                    if let Some(meta) = read_local_metadata(p, &state.db).await {
                         // Skip if this looks like a Season folder metadata (we want the Show)
                         // Title "Season 1", "Season 02", "Specials", etc.
                         let title_lower = meta.title.to_lowercase();
@@ -480,7 +480,7 @@ pub async fn lookup_metadata(
                 println!("Extracted season number: {}", s_num);
                 // We need parent show's TMDB ID.
                 if let Some(parent) = abs_path.parent()
-                    && let Some(parent_meta) = read_local_metadata(parent).await
+                    && let Some(parent_meta) = read_local_metadata(parent, &state.db).await
                 {
                     println!("Found parent show TMDB ID: {}", parent_meta.tmdb_id);
                     best_match =
@@ -559,7 +559,7 @@ pub async fn lookup_metadata(
             }
         }
 
-        if let Err(e) = save_local_metadata(&abs_path, &m).await {
+        if let Err(e) = save_local_metadata(&abs_path, &m, &state.db).await {
             eprintln!("Failed to write metadata json: {}", e);
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }

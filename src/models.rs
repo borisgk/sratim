@@ -91,6 +91,7 @@ pub struct AppState {
     pub libraries: Arc<tokio::sync::RwLock<Vec<Library>>>,
     pub config: AppConfig,
     pub scanner: Arc<crate::scanner::Scanner>,
+    pub db: Arc<crate::db::DbClient>,
 }
 
 // --- Library Models ---

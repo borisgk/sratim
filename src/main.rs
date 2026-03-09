@@ -35,8 +35,18 @@ async fn main() {
         Vec::new()
     };
 
+    // --- Database ---
+
+    // Wait, the metadata DB should probably be persistent! Let's put it next to libraries.json or in the config dir
+    // Let's use `std::env::current_dir().unwrap().join("metadata.db")` for now.
+    let db_path = std::env::current_dir().unwrap().join("metadata.db");
+    let db = sratim::db::DbClient::init(db_path)
+        .await
+        .expect("Failed to initialize database");
+    let db = Arc::new(db);
+
     // --- Background Scanner ---
-    let (scanner, _worker_handle) = sratim::scanner::Scanner::new(config.clone());
+    let (scanner, _worker_handle) = sratim::scanner::Scanner::new(config.clone(), db.clone());
     let scanner = Arc::new(scanner);
 
     let shared_state = AppState {
@@ -46,6 +56,7 @@ async fn main() {
         libraries: Arc::new(tokio::sync::RwLock::new(libraries)),
         config: config.clone(),
         scanner: scanner.clone(),
+        db: db.clone(),
     };
 
     // Initial Scan
