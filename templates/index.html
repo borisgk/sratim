@@ -21,7 +21,14 @@
 <body>
     <div class="app-container">
         <header>
-            <div class="logo"><a href="/" style="text-decoration: none; color: inherit;">SRATIM</a></div>
+            <div style="display: flex; align-items: baseline; gap: 0.5rem;">
+                <div class="logo">
+                    <a href="/" style="text-decoration: none; color: inherit;">SRATIM</a>
+                </div>
+                <span
+                    style="font-size: 0.9rem; color: var(--text-muted); font-family: var(--font-body); opacity: 0.8;">Build
+                    {{ build_number }}</span>
+            </div>
             <div id="userProfile" class="user-profile">
                 <!-- User info -->
                 <span style="margin-right: 1rem; color: #fff; font-weight: bold;">User: {{ username }} {% if is_admin

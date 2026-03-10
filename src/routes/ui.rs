@@ -30,6 +30,7 @@ pub struct IndexTemplate {
     pub library_id: Option<String>,
     pub parent_link: Option<String>,
     pub current_library_type: Option<String>,
+    pub build_number: String,
 }
 
 impl IntoResponse for IndexTemplate {
@@ -177,6 +178,7 @@ pub async fn index_handler(
             library_id: Some(lib_id.clone()),
             parent_link,
             current_library_type: lib_type,
+            build_number: env!("BUILD_NUMBER").to_string(),
         };
         return template.into_response();
     } else {
@@ -209,6 +211,7 @@ pub async fn index_handler(
             library_id: None,
             parent_link: None,
             current_library_type: None,
+            build_number: env!("BUILD_NUMBER").to_string(),
         };
         return template.into_response();
     }
