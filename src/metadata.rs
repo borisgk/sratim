@@ -13,6 +13,8 @@ pub struct LocalMetadata {
     pub tmdb_id: u64,
     #[serde(default)]
     pub episode_number: Option<u32>,
+    #[serde(default)]
+    pub added_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -175,6 +177,7 @@ pub async fn fetch_tmdb_metadata(
             poster_path: movie.poster_path,
             tmdb_id: movie.id,
             episode_number: None,
+            added_at: None,
         }))
     } else {
         Ok(None)
@@ -238,6 +241,7 @@ pub async fn fetch_tmdb_season_metadata(
         poster_path: season_res.poster_path,
         tmdb_id: season_res.id,
         episode_number: None,
+        added_at: None,
     }))
 }
 
@@ -293,6 +297,7 @@ pub async fn fetch_tmdb_episode_metadata(
         poster_path: ep_res.still_path, // Use still_path for episodes
         tmdb_id: ep_res.id,
         episode_number: Some(ep_res.episode_number),
+        added_at: None,
     }))
 }
 

@@ -34,7 +34,8 @@ impl DbClient {
             overview TEXT NOT NULL,
             poster_path TEXT,
             tmdb_id INTEGER NOT NULL,
-            episode_number INTEGER
+            episode_number INTEGER,
+            added_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         ";
         client
@@ -43,11 +44,20 @@ impl DbClient {
             .await
             .context("Failed to run metadata table migration")?;
 
+        // Add column if migrating from previous DB version
+        let _ = client
+            .conn
+            .execute(
+                "ALTER TABLE metadata ADD COLUMN added_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+                (),
+            )
+            .await;
+
         Ok(client)
     }
 
     pub async fn get_metadata(&self, path: &str) -> Result<Option<LocalMetadata>> {
-        let stmt = self.conn.prepare("SELECT title, overview, poster_path, tmdb_id, episode_number FROM metadata WHERE path = ?1").await?;
+        let stmt = self.conn.prepare("SELECT title, overview, poster_path, tmdb_id, episode_number, added_at FROM metadata WHERE path = ?1").await?;
         let mut rows = stmt.query([path]).await?;
 
         if let Some(row) = rows.next().await? {
@@ -56,6 +66,7 @@ impl DbClient {
             let poster_path: Option<String> = row.get(2).ok().flatten();
             let tmdb_id: i64 = row.get(3)?;
             let episode_number: Option<i64> = row.get(4).ok().flatten();
+            let added_at: Option<String> = row.get(5).ok().flatten();
 
             Ok(Some(LocalMetadata {
                 title,
@@ -63,6 +74,7 @@ impl DbClient {
                 poster_path,
                 tmdb_id: tmdb_id as u64,
                 episode_number: episode_number.map(|e| e as u32),
+                added_at,
             }))
         } else {
             Ok(None)
