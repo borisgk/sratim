@@ -47,10 +47,7 @@ impl DbClient {
         // Add column if migrating from previous DB version
         let _ = client
             .conn
-            .execute(
-                "ALTER TABLE metadata ADD COLUMN added_at DATETIME DEFAULT CURRENT_TIMESTAMP",
-                (),
-            )
+            .execute("ALTER TABLE metadata ADD COLUMN added_at DATETIME", ())
             .await;
 
         Ok(client)
@@ -86,8 +83,8 @@ impl DbClient {
             .conn
             .prepare(
                 "
-            INSERT INTO metadata (path, title, overview, poster_path, tmdb_id, episode_number)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO metadata (path, title, overview, poster_path, tmdb_id, episode_number, added_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))
             ON CONFLICT(path) DO UPDATE SET
                 title = excluded.title,
                 overview = excluded.overview,

@@ -8,3 +8,5 @@ users.json
 .DS_Store
 .DS_Store
 .DS_Store
+.build_version
+metadata.db
