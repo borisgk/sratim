@@ -131,4 +131,32 @@ impl DbClient {
 
         Ok(())
     }
+
+    pub async fn clean_orphaned_metadata(&self, library_path: &str) -> Result<()> {
+        let query_path = format!("{}%", library_path);
+        let stmt = self
+            .conn
+            .prepare("SELECT path FROM metadata WHERE path LIKE ?1")
+            .await?;
+        let mut rows = stmt.query([query_path]).await?;
+
+        let mut to_delete = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let path: String = row.get(0)?;
+            if !std::path::Path::new(&path).exists() {
+                to_delete.push(path);
+            }
+        }
+
+        for p in to_delete {
+            println!("[db] Removing orphaned metadata for missing file: {}", p);
+            let del_stmt = self
+                .conn
+                .prepare("DELETE FROM metadata WHERE path = ?1")
+                .await?;
+            del_stmt.execute([p]).await?;
+        }
+
+        Ok(())
+    }
 }

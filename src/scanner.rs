@@ -149,17 +149,29 @@ impl Scanner {
         tokio::spawn(async move {
             match lib_kind {
                 LibraryType::Movies => {
-                    Self::scan_movies(lib_path, db, tx).await;
+                    Self::scan_movies(lib_path.clone(), db.clone(), tx).await;
                 }
                 LibraryType::TVShows => {
-                    Self::scan_tv_shows(config, db, lib_path, tx).await;
+                    Self::scan_tv_shows(config, db.clone(), lib_path.clone(), tx).await;
                 }
                 _ => {
                     println!(
                         "[scanner] Skipping unsupported library type: {:?}",
                         lib_kind
                     );
+                    return;
                 }
+            }
+
+            println!("[scanner] Cleaning orphaned metadata for {}", lib_name);
+            if let Err(e) = db
+                .clean_orphaned_metadata(&lib_path.to_string_lossy())
+                .await
+            {
+                eprintln!(
+                    "[scanner] Error cleaning orphaned metadata for {}: {}",
+                    lib_name, e
+                );
             }
         });
     }
