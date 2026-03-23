@@ -128,6 +128,10 @@
                                 onclick="event.stopPropagation(); lookupMovie('{{ file.path_encoded }}', '{{ library_id.as_ref().unwrap() }}', this)">
                                 <span>🔍</span> Lookup
                             </div>
+                            <div class="card-menu-item"
+                                onclick="event.stopPropagation(); shareVideo('{{ file.path_encoded }}', '{{ library_id.as_ref().unwrap() }}')">
+                                <span>🔗</span> Share
+                            </div>
                         </div>
                     </div>
                     {% endif %}
@@ -150,6 +154,10 @@
                             <div class="card-menu-item"
                                 onclick="event.stopPropagation(); lookupMovie('{{ file.path_encoded }}', '{{ library_id.as_ref().unwrap() }}', this)">
                                 <span>🔍</span> Lookup
+                            </div>
+                            <div class="card-menu-item"
+                                onclick="event.stopPropagation(); shareVideo('{{ file.path_encoded }}', '{{ library_id.as_ref().unwrap() }}')">
+                                <span>🔗</span> Share
                             </div>
                         </div>
                     </div>
@@ -272,6 +280,18 @@
 
             document.body.appendChild(form);
             form.submit();
+        }
+
+        function shareVideo(pathEncoded, libraryId) {
+            const baseUrl = "{% if external_server_url.is_some() %}{{ external_server_url.as_ref().unwrap() }}{% endif %}";
+            const origin = baseUrl ? baseUrl : window.location.origin;
+            const shareUrl = `${origin}/share?library_id=${libraryId}&path=${pathEncoded}`;
+            navigator.clipboard.writeText(shareUrl).then(() => {
+                alert("Share link copied to clipboard!");
+            }).catch(err => {
+                console.error('Could not copy text: ', err);
+                alert("Failed to copy share link.");
+            });
         }
     </script>
 </body>

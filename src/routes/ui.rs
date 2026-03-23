@@ -31,6 +31,7 @@ pub struct IndexTemplate {
     pub parent_link: Option<String>,
     pub current_library_type: Option<String>,
     pub build_number: String,
+    pub external_server_url: Option<String>,
 }
 
 impl IntoResponse for IndexTemplate {
@@ -179,6 +180,7 @@ pub async fn index_handler(
             parent_link,
             current_library_type: lib_type,
             build_number: env!("BUILD_NUMBER").to_string(),
+            external_server_url: state.config.external_server_url.clone(),
         };
         return template.into_response();
     } else {
@@ -212,6 +214,7 @@ pub async fn index_handler(
             parent_link: None,
             current_library_type: None,
             build_number: env!("BUILD_NUMBER").to_string(),
+            external_server_url: state.config.external_server_url.clone(),
         };
         return template.into_response();
     }
@@ -436,6 +439,90 @@ pub async fn watch_handler(
     }
 
     // 2. Prepare Template
+    let mut title = std::path::Path::new(&params.path)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Movie".to_string());
+
+    let path_str = params.path.clone();
+    let parent_path = if let Some(idx) = path_str.rfind('/') {
+        path_str[..idx].to_string()
+    } else {
+        "".to_string()
+    };
+
+    let back_link = if parent_path.is_empty() {
+        format!("/?library_id={}", params.library_id)
+    } else {
+        format!(
+            "/?library_id={}&path={}",
+            params.library_id,
+            urlencoding::encode(&parent_path)
+        )
+    };
+
+    let mut description = String::new();
+    if let Some(base_path) = get_base_path(&state, Some(&params.library_id)).await {
+        let abs_path = base_path.join(&params.path);
+        if let Some(meta) = read_local_metadata(&abs_path, &state.db).await {
+            description = meta.overview;
+            if !meta.title.is_empty() {
+                if let Some(ep_num) = meta.episode_number {
+                    title = format!("{}. {}", ep_num, meta.title);
+                } else {
+                    title = meta.title;
+                }
+            }
+        }
+    }
+
+    let template = PlayerTemplate {
+        title,
+        description,
+        path_encoded: urlencoding::encode(&params.path).to_string(),
+        library_id: params.library_id,
+        back_link,
+    };
+
+    template.into_response()
+}
+
+#[derive(Deserialize)]
+pub struct ShareParams {
+    pub library_id: String,
+    pub path: String,
+}
+
+pub async fn share_handler(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Query(params): Query<ShareParams>,
+) -> Response {
+    let logged_in = if let Some(token) = jar.get(COOKIE_NAME) {
+        let validation = Validation::default();
+        decode::<Claims>(
+            token.value(),
+            &DecodingKey::from_secret(JWT_SECRET),
+            &validation,
+        )
+        .is_ok()
+    } else {
+        false
+    };
+
+    if !logged_in {
+        let target = format!(
+            "/share?library_id={}&path={}",
+            urlencoding::encode(&params.library_id),
+            urlencoding::encode(&params.path)
+        );
+        return Redirect::to(&format!(
+            "/login.html?next={}",
+            urlencoding::encode(&target)
+        ))
+        .into_response();
+    }
+
     let mut title = std::path::Path::new(&params.path)
         .file_name()
         .map(|s| s.to_string_lossy().to_string())

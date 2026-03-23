@@ -129,6 +129,10 @@ async fn main() {
         .route("/api/debug/hash/:password", get(debug_hash_handler))
         .route("/", get(sratim::routes::ui::index_handler))
         .route(
+            "/share",
+            axum::routing::get(sratim::routes::ui::share_handler),
+        )
+        .route(
             "/watch",
             axum::routing::post(sratim::routes::ui::watch_handler),
         )

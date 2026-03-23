@@ -22,6 +22,8 @@ pub struct AppConfig {
     pub tmdb_image_base_url: String,
     #[serde(default)]
     pub tmdb_access_token: String,
+    #[serde(default)]
+    pub external_server_url: Option<String>,
 }
 
 fn default_frontend_dir() -> PathBuf {
@@ -77,6 +79,7 @@ impl AppConfig {
             tmdb_base_url: default_tmdb_base_url(),
             tmdb_image_base_url: default_tmdb_image_base_url(),
             tmdb_access_token: String::new(),
+            external_server_url: None,
         }
     }
 }

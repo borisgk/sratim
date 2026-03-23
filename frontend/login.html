@@ -114,7 +114,9 @@
                 });
 
                 if (res.ok) {
-                    window.location.href = '/';
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const nextParam = urlParams.get('next');
+                    window.location.href = nextParam ? decodeURIComponent(nextParam) : '/';
                 } else {
                     errorMsg.textContent = 'Invalid credentials';
                     errorMsg.style.display = 'block';
