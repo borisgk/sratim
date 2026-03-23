@@ -546,8 +546,14 @@ pub async fn share_handler(
     };
 
     let mut description = String::new();
+    let mut is_dir = false;
     if let Some(base_path) = get_base_path(&state, Some(&params.library_id)).await {
         let abs_path = base_path.join(&params.path);
+        
+        if let Ok(metadata) = tokio::fs::metadata(&abs_path).await {
+            is_dir = metadata.is_dir();
+        }
+        
         if let Some(meta) = read_local_metadata(&abs_path, &state.db).await {
             description = meta.overview;
             if !meta.title.is_empty() {
@@ -558,6 +564,15 @@ pub async fn share_handler(
                 }
             }
         }
+    }
+
+    if is_dir {
+        return Redirect::to(&format!(
+            "/?library_id={}&path={}",
+            urlencoding::encode(&params.library_id),
+            urlencoding::encode(&params.path)
+        ))
+        .into_response();
     }
 
     let template = PlayerTemplate {
