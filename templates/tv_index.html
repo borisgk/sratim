@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sratim TV</title>
+    <!-- Use same fonts as modern UI -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Outfit:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/tv.css">
+</head>
+<body class="tv-body">
+    <div class="tv-container">
+        <!-- Top Navigation -->
+        <header class="tv-header">
+            <h1 class="tv-logo" style="flex-grow: 1;">SRATIM TV</h1>
+            <nav class="tv-nav">
+                <div class="tv-card tv-breadcrumb-back" data-focusable="true" data-action="logout" style="padding: 10px 20px; font-size: 20px; height: auto; width: auto; display: block;">
+                    Logout
+                </div>
+            </nav>
+        </header>
+
+        {% if mode == "libraries" %}
+        <div class="tv-grid tv-grid-single-row">
+            {% for lib in libraries %}
+            <div class="tv-card folder" data-focusable="true" data-action="link" data-url="/tv?library_id={{ lib.id }}">
+                <img src="{{ lib.image }}" alt="{{ lib.name }}" class="tv-card-poster">
+                <div class="tv-card-title">{{ lib.name }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        
+        <div class="tv-breadcrumbs">
+            <div class="breadcrumb-text">
+                {% for crumb in breadcrumbs %}
+                    / {{ crumb.name }}
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="tv-grid">
+            {% if parent_link.is_some() %}
+            <div class="tv-card folder" data-focusable="true" data-action="link" data-url="{{ parent_link.as_ref().unwrap() }}">
+                <div class="tv-card-placeholder">⬅️</div>
+                <div class="tv-card-title">Back</div>
+            </div>
+            {% else %}
+            <div class="tv-card folder" data-focusable="true" data-action="link" data-url="/tv">
+                <div class="tv-card-placeholder">🏠</div>
+                <div class="tv-card-title">Libraries</div>
+            </div>
+            {% endif %}
+
+            {% if files.is_empty() %}
+            <p class="tv-empty">This folder is empty.</p>
+            {% endif %}
+
+            {% for file in files %}
+                {% if file.is_dir %}
+                <div class="tv-card folder" data-focusable="true" data-action="link" data-url="/tv?library_id={{ library_id.as_ref().unwrap() }}&path={{ file.path_encoded }}">
+                    {% if file.poster_url.is_some() %}
+                    <img src="{{ file.poster_url.as_ref().unwrap() }}" class="tv-card-poster">
+                    {% else %}
+                    <div class="tv-card-placeholder">📁</div>
+                    {% endif %}
+                    <div class="tv-card-title">{{ file.display_name }}</div>
+                </div>
+                {% else %}
+                <div class="tv-card file" data-focusable="true" data-action="play" data-path="{{ file.path_encoded }}" data-lib="{{ library_id.as_ref().unwrap() }}">
+                    {% if file.poster_url.is_some() %}
+                    <img src="{{ file.poster_url.as_ref().unwrap() }}" class="tv-card-poster">
+                    {% else %}
+                    <div class="tv-card-placeholder">🎬</div>
+                    {% endif %}
+                    <div class="tv-card-title">{{ file.display_name }}</div>
+                </div>
+                {% endif %}
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Hidden form for watching -->
+    <form id="watch-form" method="POST" action="/tv/watch" style="display: none;">
+        <input type="hidden" name="path" id="watch-path">
+        <input type="hidden" name="library_id" id="watch-lib">
+    </form>
+
+    <script src="/tv.js"></script>
+</body>
+</html>

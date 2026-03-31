@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sratim TV - Player</title>
+    <!-- Use same fonts as modern UI -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Outfit:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/tv.css">
+    
+    <!-- Shaka Player for handling the stream -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.11/shaka-player.ui.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.11/controls.min.css">
+</head>
+<body class="tv-body tv-player-body">
+
+    <!-- The actual video element -->
+    <div id="videoContainer" data-shaka-player-container style="width: 100%; height: 100%;">
+        <video id="videoElement" data-shaka-player style="width: 100%; height: 100%; object-fit: contain;"></video>
+    </div>
+
+    <!-- Hidden configuration injected from server -->
+    <script id="player-config" type="application/json">
+        {
+            "title": "{{ title | escape }}",
+            "path_encoded": "{{ path_encoded }}",
+            "library_id": "{{ library_id | escape }}",
+            "back_link": "{{ back_link | escape }}"
+        }
+    </script>
+
+    <!-- TV Player Logic -->
+    <script>
+        const configStr = document.getElementById('player-config').textContent;
+        const config = JSON.parse(configStr);
+        
+        // Construct the stream URL
+        const streamUrl = `/api/stream?library_id=${encodeURIComponent(config.library_id)}&path=${config.path_encoded}`;
+        
+        let player, video;
+
+        async function initPlayer() {
+            shaka.polyfill.installAll();
+            
+            video = document.getElementById('videoElement');
+            const videoContainer = document.getElementById('videoContainer');
+            
+            // Re-using shaka player from standard UI, but hiding UI layer
+            player = new shaka.Player(video);
+            
+            const ui = new shaka.ui.Overlay(player, videoContainer, video);
+            
+            // For TV, we auto-play and hide controls, managing overlay ourselves if needed
+            ui.configure({
+                controlPanelElements: ['play_pause', 'time_and_duration', 'volume', 'spacer', 'fullscreen', 'overflow_menu'],
+                addBigPlayButton: true,
+                castReceiverAppId: '', // Disabled for TV app
+                enableKeyboardPlaybackControls: false, // We will manually handle key events for precision
+            });
+
+            // TV Key Handlers
+            document.addEventListener('keydown', (e) => {
+                switch(e.key) {
+                    case 'Enter':
+                    case 'MediaPlayPause':
+                        e.preventDefault();
+                        if (video.paused) video.play();
+                        else video.pause();
+                        break;
+                    case 'ArrowRight':
+                    case 'MediaFastForward':
+                        e.preventDefault();
+                        video.currentTime = Math.min(video.currentTime + 10, video.duration);
+                        break;
+                    case 'ArrowLeft':
+                    case 'MediaRewind':
+                        e.preventDefault();
+                        video.currentTime = Math.max(video.currentTime - 10, 0);
+                        break;
+                    case 'Escape':
+                    case 'Backspace':
+                        e.preventDefault();
+                        window.location.href = config.back_link;
+                        break;
+                }
+            });
+
+            try {
+                await player.load(streamUrl);
+                // Attempt to auto play
+                video.play().catch(e => {
+                    console.log("Autoplay blocked block handling", e);
+                });
+            } catch (e) {
+                console.error('Error loading video', e);
+                alert("Failed to load video stream.");
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', initPlayer);
+    </script>
+</body>
+</html>
