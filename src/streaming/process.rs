@@ -27,10 +27,9 @@ pub fn spawn_ffmpeg(
         "-map".to_string(),
         "0:v:0".to_string(),
         "-c:v".to_string(),
-        "copy".to_string(), // Enforce zero transcoding
+        "copy".to_string(),
     ];
 
-    // HEVC tagging
     if video_codec == "hevc" {
         args.push("-tag:v".to_string());
         args.push("hvc1".to_string());

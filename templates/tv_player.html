@@ -25,9 +25,11 @@
     <script id="player-config" type="application/json">
         {
             "title": "{{ title | escape }}",
-            "path_encoded": "{{ path_encoded }}",
+            "path": "{{ path }}",
             "library_id": "{{ library_id | escape }}",
-            "back_link": "{{ back_link | escape }}"
+            "back_link": "{{ back_link | escape }}",
+            "token": "{{ token }}",
+            "external_server_url": "{% if let Some(url) = external_server_url %}{{ url }}{% endif %}"
         }
     </script>
 
@@ -37,7 +39,11 @@
         const config = JSON.parse(configStr);
         
         // Construct the stream URL
-        const streamUrl = `/api/stream?library_id=${encodeURIComponent(config.library_id)}&path=${config.path_encoded}`;
+        const params = new URLSearchParams();
+        params.append('library_id', config.library_id);
+        params.append('path', config.path);
+        params.append('token', config.token);
+        const streamUrl = `/api/stream?${params.toString()}`;
         
         let player, video;
 

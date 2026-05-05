@@ -26,7 +26,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let moviePath = null;
     // 1. Server Config (SSR)
     if (window.serverConfig) {
-        moviePath = decodeURIComponent(window.serverConfig.path);
+        moviePath = window.serverConfig.path;
         libraryId = window.serverConfig.libraryId;
         console.log("Using Server Config:", moviePath);
     } else {
@@ -434,3 +434,97 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Kickoff
     loadVideo(0);
 });
+
+// --- Google Cast Integration ---
+
+window['__onGCastApiAvailable'] = function (isAvailable) {
+    if (isAvailable) {
+        initializeCastApi();
+    }
+};
+
+function initializeCastApi() {
+    if (!window.cast || !window.cast.framework || !window.chrome || !window.chrome.cast) {
+        console.log("Cast SDK not fully loaded, waiting...");
+        setTimeout(initializeCastApi, 200);
+        return;
+    }
+
+    cast.framework.CastContext.getInstance().setOptions({
+        receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+        autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
+    });
+
+    const context = cast.framework.CastContext.getInstance();
+    const remotePlayer = new cast.framework.RemotePlayer();
+    const remotePlayerController = new cast.framework.RemotePlayerController(remotePlayer);
+
+    remotePlayerController.addEventListener(
+        cast.framework.RemotePlayerEventType.IS_CONNECTED_CHANGED,
+        async () => {
+            if (remotePlayer.isConnected) {
+                console.log("Cast connected");
+                await startCasting();
+            } else {
+                console.log("Cast disconnected");
+                // The local player is already paused. The user can resume manually.
+            }
+        }
+    );
+}
+
+async function startCasting() {
+    const video = document.getElementById('mainVideo');
+    const currentTime = video.currentTime;
+    video.pause();
+
+    const castSession = cast.framework.CastContext.getInstance().getCurrentSession();
+    if (!castSession) {
+        console.error("No cast session found");
+        return;
+    }
+
+    // Get current audio track from the UI
+    const audioSelect = document.getElementById('audioTrackSelect');
+    const audioTrack = audioSelect ? audioSelect.value : 0;
+
+    // Construct the absolute stream URL
+    let baseUrl = window.serverConfig.externalServerUrl || window.location.origin;
+    if (baseUrl.endsWith('/')) {
+        baseUrl = baseUrl.slice(0, -1);
+    }
+
+    const params = new URLSearchParams();
+    params.append('path', window.serverConfig.path);
+    params.append('start', currentTime.toString());
+    params.append('token', window.serverConfig.token);
+    
+    if (window.serverConfig.libraryId) {
+        params.append('library_id', window.serverConfig.libraryId);
+    }
+    
+    if (audioTrack !== undefined && audioTrack !== null && audioTrack !== '') {
+        params.append('audio_track', audioTrack.toString());
+    }
+
+    const streamUrl = `${baseUrl}/api/stream?${params.toString()}`;
+    console.log("Casting URL:", streamUrl);
+
+    const mediaInfo = new chrome.cast.media.MediaInfo(streamUrl, 'video/mp4');
+    mediaInfo.streamType = chrome.cast.media.StreamType.LIVE;
+    mediaInfo.duration = window.serverConfig.duration || 0;
+    mediaInfo.metadata = new chrome.cast.media.GenericMediaMetadata();
+    mediaInfo.metadata.metadataType = chrome.cast.media.MetadataType.MOVIE;
+    mediaInfo.metadata.title = window.serverConfig.title;
+
+    const request = new chrome.cast.media.LoadRequest(mediaInfo);
+    request.autoplay = true;
+    request.currentTime = 0; 
+
+    try {
+        await castSession.loadMedia(request);
+        console.log('Media load request sent successfully');
+    } catch (error) {
+        console.error('Error loading media on Cast device:', error);
+    }
+}

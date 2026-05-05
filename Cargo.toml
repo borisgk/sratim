@@ -38,4 +38,5 @@ time = "0.3.46"
 askama = "0.15.4"
 futures = "0.3.31"
 libsql = { version = "0.9.29", features = ["core"] }
+serde_urlencoded = "0.7.1"
 

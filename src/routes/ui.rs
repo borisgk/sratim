@@ -13,6 +13,7 @@ use crate::{
     metadata::read_local_metadata,
     models::AppState,
     routes::video::get_base_path,
+    streaming::probe_metadata,
 };
 use askama::Template;
 use futures::{StreamExt, stream};
@@ -388,9 +389,12 @@ async fn get_files_for_ui(state: &AppState, lib_id: &str, path: &str) -> Vec<Fil
 pub struct PlayerTemplate {
     pub title: String,
     pub description: String,
-    pub path_encoded: String,
+    pub path: String,
     pub library_id: String,
     pub back_link: String,
+    pub token: String,
+    pub duration: f64,
+    pub external_server_url: Option<String>,
 }
 
 impl IntoResponse for PlayerTemplate {
@@ -462,6 +466,7 @@ pub async fn watch_handler(
     };
 
     let mut description = String::new();
+    let mut duration = 0.0;
     if let Some(base_path) = get_base_path(&state, Some(&params.library_id)).await {
         let abs_path = base_path.join(&params.path);
         if let Some(meta) = read_local_metadata(&abs_path, &state.db).await {
@@ -474,14 +479,23 @@ pub async fn watch_handler(
                 }
             }
         }
+        // Also probe for duration if not in metadata or just to be sure
+        if let Ok(m) = probe_metadata(&abs_path).await {
+            duration = m.duration;
+        }
     }
+
+    let token = jar.get(COOKIE_NAME).map(|c| c.value().to_string()).unwrap_or_default();
 
     let template = PlayerTemplate {
         title,
         description,
-        path_encoded: urlencoding::encode(&params.path).to_string(),
+        path: params.path,
         library_id: params.library_id,
         back_link,
+        token,
+        duration,
+        external_server_url: state.config.external_server_url.clone(),
     };
 
     template.into_response()
@@ -547,6 +561,7 @@ pub async fn share_handler(
 
     let mut description = String::new();
     let mut is_dir = false;
+    let mut duration = 0.0;
     if let Some(base_path) = get_base_path(&state, Some(&params.library_id)).await {
         let abs_path = base_path.join(&params.path);
         
@@ -564,6 +579,9 @@ pub async fn share_handler(
                 }
             }
         }
+        if let Ok(m) = probe_metadata(&abs_path).await {
+            duration = m.duration;
+        }
     }
 
     if is_dir {
@@ -575,12 +593,17 @@ pub async fn share_handler(
         .into_response();
     }
 
+    let token = jar.get(COOKIE_NAME).map(|c| c.value().to_string()).unwrap_or_default();
+
     let template = PlayerTemplate {
         title,
         description,
-        path_encoded: urlencoding::encode(&params.path).to_string(),
+        path: params.path,
         library_id: params.library_id,
         back_link,
+        token,
+        duration,
+        external_server_url: state.config.external_server_url.clone(),
     };
 
     template.into_response()
@@ -739,9 +762,12 @@ pub async fn tv_index_handler(
 pub struct TvPlayerTemplate {
     pub title: String,
     pub description: String,
-    pub path_encoded: String,
+    pub path: String,
     pub library_id: String,
     pub back_link: String,
+    pub token: String,
+    pub duration: f64,
+    pub external_server_url: Option<String>,
 }
 
 impl IntoResponse for TvPlayerTemplate {
@@ -804,6 +830,7 @@ pub async fn tv_watch_handler(
     };
 
     let mut description = String::new();
+    let mut duration = 0.0;
     if let Some(base_path) = get_base_path(&state, Some(&params.library_id)).await {
         let abs_path = base_path.join(&params.path);
         if let Some(meta) = read_local_metadata(&abs_path, &state.db).await {
@@ -816,14 +843,22 @@ pub async fn tv_watch_handler(
                 }
             }
         }
+        if let Ok(m) = probe_metadata(&abs_path).await {
+            duration = m.duration;
+        }
     }
+
+    let token = jar.get(COOKIE_NAME).map(|c| c.value().to_string()).unwrap_or_default();
 
     let template = TvPlayerTemplate {
         title,
         description,
-        path_encoded: urlencoding::encode(&params.path).to_string(),
+        path: params.path,
         library_id: params.library_id,
         back_link,
+        token,
+        duration,
+        external_server_url: state.config.external_server_url.clone(),
     };
 
     template.into_response()

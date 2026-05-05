@@ -17,4 +17,4 @@ tmdb_image_base_url = "https://image.tmdb.org/t/p/w500"
 tmdb_access_token = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI0YjY4NjgwZDI3MzVlYjdiMWVkNjIwZTQwZDNiMjYxMCIsIm5iZiI6MTY5MjE5NTc4Ny41MjQsInN1YiI6IjY0ZGNkYmNiMDAxYmJkMDQxYmY0NjhlOCIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.3kiXVao5QsftRTtLu2H5mfmO8K35tCtD0siaWdeCbTw"
 
 # External Server URL for share links (optional)
-# external_server_url = "https://example.com"
+external_server_url = "http://10.0.0.7:3000"

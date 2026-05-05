@@ -12,11 +12,15 @@
     <link rel="stylesheet" href="/style.css">
     <script>
         window.serverConfig = {
-            path: "{{ path_encoded }}",
+            path: "{{ path }}",
             libraryId: "{{ library_id }}",
-            title: "{{ title }}"
+            title: "{{ title }}",
+            token: "{{ token }}",
+            duration: {{ duration }},
+            externalServerUrl: "{% if let Some(url) = external_server_url %}{{ url }}{% endif %}"
         };
     </script>
+    <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
 </head>
 
 <body>
@@ -24,13 +28,18 @@
         <div class="player-layout">
             <div id="playerContainer" class="player-container">
                 <div class="player-controls-top">
-                    <select id="subtitleTrackSelect" class="track-select" style="display: none;"
-                        aria-label="Subtitle Track">
-                        <option value="-1">Subtitles: Off</option>
-                    </select>
-                    <select id="audioTrackSelect" class="track-select" style="display: none;"
-                        aria-label="Audio Track"></select>
-                    <a href="{{ back_link }}" class="close-btn" aria-label="Close">&times;</a>
+                    <div class="controls-left">
+                        <select id="subtitleTrackSelect" class="track-select" style="display: none;"
+                            aria-label="Subtitle Track">
+                            <option value="-1">Subtitles: Off</option>
+                        </select>
+                        <select id="audioTrackSelect" class="track-select" style="display: none;"
+                            aria-label="Audio Track"></select>
+                    </div>
+                    <div class="controls-right">
+                        <google-cast-launcher id="castButton" class="cast-launcher"></google-cast-launcher>
+                        <a href="{{ back_link }}" class="close-btn" aria-label="Close">&times;</a>
+                    </div>
                 </div>
                 <div class="video-wrapper">
                     <video id="mainVideo" controls></video>
@@ -48,6 +57,31 @@
     </div>
 
     <style>
+        .player-controls-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            backdrop-filter: blur(5px);
+        }
+
+        .controls-left, .controls-right {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .cast-launcher {
+            width: 32px;
+            height: 32px;
+            cursor: pointer;
+            --connected-color: #4285f4;
+            --disconnected-color: #ffffff;
+        }
+
         .player-layout {
             display: flex;
             flex-direction: row;

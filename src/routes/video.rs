@@ -258,7 +258,7 @@ pub async fn stream_video(
                     if n == 0 {
                         break;
                     }
-                    // eprint!("[ffmpeg] {}", line); // silenced logging
+                    eprint!("[ffmpeg] {}", line);
                     line.clear();
                 }
             });

@@ -143,10 +143,19 @@ pub async fn login_handler(
 }
 
 pub async fn auth_middleware(jar: CookieJar, mut req: Request<Body>, next: Next) -> Response {
-    if let Some(token) = jar.get(COOKIE_NAME) {
+    let token_val = if let Some(token) = jar.get(COOKIE_NAME) {
+        Some(token.value().to_string())
+    } else {
+        // Try query parameter
+        let query = req.uri().query().unwrap_or("");
+        let params: HashMap<String, String> = serde_urlencoded::from_str(query).unwrap_or_default();
+        params.get("token").cloned()
+    };
+
+    if let Some(token) = token_val {
         let validation = Validation::default();
         if let Ok(data) = decode::<Claims>(
-            token.value(),
+            &token,
             &DecodingKey::from_secret(JWT_SECRET),
             &validation,
         ) {
