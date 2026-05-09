@@ -14,29 +14,23 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.11/shaka-player.ui.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.11/controls.min.css">
 </head>
-<body class="tv-body tv-player-body">
+<body class="tv-body tv-player-body" data-title="{{ title }}" data-path="{{ path }}" data-library-id="{{ library_id }}" data-back-link="{{ back_link }}" data-token="{{ token }}" data-external-server-url="{% if let Some(url) = external_server_url %}{{ url }}{% endif %}">
 
     <!-- The actual video element -->
     <div id="videoContainer" data-shaka-player-container style="width: 100%; height: 100%;">
         <video id="videoElement" data-shaka-player style="width: 100%; height: 100%; object-fit: contain;"></video>
     </div>
 
-    <!-- Hidden configuration injected from server -->
-    <script id="player-config" type="application/json">
-        {
-            "title": "{{ title | escape }}",
-            "path": "{{ path }}",
-            "library_id": "{{ library_id | escape }}",
-            "back_link": "{{ back_link | escape }}",
-            "token": "{{ token }}",
-            "external_server_url": "{% if let Some(url) = external_server_url %}{{ url }}{% endif %}"
-        }
-    </script>
-
     <!-- TV Player Logic -->
     <script>
-        const configStr = document.getElementById('player-config').textContent;
-        const config = JSON.parse(configStr);
+        const config = {
+            title: document.body.dataset.title,
+            path: document.body.dataset.path,
+            library_id: document.body.dataset.libraryId,
+            back_link: document.body.dataset.backLink,
+            token: document.body.dataset.token,
+            external_server_url: document.body.dataset.externalServerUrl || ""
+        };
         
         // Construct the stream URL
         const params = new URLSearchParams();

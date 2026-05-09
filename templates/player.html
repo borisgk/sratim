@@ -10,20 +10,20 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Outfit:wght@500;700&display=swap"
         rel="stylesheet">
     <link rel="stylesheet" href="/style.css">
-    <script>
-        window.serverConfig = {
-            path: "{{ path }}",
-            libraryId: "{{ library_id }}",
-            title: "{{ title }}",
-            token: "{{ token }}",
-            duration: {{ duration }},
-            externalServerUrl: "{% if let Some(url) = external_server_url %}{{ url }}{% endif %}"
-        };
-    </script>
     <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
 </head>
 
-<body>
+<body data-path="{{ path }}" data-library-id="{{ library_id }}" data-title="{{ title }}" data-token="{{ token }}" data-duration="{{ duration }}" data-external-server-url="{% if let Some(url) = external_server_url %}{{ url }}{% endif %}">
+    <script>
+        window.serverConfig = {
+            path: document.body.dataset.path,
+            libraryId: document.body.dataset.libraryId,
+            title: document.body.dataset.title,
+            token: document.body.dataset.token,
+            duration: parseFloat(document.body.dataset.duration),
+            externalServerUrl: document.body.dataset.externalServerUrl || ""
+        };
+    </script>
     <div class="player-page">
         <div class="player-layout">
             <div id="playerContainer" class="player-container">
