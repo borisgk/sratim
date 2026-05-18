@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use libsql::{Builder, Connection, Database};
 use std::path::PathBuf;
+use turso::{Builder, Connection, Database};
 
 use crate::metadata::LocalMetadata;
 
@@ -18,7 +18,7 @@ impl DbClient {
                 .context("Failed to create db dir")?;
         }
 
-        let db = Builder::new_local(db_path.to_string_lossy().to_string())
+        let db = Builder::new_local(&db_path.to_string_lossy())
             .build()
             .await
             .context("Failed to build local db")?;
@@ -54,7 +54,7 @@ impl DbClient {
     }
 
     pub async fn get_metadata(&self, path: &str) -> Result<Option<LocalMetadata>> {
-        let stmt = self.conn.prepare("SELECT title, overview, poster_path, tmdb_id, episode_number, added_at FROM metadata WHERE path = ?1").await?;
+        let mut stmt = self.conn.prepare("SELECT title, overview, poster_path, tmdb_id, episode_number, added_at FROM metadata WHERE path = ?1").await?;
         let mut rows = stmt.query([path]).await?;
 
         if let Some(row) = rows.next().await? {
@@ -79,7 +79,7 @@ impl DbClient {
     }
 
     pub async fn save_metadata(&self, path: &str, metadata: &LocalMetadata) -> Result<()> {
-        let stmt = self
+        let mut stmt = self
             .conn
             .prepare(
                 "
@@ -104,24 +104,24 @@ impl DbClient {
             None => -1, // representing null instead
         };
 
-        // Actually it's cleaner to handle option manually with libsql::params!
+        // Actually it's cleaner to handle option manually with turso::params!
         let poster_val = if poster_path_val.is_empty() {
-            libsql::Value::Null
+            turso::Value::Null
         } else {
-            libsql::Value::Text(poster_path_val)
+            turso::Value::Text(poster_path_val)
         };
         let episode_val2 = if episode_val == -1 {
-            libsql::Value::Null
+            turso::Value::Null
         } else {
-            libsql::Value::Integer(episode_val)
+            turso::Value::Integer(episode_val)
         };
 
-        stmt.execute(libsql::params![
+        stmt.execute(turso::params![
             path.to_string(),
             metadata.title.clone(),
             metadata.overview.clone(),
             poster_val,
-            libsql::Value::Integer(metadata.tmdb_id as i64),
+            turso::Value::Integer(metadata.tmdb_id as i64),
             episode_val2
         ])
         .await?;
@@ -131,7 +131,7 @@ impl DbClient {
 
     pub async fn clean_orphaned_metadata(&self, library_path: &str) -> Result<()> {
         let query_path = format!("{}%", library_path);
-        let stmt = self
+        let mut stmt = self
             .conn
             .prepare("SELECT path FROM metadata WHERE path LIKE ?1")
             .await?;
@@ -147,7 +147,7 @@ impl DbClient {
 
         for p in to_delete {
             println!("[db] Removing orphaned metadata for missing file: {}", p);
-            let del_stmt = self
+            let mut del_stmt = self
                 .conn
                 .prepare("DELETE FROM metadata WHERE path = ?1")
                 .await?;
