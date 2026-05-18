@@ -5,9 +5,7 @@ Sratim (Hebrew for "Movies") is a powerful, lightweight media server built with 
 
 ---
 
-### Project homepage: https://www.rus9n.com/projects/sratim
-
-### Project blog: https://www.rus9n.com/tags/sratim/
+### Please see [project home](https://www.rus9n.com/projects/sratim) and [blog](https://www.rus9n.com/tags/sratim/)
 
 ---
 
