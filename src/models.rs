@@ -52,8 +52,6 @@ fn default_jwt_secret() -> String {
     "change_me_in_production_use_a_long_random_string".to_string()
 }
 
-pub const DEFAULT_TMDB_ACCESS_TOKEN: &str = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI0YjY4NjgwZDI3MzVlYjdiMWVkNjIwZTQwZDNiMjYxMCIsIm5iZiI6MTY5MjE5NTc4Ny41MjQsInN1YiI6IjY0ZGNkYmNiMDAxYmJkMDQxYmY0NjhlOCIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.3kiXVao5QsftRTtLu2H5mfmO8K35tCtD0siaWdeCbTw";
-
 impl AppConfig {
     pub fn load() -> Result<Self> {
         let config_paths = [

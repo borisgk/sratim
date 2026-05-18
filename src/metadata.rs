@@ -142,14 +142,11 @@ pub async fn fetch_tmdb_metadata(
         .header("Accept", "application/json")
         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
-    let token = if !config.tmdb_access_token.is_empty() {
-        &config.tmdb_access_token
-    } else {
-        crate::models::DEFAULT_TMDB_ACCESS_TOKEN
-    };
-
-    if !token.is_empty() {
-        req = req.header("Authorization", format!("Bearer {}", token));
+    if !config.tmdb_access_token.is_empty() {
+        req = req.header(
+            "Authorization",
+            format!("Bearer {}", config.tmdb_access_token),
+        );
     }
 
     let resp = req.send().await.context("Failed to send TMDB request")?;
@@ -206,14 +203,11 @@ pub async fn fetch_tmdb_season_metadata(
         .header("Accept", "application/json")
         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
-    let token = if !config.tmdb_access_token.is_empty() {
-        &config.tmdb_access_token
-    } else {
-        crate::models::DEFAULT_TMDB_ACCESS_TOKEN
-    };
-
-    if !token.is_empty() {
-        req = req.header("Authorization", format!("Bearer {}", token));
+    if !config.tmdb_access_token.is_empty() {
+        req = req.header(
+            "Authorization",
+            format!("Bearer {}", config.tmdb_access_token),
+        );
     }
 
     let resp = req
@@ -267,14 +261,11 @@ pub async fn fetch_tmdb_episode_metadata(
         .header("Accept", "application/json")
         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
-    let token = if !config.tmdb_access_token.is_empty() {
-        &config.tmdb_access_token
-    } else {
-        crate::models::DEFAULT_TMDB_ACCESS_TOKEN
-    };
-
-    if !token.is_empty() {
-        req = req.header("Authorization", format!("Bearer {}", token));
+    if !config.tmdb_access_token.is_empty() {
+        req = req.header(
+            "Authorization",
+            format!("Bearer {}", config.tmdb_access_token),
+        );
     }
 
     let resp = req
