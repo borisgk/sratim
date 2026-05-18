@@ -43,12 +43,12 @@ A self-hosted, Rust-powered media streaming server (Hebrew for "Movies") — thi
 
 ## ⚠️ Known Issues / Tech Debt
 
-1. **Hardcoded JWT secret** — `JWT_SECRET` in `auth.rs` is a static byte string. Should come from an env var or config file.
-2. **TMDB token exposed in source** — `DEFAULT_TMDB_ACCESS_TOKEN` is committed in `models.rs` and duplicated in `config.toml`.
+1. ~~**Hardcoded JWT secret** — `JWT_SECRET` in `auth.rs` is a static byte string. Should come from an env var or config file.~~ ✅ Fixed: moved to `config.toml`.
+2. ~~**TMDB token exposed in source** — `DEFAULT_TMDB_ACCESS_TOKEN` is committed in `models.rs` and duplicated in `config.toml`.~~ ✅ Fixed: constant removed, `config.toml` is the sole source.
 3. **`scratch.rs`** — Leftover test/scratch file at the project root; should be removed.
-4. **Test artifacts committed** — `frontend/Movie's.mp4`, `cookies.txt`, and `tmdb_response.json` should be removed from the repo.
-5. **Dead `ffmpeg_process` field** — `ffmpeg_process: Arc<Mutex<Option<Child>>>` lives in `AppState` but is unused by the actual streaming path; should be removed.
-6. **Single `DbClient` connection** — Turso's `Connection` is held in a single non-`Send`-safe struct; concurrent writes could bottleneck under load.
+4. ~~**Test artifacts committed** — `frontend/Movie's.mp4`, `cookies.txt`, and `tmdb_response.json` should be removed from the repo.~~ ✅ Fixed: files deleted and patterns added to `.gitignore`.
+5. ~~**Dead `ffmpeg_process` field** — `ffmpeg_process: Arc<Mutex<Option<Child>>>` lives in `AppState` but is unused by the actual streaming path; should be removed.~~ ✅ Fixed: removed along with the dead `dash_temp_dir` field.
+6. ~~**Single `DbClient` connection** — Turso's `Connection` is held in a single non-`Send`-safe struct; concurrent writes could bottleneck under load.~~ ✅ Fixed: `DbClient` now holds only `Database`; each method opens a fresh short-lived connection.
 
 ---
 
@@ -56,10 +56,11 @@ A self-hosted, Rust-powered media streaming server (Hebrew for "Movies") — thi
 
 ### 🔧 Polish & Fixes (Low effort, high impact)
 
-- [ ] Move JWT secret and TMDB token to env vars / config only (security hardening)
-- [ ] Delete `scratch.rs`, `cookies.txt`, `tmdb_response.json` from the repo
-- [ ] Remove the unused `ffmpeg_process` field from `AppState`
-- [ ] Add `.gitignore` entries for runtime state files: `metadata.db`, `users.json`, `libraries.json`
+- [x] Move JWT secret and TMDB token to config only (security hardening)
+- [x] Delete `scratch.rs`, `cookies.txt`, `tmdb_response.json` from the repo
+- [x] Remove the unused `ffmpeg_process` and `dash_temp_dir` fields from `AppState`
+- [x] Add `.gitignore` entries for runtime state files: `metadata.db`, `users.json`, `libraries.json`
+- [ ] Remove `scratch.rs` from the repo
 
 ### 🎬 Feature: Watch History / Continue Watching
 
