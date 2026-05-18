@@ -99,6 +99,8 @@ impl AuthState {
 
 pub async fn login_handler(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     jar: CookieJar,
     Json(payload): Json<LoginPayload>,
 ) -> impl IntoResponse {
@@ -107,6 +109,13 @@ pub async fn login_handler(
     if let Some(user) = auth_map.get(&payload.username)
         && bcrypt::verify(&payload.password, &user.password_hash).unwrap_or(false)
     {
+        let ip = headers
+            .get("X-Forwarded-For")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| addr.ip().to_string());
+            
+        crate::logger::log_event(&format!("User '{}' logged in from IP {}", user.username, ip)).await;
         // Create JWT
         let expiration = chrono::Utc::now()
             .checked_add_signed(chrono::Duration::hours(24))

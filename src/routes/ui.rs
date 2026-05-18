@@ -525,21 +525,24 @@ pub async fn watch_handler(
         return Redirect::to("/login.html").into_response();
     }
     // Verify token:
-    let logged_in = if let Some(token) = jar.get(COOKIE_NAME) {
+    let claims = if let Some(token) = jar.get(COOKIE_NAME) {
         let validation = Validation::default();
         decode::<Claims>(
             token.value(),
             &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
             &validation,
         )
-        .is_ok()
+        .ok()
+        .map(|data| data.claims)
     } else {
-        false
+        None
     };
 
-    if !logged_in {
+    let Some(claims) = claims else {
         return Redirect::to("/login.html").into_response();
-    }
+    };
+
+    crate::logger::log_event(&format!("User '{}' started watching: {}", claims.sub, params.path)).await;
 
     // 2. Prepare Template
     let mut title = std::path::Path::new(&params.path)
