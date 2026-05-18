@@ -5,7 +5,6 @@ use axum::{
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, services::ServeDir, set_header::SetResponseHeaderLayer};
 
@@ -21,9 +20,6 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     let config = AppConfig::load().expect("Failed to load configuration");
-
-    let dash_temp_dir = std::env::temp_dir().join("sratim_dash");
-    std::fs::create_dir_all(&dash_temp_dir).expect("Failed to create dash temp directory");
 
     let auth_state = sratim::auth::AuthState::new().await;
 
@@ -50,8 +46,6 @@ async fn main() {
     let scanner = Arc::new(scanner);
 
     let shared_state = AppState {
-        dash_temp_dir,
-        ffmpeg_process: Arc::new(Mutex::new(None)),
         auth: auth_state,
         libraries: Arc::new(tokio::sync::RwLock::new(libraries)),
         config: config.clone(),

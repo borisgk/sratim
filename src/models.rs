@@ -3,8 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::process::Child;
-use tokio::sync::Mutex;
 
 // --- Config ---
 
@@ -93,8 +91,6 @@ impl AppConfig {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub dash_temp_dir: PathBuf,
-    pub ffmpeg_process: Arc<Mutex<Option<Child>>>,
     pub auth: crate::auth::AuthState,
     pub libraries: Arc<tokio::sync::RwLock<Vec<Library>>>,
     pub config: AppConfig,
