@@ -7,3 +7,7 @@ users.json
 .DS_Store
 .build_version
 metadata.db
+cookies.txt
+tmdb_response.json
+frontend/*.mp4
+frontend/*.mkv
