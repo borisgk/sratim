@@ -32,24 +32,24 @@ struct TmdbResult {
 }
 
 #[derive(Debug, Deserialize)]
-struct TmdbSeasonResponse {
-    id: u64,
-    name: String,
-    overview: String,
-    poster_path: Option<String>,
+pub struct TmdbSeasonResponse {
+    pub id: u64,
+    pub name: String,
+    pub overview: String,
+    pub poster_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct TmdbEpisodeResponse {
-    id: u64,
-    name: String,
-    overview: String,
-    still_path: Option<String>,
-    #[allow(dead_code)]
-    episode_number: u32,
-    #[allow(dead_code)]
-    season_number: u32,
+pub struct TmdbEpisodeResponse {
+    pub id: u64,
+    pub name: String,
+    pub overview: String,
+    pub still_path: Option<String>,
+    pub episode_number: u32,
+    pub season_number: u32,
 }
+
+
 
 pub async fn read_local_metadata(path: &Path, db: &crate::db::DbClient) -> Option<LocalMetadata> {
     if let Ok(Some(meta)) = db.get_metadata(&path.to_string_lossy()).await {
@@ -96,7 +96,7 @@ pub fn cleanup_filename(filename: &str) -> (String, Option<String>) {
     };
 
     // 2. Remove tags from the remaining base_name
-    let re = Regex::new(r"(?i)[\s\.]*(1080p|720p|4k|2160p|bluray|web-dl|webrip|remux|hdr|x264|x265|hevc|aac|ac3|dts|eng|sub|subs)[\s\.]*").unwrap();
+    let re = Regex::new(r"(?i)[\s\.]*(1080p|720p|4k|2160p|bluray|web-dl|webrip|hdtvrip|hdtv|rip|remux|hdr|x264|x265|hevc|aac|ac3|dts|eng|sub|subs)[\s\.]*").unwrap();
     let no_tags = re.replace_all(base_name, " ");
 
     // 3. Cleanup dots/underscores
@@ -181,54 +181,34 @@ pub async fn fetch_tmdb_metadata(
     }
 }
 
+
 pub async fn fetch_tmdb_season_metadata(
     config: &crate::models::AppConfig,
     tmdb_id: u64,
     season_number: u32,
 ) -> Result<Option<LocalMetadata>> {
-    let client = reqwest::Client::new();
     let url = format!(
         "{}/tv/{}/season/{}?language=en-US",
         config.tmdb_base_url, tmdb_id, season_number
     );
 
-    println!(
-        "[metadata] Fetching TMDB Season: Show={}, Season={}",
-        tmdb_id, season_number
-    );
-    println!("[metadata] Request URL: {}", url);
-
-    let mut req = client
-        .get(&url)
-        .header("Accept", "application/json")
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+    let client = reqwest::Client::new();
+    let mut req = client.get(&url)
+        .header("Accept", "application/json");
 
     if !config.tmdb_access_token.is_empty() {
-        req = req.header(
-            "Authorization",
-            format!("Bearer {}", config.tmdb_access_token),
-        );
+        req = req.header("Authorization", format!("Bearer {}", config.tmdb_access_token));
     }
 
-    let resp = req
-        .send()
-        .await
-        .context("Failed to send TMDB season request")?;
-
-    println!("[metadata] Response status: {}", resp.status());
-
+    let resp = req.send().await.context("Failed to fetch season metadata")?;
     if !resp.status().is_success() {
         if resp.status() == 404 {
             return Ok(None);
         }
-        let error_text = resp.text().await.unwrap_or_else(|_| "Unknown error".into());
-        println!("[metadata] API Error Body: {}", error_text);
-        return Err(anyhow::anyhow!("TMDB API Error"));
+        return Err(anyhow::anyhow!("TMDB API Error fetching season: {}", resp.status()));
     }
 
-    let season_res: TmdbSeasonResponse =
-        resp.json().await.context("Failed to parse TMDB response")?;
-
+    let season_res: TmdbSeasonResponse = resp.json().await.context("Failed to parse TMDB season")?;
     Ok(Some(LocalMetadata {
         title: season_res.name,
         overview: season_res.overview,
@@ -245,47 +225,32 @@ pub async fn fetch_tmdb_episode_metadata(
     season_number: u32,
     episode_number: u32,
 ) -> Result<Option<LocalMetadata>> {
-    let client = reqwest::Client::new();
     let url = format!(
         "{}/tv/{}/season/{}/episode/{}?language=en-US",
         config.tmdb_base_url, tmdb_id, season_number, episode_number
     );
 
-    println!(
-        "[metadata] Fetching TMDB Episode: Show={}, S{:02}E{:02}",
-        tmdb_id, season_number, episode_number
-    );
-
-    let mut req = client
-        .get(&url)
-        .header("Accept", "application/json")
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+    let client = reqwest::Client::new();
+    let mut req = client.get(&url)
+        .header("Accept", "application/json");
 
     if !config.tmdb_access_token.is_empty() {
-        req = req.header(
-            "Authorization",
-            format!("Bearer {}", config.tmdb_access_token),
-        );
+        req = req.header("Authorization", format!("Bearer {}", config.tmdb_access_token));
     }
 
-    let resp = req
-        .send()
-        .await
-        .context("Failed to send TMDB episode request")?;
-
+    let resp = req.send().await.context("Failed to fetch episode metadata")?;
     if !resp.status().is_success() {
         if resp.status() == 404 {
             return Ok(None);
         }
-        return Err(anyhow::anyhow!("TMDB API Error: {}", resp.status()));
+        return Err(anyhow::anyhow!("TMDB API Error fetching episode: {}", resp.status()));
     }
 
-    let ep_res: TmdbEpisodeResponse = resp.json().await.context("Failed to parse TMDB response")?;
-
+    let ep_res: TmdbEpisodeResponse = resp.json().await.context("Failed to parse TMDB episode")?;
     Ok(Some(LocalMetadata {
         title: ep_res.name,
         overview: ep_res.overview,
-        poster_path: ep_res.still_path, // Use still_path for episodes
+        poster_path: ep_res.still_path,
         tmdb_id: ep_res.id,
         episode_number: Some(ep_res.episode_number),
         added_at: None,
@@ -339,15 +304,9 @@ pub async fn process_file(
     let (cleaned_name, year) = cleanup_filename(&file_name);
 
     println!(
-        "[process_file] Processing: {} (cleaned: '{}', year: {:?}, is_tv: {})",
-        file_name, cleaned_name, year, is_tv
+        "[process_file] Processing: {} (cleaned: '{}', year: {:?})",
+        file_name, cleaned_name, year
     );
-
-    // 1. Fetch Metadata
-    // For now, only basic fetch (no season logic here yet, scanner skips season logic for now or we add it later)
-    // Actually, let's keep it simple: if is_tv is true, we treat it as a show search.
-    // NOTE: This basic processor doesn't handle the sophisticated season detection from video.rs yet.
-    // For "Movies" library, is_tv will be false.
 
     let best_match = fetch_tmdb_metadata(config, &cleaned_name, year.as_deref(), is_tv)
         .await

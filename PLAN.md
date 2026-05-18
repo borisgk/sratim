@@ -23,17 +23,17 @@ A self-hosted, Rust-powered media streaming server (Hebrew for "Movies") — thi
 | `metadata.rs` | TMDB API integration, poster downloads, filename cleanup | ✅ Done |
 | `routes/video.rs` | File listing, metadata probe, `/api/stream`, subtitles, lookup | ✅ Done |
 | `routes/library.rs` | Library CRUD, filesystem browser, content serving, rescan | ✅ Done |
-| `routes/ui.rs` | Full SSR rendering (index, player, TV mode, share handler) | ✅ Done |
+| `routes/ui.rs` | Full SSR rendering (index, player, share handler) | ✅ Done |
 | `streaming/process.rs` | FFmpeg spawning, keyframe probing, ProcessStream wrapper | ✅ Done |
 
 ### Frontend
 
 | Feature | Status |
 |---|---|
-| SSR templates (Askama) for index, player, TV index, TV player | ✅ Done |
+| SSR templates (Askama) for index, player | ✅ Done |
 | Custom MSE player with seeking, audio & subtitle track selection | ✅ Done |
 | Google Cast (Chromecast) support | ✅ Done |
-| TV remote-friendly interface (`tv.js`, `tv.css`) | ✅ Done |
+| TV remote-friendly interface | ❌ Removed (Moved to separate project) |
 | Shareable links (with token-based auth for guests) | ✅ Done |
 | Admin panel: users, libraries, rescan | ✅ Done |
 | Profile page (change password) | ✅ Done |
@@ -79,11 +79,9 @@ A self-hosted, Rust-powered media streaming server (Hebrew for "Movies") — thi
 - The `added_at` column already exists in the DB — no schema changes needed
 - Add a "Recently Added" section/row on the home page, driven by a `/api/recently-added` endpoint
 
-### 📺 TV UI Enhancements
+### 📺 TV UI (Removed)
 
-- The TV interface currently lacks the metadata lookup and share options available in the desktop UI
-- Improve focus/highlight animation on TV grid cards
-- Add a "Recently Added" row to the TV home screen
+- **Note**: The TV-specific frontend UI has been moved to a separate dedicated TV application. However, the backend still supports scanning and resolving metadata for TV Shows libraries.
 
 ### 🔐 Multi-user Improvements
 

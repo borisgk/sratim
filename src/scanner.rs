@@ -1,34 +1,19 @@
-use regex::Regex;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, sleep};
 
-use crate::metadata::{
-    download_image, fetch_tmdb_episode_metadata, fetch_tmdb_season_metadata, process_file,
-    read_local_metadata, save_local_metadata,
-};
+use crate::metadata::process_file;
 use crate::models::{AppConfig, Library, LibraryType};
 
 pub struct Scanner {
     tx: mpsc::Sender<ScanTask>,
-    config: AppConfig,
     db: std::sync::Arc<crate::db::DbClient>,
 }
 
 #[derive(Debug)]
 enum ScanTask {
     Movie(PathBuf),
-    Season {
-        path: PathBuf,
-        tmdb_id: u64,
-        season_num: u32,
-    },
-    Episode {
-        path: PathBuf,
-        tmdb_id: u64,
-        season_num: u32,
-        episode_num: u32,
-    },
+    TVShow(PathBuf),
 }
 
 impl Scanner {
@@ -54,78 +39,11 @@ impl Scanner {
                             eprintln!("[scanner] Error processing movie {:?}: {}", path, e);
                         }
                     }
-                    ScanTask::Season {
-                        path,
-                        tmdb_id,
-                        season_num,
-                    } => {
-                        println!(
-                            "[scanner] Worker processing Season: S{:02} (Show={})",
-                            season_num, tmdb_id
-                        );
-                        match fetch_tmdb_season_metadata(&worker_config, tmdb_id, season_num).await
+                    ScanTask::TVShow(path) => {
+                        println!("[scanner] Worker processing TV Show: {:?}", path.file_name());
+                        if let Err(e) = process_file(&path, &worker_config, true, &worker_db).await
                         {
-                            Ok(Some(meta)) => {
-                                if let Err(e) = save_local_metadata(&path, &meta, &worker_db).await
-                                {
-                                    eprintln!("[scanner] Failed to save season metadata: {}", e);
-                                } else {
-                                    if let Some(poster) = meta.poster_path {
-                                        let img_path = path.parent().unwrap().join(format!(
-                                            "{}.jpg",
-                                            path.file_name().unwrap().to_string_lossy()
-                                        ));
-                                        let _ = download_image(&worker_config, &poster, &img_path)
-                                            .await;
-                                    }
-                                }
-                            }
-                            Ok(None) => {
-                                println!("[scanner] No metadata found for Season {}", season_num)
-                            }
-                            Err(e) => eprintln!("[scanner] Error fetching season metadata: {}", e),
-                        }
-                    }
-                    ScanTask::Episode {
-                        path,
-                        tmdb_id,
-                        season_num,
-                        episode_num,
-                    } => {
-                        println!(
-                            "[scanner] Worker processing Episode: S{:02}E{:02} (Show={})",
-                            season_num, episode_num, tmdb_id
-                        );
-                        match fetch_tmdb_episode_metadata(
-                            &worker_config,
-                            tmdb_id,
-                            season_num,
-                            episode_num,
-                        )
-                        .await
-                        {
-                            Ok(Some(meta)) => {
-                                if let Err(e) = save_local_metadata(&path, &meta, &worker_db).await
-                                {
-                                    eprintln!("[scanner] Failed to save episode metadata: {}", e);
-                                } else {
-                                    if let Some(poster) = meta.poster_path {
-                                        // For episodes, image usually goes next to file too? Or no image?
-                                        // Let's download valid internal metadata. title="", poster=""
-                                        let img_path = path.parent().unwrap().join(format!(
-                                            "{}.jpg",
-                                            path.file_name().unwrap().to_string_lossy()
-                                        ));
-                                        let _ = download_image(&worker_config, &poster, &img_path)
-                                            .await;
-                                    }
-                                }
-                            }
-                            Ok(None) => println!(
-                                "[scanner] No metadata found for Episode S{:02}E{:02}",
-                                season_num, episode_num
-                            ),
-                            Err(e) => eprintln!("[scanner] Error fetching episode metadata: {}", e),
+                            eprintln!("[scanner] Error processing TV show {:?}: {}", path, e);
                         }
                     }
                 }
@@ -133,12 +51,11 @@ impl Scanner {
             println!("[scanner] Background worker stopped");
         });
 
-        (Self { tx, config, db }, worker_handle)
+        (Self { tx, db }, worker_handle)
     }
 
     pub async fn scan_library(&self, library: &Library) {
         let tx = self.tx.clone();
-        let config = self.config.clone(); // Clone config for the task
         let db = self.db.clone();
         let lib_path = library.path.clone();
         let lib_kind = library.kind.clone();
@@ -152,7 +69,7 @@ impl Scanner {
                     Self::scan_movies(lib_path.clone(), db.clone(), tx).await;
                 }
                 LibraryType::TVShows => {
-                    Self::scan_tv_shows(config, db.clone(), lib_path.clone(), tx).await;
+                    Self::scan_tv_shows(lib_path.clone(), db.clone(), tx).await;
                 }
                 _ => {
                     println!(
@@ -209,11 +126,26 @@ impl Scanner {
                     match lower_ext.as_str() {
                         "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "flv" | "wmv" => {
                             if !has_metadata(&path, &db).await {
+                                // Prioritize adding new movies to the UI immediately with a placeholder
+                                if super::metadata::read_local_metadata(&path, &db).await.is_none() {
+                                    let raw_stem = path.file_stem().unwrap_or_default().to_string_lossy();
+                                    let clean_title = super::metadata::cleanup_filename(&raw_stem);
+                                    let placeholder = super::metadata::LocalMetadata {
+                                        title: clean_title.0,
+                                        overview: String::new(),
+                                        poster_path: None,
+                                        tmdb_id: 0,
+                                        episode_number: None,
+                                        added_at: None,
+                                    };
+                                    let _ = db.save_metadata(&path.to_string_lossy(), &placeholder).await;
+                                }
+
                                 println!(
                                     "[scanner] Queueing missing metadata (Movie): {:?}",
                                     path.file_name()
                                 );
-                                if let Err(e) = tx.send(ScanTask::Movie(path)).await {
+                                if let Err(e) = tx.send(ScanTask::Movie(path.clone())).await {
                                     eprintln!("[scanner] Failed to queue item: {}", e);
                                     break;
                                 }
@@ -230,88 +162,12 @@ impl Scanner {
     }
 
     async fn scan_tv_shows(
-        config: AppConfig,
-        db: std::sync::Arc<crate::db::DbClient>,
         lib_path: PathBuf,
-        tx: mpsc::Sender<ScanTask>,
-    ) {
-        let mut entries = match tokio::fs::read_dir(&lib_path).await {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("[scanner] Failed to read TV dir {:?}: {}", lib_path, e);
-                return;
-            }
-        };
-
-        // Recursive scan but starting with Top-Level assumptions
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            // Yield per entry to be polite
-            tokio::task::yield_now().await;
-
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-
-            // This is a SHOW folder (Top Level)
-            // 1. Check if Show metadata exists
-            let tmdb_id;
-
-            if let Some(meta) = read_local_metadata(&path, &db).await {
-                // Metadata exists, use it
-                tmdb_id = Some(meta.tmdb_id);
-            } else {
-                println!(
-                    "[scanner] New TV Show detected: {:?}. Processing inline to enable deep scan...",
-                    path.file_name()
-                );
-                // Process inline to get ID immediately
-                // We default is_tv=true
-                match process_file(&path, &config, true, &db).await {
-                    Ok(Some(meta)) => {
-                        tmdb_id = Some(meta.tmdb_id);
-                        println!(
-                            "[scanner] Inline processing successful. ID: {}",
-                            meta.tmdb_id
-                        );
-                    }
-                    Ok(None) => {
-                        println!("[scanner] Inline processing failed to find match.");
-                        tmdb_id = None;
-                    }
-                    Err(e) => {
-                        eprintln!("[scanner] Inline processing error: {}", e);
-                        tmdb_id = None;
-                    }
-                }
-                // Sleep to throttle network usage since we just did a request
-                sleep(Duration::from_millis(500)).await;
-            }
-
-            let show_id = match tmdb_id {
-                Some(id) => id,
-                None => continue,
-            };
-
-            Self::scan_show_children(&path, show_id, db.clone(), tx.clone()).await;
-        }
-        println!("[scanner] Finished scanning TV Shows library");
-    }
-
-    async fn scan_show_children(
-        show_path: &Path,
-        show_id: u64,
         db: std::sync::Arc<crate::db::DbClient>,
         tx: mpsc::Sender<ScanTask>,
     ) {
-        println!(
-            "[scanner] Entering scan_show_children for {:?} (ID: {})",
-            show_path, show_id
-        );
-        let mut dirs = vec![show_path.to_path_buf()];
-
+        let mut dirs = vec![lib_path];
         while let Some(dir) = dirs.pop() {
-            println!("[scanner] Scanning directory: {:?}", dir);
             tokio::task::yield_now().await;
 
             let mut entries = match tokio::fs::read_dir(&dir).await {
@@ -324,82 +180,24 @@ impl Scanner {
 
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let path = entry.path();
-                // Throttle
-                sleep(Duration::from_millis(1)).await;
-
                 if path.is_dir() {
-                    // Check if Season folder
-                    let file_name = path.file_name().unwrap().to_string_lossy();
-                    let season_re = Regex::new(r"(?i)season\s*(\d+)|s(\d+)").unwrap();
-                    if let Some(caps) = season_re.captures(&file_name) {
-                        let s_num = caps
-                            .get(1)
-                            .or(caps.get(2))
-                            .unwrap()
-                            .as_str()
-                            .parse::<u32>()
-                            .unwrap();
-                        println!(
-                            "[scanner] Found Season folder: {:?} (Season {})",
-                            file_name, s_num
-                        );
-
-                        // Check metadata for Season Folder
-                        if !has_metadata(&path, &db).await {
-                            println!(
-                                "[scanner] Queueing missing metadata (Season {}): {:?}",
-                                s_num,
-                                path.file_name()
-                            );
-                            let _ = tx
-                                .send(ScanTask::Season {
-                                    path: path.clone(),
-                                    tmdb_id: show_id,
-                                    season_num: s_num,
-                                })
-                                .await;
-                            sleep(Duration::from_millis(10)).await;
-                        }
-                    }
-                    // Recurse
                     dirs.push(path);
                     continue;
                 }
 
-                // File: Check if Episode
+                sleep(Duration::from_millis(1)).await;
+
                 if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                    match ext.to_lowercase().as_str() {
+                    let lower_ext = ext.to_lowercase();
+                    match lower_ext.as_str() {
                         "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "flv" | "wmv" => {
                             if !has_metadata(&path, &db).await {
-                                // Try parse SxxExx
-                                let file_name = path.file_name().unwrap().to_string_lossy();
-                                // Loose regex to catch S01E01 or 1x01
-                                let ep_re = Regex::new(r"(?i)[sS](\d{1,2})[eE](\d{1,2})").unwrap();
-
-                                if let Some(caps) = ep_re.captures(&file_name) {
-                                    let s_num = caps[1].parse::<u32>().unwrap();
-                                    let e_num = caps[2].parse::<u32>().unwrap();
-                                    println!(
-                                        "[scanner] Found Episode file: {:?} (S{}E{})",
-                                        file_name, s_num, e_num
-                                    );
-
-                                    println!(
-                                        "[scanner] Queueing missing metadata (Episode S{:02}E{:02}): {:?}",
-                                        s_num,
-                                        e_num,
-                                        path.file_name()
-                                    );
-                                    let _ = tx
-                                        .send(ScanTask::Episode {
-                                            path: path.clone(),
-                                            tmdb_id: show_id,
-                                            season_num: s_num,
-                                            episode_num: e_num,
-                                        })
-                                        .await;
-                                    sleep(Duration::from_millis(10)).await;
+                                println!("[scanner] Queueing missing metadata (TV Show): {:?}", path.file_name());
+                                if let Err(e) = tx.send(ScanTask::TVShow(path)).await {
+                                    eprintln!("[scanner] Failed to queue item: {}", e);
+                                    break;
                                 }
+                                sleep(Duration::from_millis(10)).await;
                             }
                         }
                         _ => {}
@@ -407,6 +205,7 @@ impl Scanner {
                 }
             }
         }
+        println!("[scanner] Finished scanning TV Shows library");
     }
 }
 
@@ -424,10 +223,6 @@ async fn has_metadata(video_path: &Path, db: &crate::db::DbClient) -> bool {
 
     let jpg_path = parent.join(format!("{}.jpg", file_name));
 
-    // With the DB migration, we check if it is in the DB.
-    // If we want to be foolproof, we should also check if the image is valid. For now, checking DB is enough.
-    // The previous logic checked json_path.exists() && jpg_path.exists().
-    // `read_local_metadata` will automatically migrate JSON -> DB if it exists!
     if super::metadata::read_local_metadata(video_path, db)
         .await
         .is_some()

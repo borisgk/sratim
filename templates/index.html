@@ -48,7 +48,35 @@
         </nav>
 
         <main>
-            <div class="movies-grid">
+            {% if mode != "libraries" && current_library_type.as_deref() == Some("Movies") %}
+            <div class="search-container" style="margin-bottom: 2rem; display: flex; justify-content: center;">
+                <input type="text" id="movieSearch" placeholder="Search movies..." oninput="filterMovies()"
+                    style="width: 100%; max-width: 600px; padding: 12px 20px; border-radius: 20px; border: 1px solid #444; background: #222; color: white; font-size: 16px; outline: none; transition: border-color 0.3s;"
+                    onfocus="this.style.borderColor='#007BFF'" onblur="this.style.borderColor='#444'">
+            </div>
+
+            {% if !recent_files.is_empty() %}
+            <h2 id="recentHeader" style="margin-bottom: 1rem; padding-left: 0.5rem; border-left: 4px solid #007BFF;">Recently Added</h2>
+            <div class="movies-grid" id="recentGrid" style="margin-bottom: 3rem;">
+                {% for file in recent_files %}
+                <div class="movie-card"
+                    onclick="playVideo('{{ file.path_encoded }}', '{{ library_id.as_ref().unwrap() }}')">
+                    {% if file.poster_url.is_some() %}
+                    <img src="{{ file.poster_url.as_ref().unwrap() }}" alt="{{ file.display_name }}"
+                        class="movie-poster" loading="lazy">
+                    <div class="movie-overlay"></div>
+                    {% endif %}
+                    <div class="movie-icon" {% if file.poster_url.is_some() %}style="opacity:0" {% endif %}>🎬</div>
+                    <div class="movie-title">{{ file.display_name }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            
+            <h2 id="allMoviesHeader" style="margin-bottom: 1rem; padding-left: 0.5rem; border-left: 4px solid #007BFF;">All Movies</h2>
+            {% endif %}
+            {% endif %}
+
+            <div class="movies-grid" id="moviesGrid">
                 {% if mode == "libraries" %}
                 <!-- Libraries View -->
                 {% for lib in libraries %}
@@ -172,6 +200,43 @@
     </div>
 
     <script>
+        function filterMovies() {
+            const searchInput = document.getElementById('movieSearch');
+            if (!searchInput) return;
+            const filter = searchInput.value.toLowerCase();
+            const grid = document.getElementById('moviesGrid');
+            const cards = grid.getElementsByClassName('movie-card');
+
+            const recentGrid = document.getElementById('recentGrid');
+            const recentHeader = document.getElementById('recentHeader');
+            const allMoviesHeader = document.getElementById('allMoviesHeader');
+            
+            if (filter.length > 0) {
+                if (recentGrid) recentGrid.style.display = 'none';
+                if (recentHeader) recentHeader.style.display = 'none';
+                if (allMoviesHeader) allMoviesHeader.style.display = 'none';
+            } else {
+                if (recentGrid) recentGrid.style.display = '';
+                if (recentHeader) recentHeader.style.display = '';
+                if (allMoviesHeader) allMoviesHeader.style.display = '';
+            }
+
+            for (let i = 0; i < cards.length; i++) {
+                // Don't hide the back button folder
+                if (cards[i].classList.contains('back')) continue;
+                
+                const titleElement = cards[i].getElementsByClassName('movie-title')[0];
+                if (titleElement) {
+                    const txtValue = titleElement.textContent || titleElement.innerText;
+                    if (txtValue.toLowerCase().indexOf(filter) > -1) {
+                        cards[i].style.display = "";
+                    } else {
+                        cards[i].style.display = "none";
+                    }
+                }
+            }
+        }
+
         async function logout() {
             await fetch('/api/logout', { method: 'POST' });
             sessionStorage.clear(); // Clear any leftover

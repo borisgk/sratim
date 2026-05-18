@@ -79,6 +79,38 @@ impl DbClient {
         }
     }
 
+    pub async fn get_movies_for_library(&self, library_path: &str) -> Result<Vec<(String, LocalMetadata)>> {
+        let conn = self.db.connect().context("Failed to open db connection")?;
+        
+        let query_path = format!("{}%", library_path);
+        let mut stmt = conn
+            .prepare("SELECT path, title, overview, poster_path, tmdb_id, episode_number, added_at FROM metadata WHERE path LIKE ?1")
+            .await?;
+        let mut rows = stmt.query([query_path]).await?;
+
+        let mut movies = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let path: String = row.get(0)?;
+            let title: String = row.get(1)?;
+            let overview: String = row.get(2)?;
+            let poster_path: Option<String> = row.get(3).ok().flatten();
+            let tmdb_id: i64 = row.get(4)?;
+            let episode_number: Option<i64> = row.get(5).ok().flatten();
+            let added_at: Option<String> = row.get(6).ok().flatten();
+
+            movies.push((path, LocalMetadata {
+                title,
+                overview,
+                poster_path,
+                tmdb_id: tmdb_id as u64,
+                episode_number: episode_number.map(|e| e as u32),
+                added_at,
+            }));
+        }
+        
+        Ok(movies)
+    }
+
     pub async fn save_metadata(&self, path: &str, metadata: &LocalMetadata) -> Result<()> {
         let conn = self.db.connect().context("Failed to open db connection")?;
 

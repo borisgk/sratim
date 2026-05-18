@@ -10,7 +10,8 @@ use tokio_util::io::ReaderStream;
 
 use crate::metadata::{
     LocalMetadata, cleanup_filename, download_image, fetch_tmdb_metadata,
-    fetch_tmdb_season_metadata, read_local_metadata, save_local_metadata,
+    fetch_tmdb_season_metadata, fetch_tmdb_episode_metadata,
+    read_local_metadata, save_local_metadata,
 };
 use crate::models::{
     AppState, FileEntry, ListParams, LookupParams, MetadataParams, StreamParams, SubtitleParams,
@@ -347,13 +348,14 @@ pub async fn lookup_metadata(
     if !claims.is_admin {
         return (StatusCode::FORBIDDEN, "Admin access required").into_response();
     }
-    let Some(base_path) = get_base_path(&state, params.library_id.as_deref()).await else {
-        println!(
-            "[lookup_metadata] Library ID not found: {:?}",
-            params.library_id
-        );
-        return (StatusCode::NOT_FOUND, Json(None::<LocalMetadata>)).into_response();
+    
+    let libraries = state.libraries.read().await;
+    let lib = libraries.iter().find(|l| Some(l.id.as_str()) == params.library_id.as_deref());
+    let (base_path, is_tv) = match lib {
+        Some(l) => (l.path.clone(), l.kind == crate::models::LibraryType::TVShows),
+        None => return (StatusCode::NOT_FOUND, Json(None::<LocalMetadata>)).into_response(),
     };
+    drop(libraries);
     let abs_path = base_path.join(&decoded_path);
     if !abs_path.exists() {
         println!("[lookup_metadata] File path does not exist: {:?}", abs_path);
@@ -371,136 +373,68 @@ pub async fn lookup_metadata(
 
     let mut best_match = None;
 
-    // Check if we are in a TV library
-    let mut is_tv_library = false;
-    if let Some(lib_id) = &params.library_id {
-        let libraries = state.libraries.read().await;
-        if let Some(lib) = libraries.iter().find(|l| l.id == *lib_id) {
-            if lib.kind == crate::models::LibraryType::TVShows {
-                is_tv_library = true;
+    if is_tv {
+        let ep_re = Regex::new(r"(?i)s(\d{1,2})e(\d{1,2})").unwrap();
+        let season_re = Regex::new(r"(?i)season\s*(\d+)").unwrap();
+        let alt_ep_re = Regex::new(r"[\._\s-]([0-9]{2,3})[\._\s-]").unwrap();
+
+        if !is_dir {
+            let mut matched_season = None;
+            let mut matched_episode = None;
+            let mut show_name_from_file = None;
+
+            if let Some(caps) = ep_re.captures(&file_name) {
+                matched_season = Some(caps[1].parse().unwrap());
+                matched_episode = Some(caps[2].parse().unwrap());
+                show_name_from_file = Some(file_name[..caps.get(0).unwrap().start()].to_string());
+            } else if let Some(caps) = alt_ep_re.captures(&file_name) {
+                matched_season = Some(1); // Default to season 1 for simple episode numbering
+                matched_episode = Some(caps[1].parse().unwrap());
+                show_name_from_file = Some(file_name[..caps.get(0).unwrap().start()].to_string());
             }
-        }
-    }
 
-    // Heuristic fallback if library_id is missing/unknown (though it should be present)
-    if !is_tv_library && is_dir && decoded_path.contains("Shows/") {
-        is_tv_library = true;
-    }
+            if let (Some(season), Some(episode), Some(file_show)) = (matched_season, matched_episode, show_name_from_file) {
+                let parent_dir_name = abs_path.parent().unwrap().file_name().unwrap().to_string_lossy();
+                let parent_path = abs_path.parent().unwrap();
+                
+                let show_name = if parent_path == base_path.as_path() {
+                    file_show
+                } else if season_re.is_match(&parent_dir_name) {
+                    parent_path.parent().unwrap().file_name().unwrap().to_string_lossy().to_string()
+                } else {
+                    parent_dir_name.to_string()
+                };
+                
+                let (clean_show, show_year) = cleanup_filename(&show_name);
 
-    if is_tv_library && !is_dir {
-        // Try to parse SxxExx from filename
-        // Regex for SxxExx or SxEx
-        let episode_re = Regex::new(r"(?i)S(\d+)E(\d+)").unwrap();
-        if let Some(caps) = episode_re.captures(&file_name) {
-            let season_num = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok());
-            let episode_num = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok());
-
-            if let (Some(s), Some(e)) = (season_num, episode_num) {
-                println!("Detected Episode: S{}E{}", s, e);
-                // We need the parent Show's TMDB ID.
-                // Structure: Show/Season X/Episode.mkv or Show/Episode.mkv
-                // Traverse up to find a folder with metadata that has a TMDB ID and NO season number (or ideally, isn't a season itself, but the show root).
-                // Actually, just look for the first parent that has a TMDB ID.
-                // If it's a season folder, it might have a TMDB ID (season ID). We need the Show ID.
-                // Wait, `fetch_tmdb_season_metadata` returns a `LocalMetadata` with the `id` of the SEASON.
-                // But we store the show's ID in the Show folder.
-                // Logic:
-                // 1. Check parent (Season folder?). If it has metadata, check if it's a Season or Show.
-                //    Our `LocalMetadata` doesn't strictly distinguish, but usually Show folder has Name of Show.
-                //    If we find a parent with `tmdb_id`, we need to know if it's the Show ID.
-                //    A robust way: The Show folder is the one contained directly in the Library path?
-                //    Or, we can check if the metadata ID works as a show ID?
-                //    Correction: `probe_metadata` doesn't give TMDB ID. `read_local_metadata` does.
-                // let's try to find a parent that looks like a Show.
-                // Go up levels.
-                let mut current = abs_path.parent();
-                while let Some(p) = current {
-                    if p == base_path {
-                        break;
-                    } // Don't go above library root
-                    if let Some(meta) = read_local_metadata(p, &state.db).await {
-                        // Skip if this looks like a Season folder metadata (we want the Show)
-                        // Title "Season 1", "Season 02", "Specials", etc.
-                        let title_lower = meta.title.to_lowercase();
-                        let season_title_re = Regex::new(r"(?i)^season\s*\d+$").unwrap();
-
-                        if season_title_re.is_match(&meta.title) || title_lower == "specials" {
-                            println!(
-                                "Skipping likely Season metadata at {:?} (Title: '{}')",
-                                p, meta.title
-                            );
-                            current = p.parent();
-                            continue;
-                        }
-
-                        // We found some metadata.
-                        // Use this ID to try and fetch episode data.
-                        println!("Found local metadata at {:?} with ID {}", p, meta.tmdb_id);
-
-                        // Try to fetch episode with this ID
-                        if let Ok(Some(ep_meta)) = crate::metadata::fetch_tmdb_episode_metadata(
-                            &state.config,
-                            meta.tmdb_id,
-                            s,
-                            e,
-                        )
-                        .await
-                        {
-                            println!(
-                                "Successfully fetched episode metadata using parent ID {}",
-                                meta.tmdb_id
-                            );
-                            best_match = Some(ep_meta);
-                            break;
-                        }
+                if let Ok(Some(show_meta)) = fetch_tmdb_metadata(&state.config, &clean_show, show_year.as_deref(), true).await {
+                    if let Ok(Some(ep_meta)) = fetch_tmdb_episode_metadata(&state.config, show_meta.tmdb_id, season, episode).await {
+                        best_match = Some(ep_meta);
                     }
-                    current = p.parent();
+                }
+            }
+        } else {
+            if let Some(caps) = season_re.captures(&file_name) {
+                let season: u32 = caps[1].parse().unwrap();
+                let parent_dir_name = abs_path.parent().unwrap().file_name().unwrap().to_string_lossy();
+                let (clean_show, show_year) = cleanup_filename(&parent_dir_name);
+                
+                if let Ok(Some(show_meta)) = fetch_tmdb_metadata(&state.config, &clean_show, show_year.as_deref(), true).await {
+                    if let Ok(Some(season_meta)) = fetch_tmdb_season_metadata(&state.config, show_meta.tmdb_id, season).await {
+                        best_match = Some(season_meta);
+                    }
                 }
             }
         }
     }
 
-    // Detect Season Folder (existing logic, updated to use is_tv_library)
-    if best_match.is_none()
-        && is_tv_library
-        && is_dir
-        && (cleaned_name.to_lowercase().contains("season")
-            || cleaned_name.to_lowercase().starts_with("s") && cleaned_name.len() <= 4)
-    {
-        println!("Potential season folder detected: {}", cleaned_name);
-        // Try to extract season number
-        let season_re = Regex::new(r"(?i)season\s*(\d+)|s(\d+)").unwrap();
-        if let Some(caps) = season_re.captures(&cleaned_name) {
-            let season_num = caps
-                .get(1)
-                .or(caps.get(2))
-                .and_then(|m| m.as_str().parse::<u32>().ok());
-
-            if let Some(s_num) = season_num {
-                println!("Extracted season number: {}", s_num);
-                // We need parent show's TMDB ID.
-                if let Some(parent) = abs_path.parent()
-                    && let Some(parent_meta) = read_local_metadata(parent, &state.db).await
-                {
-                    println!("Found parent show TMDB ID: {}", parent_meta.tmdb_id);
-                    best_match =
-                        fetch_tmdb_season_metadata(&state.config, parent_meta.tmdb_id, s_num)
-                            .await
-                            .ok()
-                            .flatten();
-                }
-            }
-        }
-    }
-
-    // Fallback to regular movie/tv search if no match yet
     if best_match.is_none() {
         println!(
-            "Falling back to filename search. Cleaned='{}', Year={:?}, is_tv={}",
-            cleaned_name, year, is_tv_library
+            "Falling back to filename search. Cleaned='{}', Year={:?}",
+            cleaned_name, year
         );
         // 1. Search by filename with separated year
-        match fetch_tmdb_metadata(&state.config, &cleaned_name, year.as_deref(), is_tv_library)
+        match fetch_tmdb_metadata(&state.config, &cleaned_name, year.as_deref(), is_tv)
             .await
         {
             Ok(res) => {
@@ -528,7 +462,7 @@ pub async fn lookup_metadata(
                     &state.config,
                     &clean_int_title,
                     int_year.as_deref(),
-                    false,
+                    is_tv
                 )
                 .await
                 .ok()
