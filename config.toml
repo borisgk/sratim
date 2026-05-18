@@ -18,3 +18,7 @@ tmdb_access_token = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI0YjY4NjgwZDI3MzVlYjdiMWVkNj
 
 # External Server URL for share links (optional)
 external_server_url = "http://10.0.0.7:3000"
+
+# Secret key used to sign JWT session tokens.
+# IMPORTANT: Change this to a long, random string before deploying!
+jwt_secret = "change_me_in_production_use_a_long_random_string"

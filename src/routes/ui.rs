@@ -9,7 +9,7 @@ use jsonwebtoken::{DecodingKey, Validation, decode};
 use serde::Deserialize;
 
 use crate::{
-    auth::{COOKIE_NAME, Claims, JWT_SECRET},
+    auth::{COOKIE_NAME, Claims},
     metadata::read_local_metadata,
     models::AppState,
     routes::video::get_base_path,
@@ -85,7 +85,7 @@ pub async fn index_handler(
         let validation = Validation::default();
         if let Ok(data) = decode::<Claims>(
             token.value(),
-            &DecodingKey::from_secret(JWT_SECRET),
+            &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
             &validation,
         ) {
             data.claims
@@ -430,7 +430,7 @@ pub async fn watch_handler(
         let validation = Validation::default();
         decode::<Claims>(
             token.value(),
-            &DecodingKey::from_secret(JWT_SECRET),
+            &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
             &validation,
         )
         .is_ok()
@@ -485,7 +485,10 @@ pub async fn watch_handler(
         }
     }
 
-    let token = jar.get(COOKIE_NAME).map(|c| c.value().to_string()).unwrap_or_default();
+    let token = jar
+        .get(COOKIE_NAME)
+        .map(|c| c.value().to_string())
+        .unwrap_or_default();
 
     let template = PlayerTemplate {
         title,
@@ -516,7 +519,7 @@ pub async fn share_handler(
         let validation = Validation::default();
         decode::<Claims>(
             token.value(),
-            &DecodingKey::from_secret(JWT_SECRET),
+            &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
             &validation,
         )
         .is_ok()
@@ -564,11 +567,11 @@ pub async fn share_handler(
     let mut duration = 0.0;
     if let Some(base_path) = get_base_path(&state, Some(&params.library_id)).await {
         let abs_path = base_path.join(&params.path);
-        
+
         if let Ok(metadata) = tokio::fs::metadata(&abs_path).await {
             is_dir = metadata.is_dir();
         }
-        
+
         if let Some(meta) = read_local_metadata(&abs_path, &state.db).await {
             description = meta.overview;
             if !meta.title.is_empty() {
@@ -593,7 +596,10 @@ pub async fn share_handler(
         .into_response();
     }
 
-    let token = jar.get(COOKIE_NAME).map(|c| c.value().to_string()).unwrap_or_default();
+    let token = jar
+        .get(COOKIE_NAME)
+        .map(|c| c.value().to_string())
+        .unwrap_or_default();
 
     let template = PlayerTemplate {
         title,
@@ -646,7 +652,7 @@ pub async fn tv_index_handler(
         let validation = Validation::default();
         if let Ok(data) = decode::<Claims>(
             token.value(),
-            &DecodingKey::from_secret(JWT_SECRET),
+            &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
             &validation,
         ) {
             data.claims
@@ -663,7 +669,7 @@ pub async fn tv_index_handler(
     if let Some(lib_id) = &params.library_id {
         let path = params.path.clone().unwrap_or_default();
         let files = get_files_for_ui(&state, lib_id, &path).await;
-        
+
         let mut breadcrumbs = Vec::new();
         let libraries = state.libraries.read().await;
         let (lib_name, lib_type) = libraries
@@ -795,7 +801,7 @@ pub async fn tv_watch_handler(
         let validation = Validation::default();
         decode::<Claims>(
             token.value(),
-            &DecodingKey::from_secret(JWT_SECRET),
+            &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
             &validation,
         )
         .is_ok()
@@ -848,7 +854,10 @@ pub async fn tv_watch_handler(
         }
     }
 
-    let token = jar.get(COOKIE_NAME).map(|c| c.value().to_string()).unwrap_or_default();
+    let token = jar
+        .get(COOKIE_NAME)
+        .map(|c| c.value().to_string())
+        .unwrap_or_default();
 
     let template = TvPlayerTemplate {
         title,

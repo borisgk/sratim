@@ -1,12 +1,11 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
-use turso::{Builder, Connection, Database};
+use turso::{Builder, Database};
 
 use crate::metadata::LocalMetadata;
 
 pub struct DbClient {
     pub db: Database,
-    pub conn: Connection,
 }
 
 impl DbClient {
@@ -23,9 +22,12 @@ impl DbClient {
             .await
             .context("Failed to build local db")?;
 
-        let conn = db.connect().context("Failed to connect to local db")?;
+        let client = Self { db };
 
-        let client = Self { db, conn };
+        let conn = client
+            .db
+            .connect()
+            .context("Failed to connect to local db")?;
 
         let migration = "
         CREATE TABLE IF NOT EXISTS metadata (
@@ -38,15 +40,12 @@ impl DbClient {
             added_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         ";
-        client
-            .conn
-            .execute(migration, ())
+        conn.execute(migration, ())
             .await
             .context("Failed to run metadata table migration")?;
 
         // Add column if migrating from previous DB version
-        let _ = client
-            .conn
+        let _ = conn
             .execute("ALTER TABLE metadata ADD COLUMN added_at DATETIME", ())
             .await;
 
@@ -54,7 +53,9 @@ impl DbClient {
     }
 
     pub async fn get_metadata(&self, path: &str) -> Result<Option<LocalMetadata>> {
-        let mut stmt = self.conn.prepare("SELECT title, overview, poster_path, tmdb_id, episode_number, added_at FROM metadata WHERE path = ?1").await?;
+        let conn = self.db.connect().context("Failed to open db connection")?;
+
+        let mut stmt = conn.prepare("SELECT title, overview, poster_path, tmdb_id, episode_number, added_at FROM metadata WHERE path = ?1").await?;
         let mut rows = stmt.query([path]).await?;
 
         if let Some(row) = rows.next().await? {
@@ -79,8 +80,9 @@ impl DbClient {
     }
 
     pub async fn save_metadata(&self, path: &str, metadata: &LocalMetadata) -> Result<()> {
-        let mut stmt = self
-            .conn
+        let conn = self.db.connect().context("Failed to open db connection")?;
+
+        let mut stmt = conn
             .prepare(
                 "
             INSERT INTO metadata (path, title, overview, poster_path, tmdb_id, episode_number, added_at)
@@ -95,25 +97,14 @@ impl DbClient {
             )
             .await?;
 
-        let poster_path_val = match &metadata.poster_path {
-            Some(p) => p.clone(),
-            None => "".to_string(), // we can handle null if we use Option, but we can also just use empty
-        };
-        let episode_val = match metadata.episode_number {
-            Some(e) => e as i64,
-            None => -1, // representing null instead
+        let poster_val = match &metadata.poster_path {
+            Some(p) if !p.is_empty() => turso::Value::Text(p.clone()),
+            _ => turso::Value::Null,
         };
 
-        // Actually it's cleaner to handle option manually with turso::params!
-        let poster_val = if poster_path_val.is_empty() {
-            turso::Value::Null
-        } else {
-            turso::Value::Text(poster_path_val)
-        };
-        let episode_val2 = if episode_val == -1 {
-            turso::Value::Null
-        } else {
-            turso::Value::Integer(episode_val)
+        let episode_val = match metadata.episode_number {
+            Some(e) => turso::Value::Integer(e as i64),
+            None => turso::Value::Null,
         };
 
         stmt.execute(turso::params![
@@ -122,7 +113,7 @@ impl DbClient {
             metadata.overview.clone(),
             poster_val,
             turso::Value::Integer(metadata.tmdb_id as i64),
-            episode_val2
+            episode_val
         ])
         .await?;
 
@@ -130,9 +121,10 @@ impl DbClient {
     }
 
     pub async fn clean_orphaned_metadata(&self, library_path: &str) -> Result<()> {
+        let conn = self.db.connect().context("Failed to open db connection")?;
+
         let query_path = format!("{}%", library_path);
-        let mut stmt = self
-            .conn
+        let mut stmt = conn
             .prepare("SELECT path FROM metadata WHERE path LIKE ?1")
             .await?;
         let mut rows = stmt.query([query_path]).await?;
@@ -145,10 +137,14 @@ impl DbClient {
             }
         }
 
+        // Drop the read statement before opening write statements
+        drop(rows);
+        drop(stmt);
+
         for p in to_delete {
             println!("[db] Removing orphaned metadata for missing file: {}", p);
-            let mut del_stmt = self
-                .conn
+            let del_conn = self.db.connect().context("Failed to open db connection")?;
+            let mut del_stmt = del_conn
                 .prepare("DELETE FROM metadata WHERE path = ?1")
                 .await?;
             del_stmt.execute([p]).await?;

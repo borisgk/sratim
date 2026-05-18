@@ -122,7 +122,10 @@ async fn main() {
             "/api/fs/browse",
             get(sratim::routes::library::browse_filesystem),
         )
-        .layer(axum::middleware::from_fn(sratim::auth::auth_middleware));
+        .layer(axum::middleware::from_fn_with_state(
+            shared_state.clone(),
+            sratim::auth::auth_middleware,
+        ));
 
     let app = Router::new()
         .merge(protected_routes)

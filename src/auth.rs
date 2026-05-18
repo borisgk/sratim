@@ -1,8 +1,8 @@
 use axum::{
     Json,
     body::Body,
-    extract::State,
-    http::{Request, StatusCode},
+    extract::{Request, State},
+    http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -17,7 +17,6 @@ use tokio::sync::RwLock;
 use crate::models::AppState;
 
 const USERS_FILE: &str = "users.json";
-pub const JWT_SECRET: &[u8] = b"secret_key_change_me_in_prod"; // In real app, use env var
 pub const COOKIE_NAME: &str = "session";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -123,7 +122,7 @@ pub async fn login_handler(
         let token = encode(
             &Header::default(),
             &claims,
-            &EncodingKey::from_secret(JWT_SECRET),
+            &EncodingKey::from_secret(state.config.jwt_secret.as_bytes()),
         )
         .unwrap();
 
@@ -142,7 +141,12 @@ pub async fn login_handler(
     (StatusCode::UNAUTHORIZED, "Invalid credentials").into_response()
 }
 
-pub async fn auth_middleware(jar: CookieJar, mut req: Request<Body>, next: Next) -> Response {
+pub async fn auth_middleware(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    mut req: Request<Body>,
+    next: Next,
+) -> Response {
     let token_val = if let Some(token) = jar.get(COOKIE_NAME) {
         Some(token.value().to_string())
     } else {
@@ -156,7 +160,7 @@ pub async fn auth_middleware(jar: CookieJar, mut req: Request<Body>, next: Next)
         let validation = Validation::default();
         if let Ok(data) = decode::<Claims>(
             &token,
-            &DecodingKey::from_secret(JWT_SECRET),
+            &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
             &validation,
         ) {
             req.extensions_mut().insert(data.claims);
@@ -182,12 +186,12 @@ pub async fn logout_handler(jar: CookieJar) -> impl IntoResponse {
     response
 }
 
-pub async fn me_handler(jar: CookieJar) -> impl IntoResponse {
+pub async fn me_handler(State(state): State<AppState>, jar: CookieJar) -> impl IntoResponse {
     if let Some(token) = jar.get(COOKIE_NAME) {
         let validation = Validation::default();
         if let Ok(data) = decode::<Claims>(
             token.value(),
-            &DecodingKey::from_secret(JWT_SECRET),
+            &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
             &validation,
         ) {
             return Json(User {
@@ -216,7 +220,7 @@ pub async fn change_password_handler(
         let validation = Validation::default();
         if let Ok(data) = decode::<Claims>(
             token.value(),
-            &DecodingKey::from_secret(JWT_SECRET),
+            &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
             &validation,
         ) {
             data.claims.sub
