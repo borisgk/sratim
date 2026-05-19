@@ -49,8 +49,6 @@ service-restart:
 	@echo "🔧 Installing service and restarting..."
 	$(SSH) "$(HOST)" " \
 		set -e; \
-		echo '🧹 Cleaning up old static frontend and templates from host...'; \
-		rm -rf $(OLD_REMOTE_DIR)/frontend $(OLD_REMOTE_DIR)/templates; \
 		echo '🚚 Migrating data to $(REMOTE_VAR_DIR) if present in $(OLD_REMOTE_DIR)...'; \
 		if ls $(OLD_REMOTE_DIR)/*.json 1> /dev/null 2>&1; then mv -n $(OLD_REMOTE_DIR)/*.json $(REMOTE_VAR_DIR)/ || true; fi; \
 		if ls $(OLD_REMOTE_DIR)/*.db 1> /dev/null 2>&1; then mv -n $(OLD_REMOTE_DIR)/*.db $(REMOTE_VAR_DIR)/ || true; fi; \
