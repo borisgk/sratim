@@ -1,18 +1,78 @@
 use axum::{
     Router,
-    http::{HeaderValue, header},
+    extract::State,
+    response::IntoResponse,
     routing::get,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tower::ServiceBuilder;
-use tower_http::{cors::CorsLayer, services::ServeDir, set_header::SetResponseHeaderLayer};
+use tower_http::cors::CorsLayer;
 
 use sratim::models::{AppConfig, AppState};
 use sratim::routes::video;
 
 async fn debug_hash_handler(axum::extract::Path(password): axum::extract::Path<String>) -> String {
     bcrypt::hash(password, bcrypt::DEFAULT_COST).unwrap()
+}
+
+async fn fallback_handler(
+    uri: axum::http::Uri,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let mut path_str = uri.path().trim_start_matches('/').to_string();
+    if path_str.is_empty() {
+        path_str = "index.html".to_string();
+    }
+
+    // 1. Try to serve from local filesystem if the folder exists and is a file
+    let local_path = state.config.frontend_dir.join(&path_str);
+    if local_path.is_file() {
+        if let Ok(content) = tokio::fs::read(&local_path).await {
+            let mime = mime_guess::from_path(&local_path).first_or_octet_stream();
+            return (
+                axum::http::StatusCode::OK,
+                [
+                    (axum::http::header::CONTENT_TYPE, mime.as_ref()),
+                    (
+                        axum::http::header::CACHE_CONTROL,
+                        "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+                    ),
+                ],
+                content,
+            )
+                .into_response();
+        }
+    }
+
+    // 2. Try to serve from embedded assets
+    if let Some(embedded_file) = sratim::assets::Assets::get(&path_str) {
+        let mime = mime_guess::from_path(&path_str).first_or_octet_stream();
+        return (
+            axum::http::StatusCode::OK,
+            [
+                (axum::http::header::CONTENT_TYPE, mime.as_ref()),
+                (
+                    axum::http::header::CACHE_CONTROL,
+                    "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+                ),
+            ],
+            embedded_file.data.into_owned(),
+        )
+            .into_response();
+    }
+
+    // 3. Fallback to 404 Not Found
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        [
+            (
+                axum::http::header::CACHE_CONTROL,
+                "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+            ),
+        ],
+        "Not Found",
+    )
+        .into_response()
 }
 
 #[tokio::main]
@@ -141,16 +201,7 @@ async fn main() {
             "/api/logout",
             axum::routing::post(sratim::auth::logout_handler),
         )
-        .fallback_service(
-            ServiceBuilder::new()
-                .layer(SetResponseHeaderLayer::overriding(
-                    header::CACHE_CONTROL,
-                    HeaderValue::from_static(
-                        "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
-                    ),
-                ))
-                .service(ServeDir::new(&config.frontend_dir)),
-        )
+        .fallback(fallback_handler)
         .layer(CorsLayer::permissive())
         .with_state(shared_state);
 

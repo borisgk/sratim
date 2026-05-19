@@ -185,7 +185,7 @@ pub async fn index_handler(
             library_id: Some(lib_id.clone()),
             parent_link,
             current_library_type: lib_type,
-            build_number: env!("BUILD_NUMBER").to_string(),
+            build_number: format!("v{}", env!("CARGO_PKG_VERSION")),
             external_server_url: state.config.external_server_url.clone(),
         };
         return template.into_response();
@@ -220,7 +220,7 @@ pub async fn index_handler(
             library_id: None,
             parent_link: None,
             current_library_type: None,
-            build_number: env!("BUILD_NUMBER").to_string(),
+            build_number: format!("v{}", env!("CARGO_PKG_VERSION")),
             external_server_url: state.config.external_server_url.clone(),
         };
         return template.into_response();
