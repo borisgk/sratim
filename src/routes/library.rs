@@ -57,8 +57,9 @@ pub async fn create_library(
     libraries.push(library);
 
     // Persist
+    let libraries_file = state.config.data_dir.join(LIBRARIES_FILE);
     if let Ok(content) = serde_json::to_string_pretty(&*libraries) {
-        let _ = tokio::fs::write(LIBRARIES_FILE, content).await;
+        let _ = tokio::fs::write(libraries_file, content).await;
     }
 
     StatusCode::CREATED.into_response()
@@ -88,8 +89,9 @@ pub async fn update_library(
         lib.kind = payload.kind;
 
         // Persist
+        let libraries_file = state.config.data_dir.join(LIBRARIES_FILE);
         if let Ok(content) = serde_json::to_string_pretty(&*libraries) {
-            let _ = tokio::fs::write(LIBRARIES_FILE, content).await;
+            let _ = tokio::fs::write(libraries_file, content).await;
         }
 
         return StatusCode::OK.into_response();
@@ -112,8 +114,9 @@ pub async fn delete_library(
         libraries.remove(pos);
 
         // Persist
+        let libraries_file = state.config.data_dir.join(LIBRARIES_FILE);
         if let Ok(content) = serde_json::to_string_pretty(&*libraries) {
-            let _ = tokio::fs::write(LIBRARIES_FILE, content).await;
+            let _ = tokio::fs::write(libraries_file, content).await;
         }
 
         return StatusCode::OK.into_response();

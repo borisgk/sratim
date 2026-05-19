@@ -43,20 +43,23 @@ pub struct Claims {
 #[derive(Clone)]
 pub struct AuthState {
     pub users: Arc<RwLock<HashMap<String, User>>>,
+    pub data_dir: std::path::PathBuf,
 }
 
 impl AuthState {
-    pub async fn new() -> Self {
+    pub async fn new(data_dir: std::path::PathBuf) -> Self {
         let users = Arc::new(RwLock::new(HashMap::new()));
         let state = Self {
             users: users.clone(),
+            data_dir,
         };
         state.load_or_create_default().await;
         state
     }
 
     async fn load_or_create_default(&self) {
-        if let Ok(content) = tokio::fs::read_to_string(USERS_FILE).await
+        let users_file = self.data_dir.join(USERS_FILE);
+        if let Ok(content) = tokio::fs::read_to_string(&users_file).await
             && let Ok(loaded_users) = serde_json::from_str::<Vec<User>>(&content)
         {
             let mut map = self.users.write().await;
@@ -67,7 +70,7 @@ impl AuthState {
                 }
                 map.insert(user.username.clone(), user);
             }
-            println!("Loaded {} users from {}", map.len(), USERS_FILE);
+            println!("Loaded {} users from {:?}", map.len(), users_file);
             return;
         }
 
@@ -92,7 +95,7 @@ impl AuthState {
         let map = self.users.read().await;
         let users: Vec<User> = map.values().cloned().collect();
         if let Ok(content) = serde_json::to_string_pretty(&users) {
-            let _ = tokio::fs::write(USERS_FILE, content).await;
+            let _ = tokio::fs::write(self.data_dir.join(USERS_FILE), content).await;
         }
     }
 }
@@ -253,7 +256,7 @@ pub async fn change_password_handler(
                 // Manual save logic since we hold the write lock
                 let all_users: Vec<User> = users.values().cloned().collect();
                 if let Ok(content) = serde_json::to_string_pretty(&all_users) {
-                    let _ = tokio::fs::write(USERS_FILE, content).await;
+                    let _ = tokio::fs::write(state.auth.data_dir.join(USERS_FILE), content).await;
                 }
 
                 return Json("Password changed successfully").into_response();
@@ -316,7 +319,7 @@ pub async fn create_user_handler(
             // Manual save logic
             let all_users: Vec<User> = users.values().cloned().collect();
             if let Ok(content) = serde_json::to_string_pretty(&all_users) {
-                let _ = tokio::fs::write(USERS_FILE, content).await;
+                let _ = tokio::fs::write(state.auth.data_dir.join(USERS_FILE), content).await;
             }
 
             Json("User created").into_response()
@@ -335,7 +338,7 @@ pub async fn delete_user_handler(
         // Manual save logic
         let all_users: Vec<User> = users.values().cloned().collect();
         if let Ok(content) = serde_json::to_string_pretty(&all_users) {
-            let _ = tokio::fs::write(USERS_FILE, content).await;
+            let _ = tokio::fs::write(state.auth.data_dir.join(USERS_FILE), content).await;
         }
         return Json("User deleted").into_response();
     }
@@ -358,7 +361,7 @@ pub async fn admin_change_password_handler(
                     // Manual save logic
                     let all_users: Vec<User> = users.values().cloned().collect();
                     if let Ok(content) = serde_json::to_string_pretty(&all_users) {
-                        let _ = tokio::fs::write(USERS_FILE, content).await;
+                        let _ = tokio::fs::write(state.auth.data_dir.join(USERS_FILE), content).await;
                     }
                     return Json("Password updated").into_response();
                 }

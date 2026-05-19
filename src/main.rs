@@ -81,21 +81,25 @@ async fn main() {
 
     let config = AppConfig::load().expect("Failed to load configuration");
 
-    let auth_state = sratim::auth::AuthState::new().await;
+    // Ensure data directory exists
+    if !config.data_dir.exists() {
+        tokio::fs::create_dir_all(&config.data_dir)
+            .await
+            .expect("Failed to create data directory");
+    }
+
+    let auth_state = sratim::auth::AuthState::new(config.data_dir.clone()).await;
 
     // Load libraries
-    let libraries_file = "libraries.json";
-    let libraries = if let Ok(content) = tokio::fs::read_to_string(libraries_file).await {
+    let libraries_file = config.data_dir.join("libraries.json");
+    let libraries = if let Ok(content) = tokio::fs::read_to_string(&libraries_file).await {
         serde_json::from_str::<Vec<sratim::models::Library>>(&content).unwrap_or_default()
     } else {
         Vec::new()
     };
 
     // --- Database ---
-
-    // Wait, the metadata DB should probably be persistent! Let's put it next to libraries.json or in the config dir
-    // Let's use `std::env::current_dir().unwrap().join("metadata.db")` for now.
-    let db_path = std::env::current_dir().unwrap().join("metadata.db");
+    let db_path = config.data_dir.join("metadata.db");
     let db = sratim::db::DbClient::init(db_path)
         .await
         .expect("Failed to initialize database");

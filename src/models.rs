@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 // --- Config ---
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AppConfig {
     #[serde(default = "default_frontend_dir")]
     pub frontend_dir: PathBuf,
@@ -24,6 +24,8 @@ pub struct AppConfig {
     pub external_server_url: Option<String>,
     #[serde(default = "default_jwt_secret")]
     pub jwt_secret: String,
+    #[serde(default = "default_data_dir")]
+    pub data_dir: PathBuf,
 }
 
 fn default_frontend_dir() -> PathBuf {
@@ -36,6 +38,14 @@ fn default_port() -> u16 {
 
 fn default_host() -> String {
     "0.0.0.0".to_string()
+}
+
+fn default_data_dir() -> PathBuf {
+    if PathBuf::from("/var/lib/sratim").is_dir() {
+        PathBuf::from("/var/lib/sratim")
+    } else {
+        PathBuf::from(".")
+    }
 }
 
 fn default_tmdb_base_url() -> String {
@@ -54,8 +64,8 @@ impl AppConfig {
     pub fn load() -> Result<Self> {
         let config_paths = [
             PathBuf::from("config.toml"),
-            PathBuf::from("/usr/local/etc/sratim/config.toml"),
             PathBuf::from("/etc/sratim/config.toml"),
+            PathBuf::from("/usr/local/etc/sratim/config.toml"),
         ];
 
         for path in &config_paths {
@@ -70,7 +80,33 @@ impl AppConfig {
         }
 
         println!("No config file found, using default settings.");
-        Ok(Self::default_settings())
+        let default_config = Self::default_settings();
+
+        // Determine where to write the default configuration
+        let target_path = if PathBuf::from("/etc/sratim").is_dir() {
+            PathBuf::from("/etc/sratim/config.toml")
+        } else if PathBuf::from("/usr/local/etc/sratim").is_dir() {
+            PathBuf::from("/usr/local/etc/sratim/config.toml")
+        } else {
+            PathBuf::from("config.toml")
+        };
+
+        println!("Creating a new default configuration at: {:?}", target_path);
+        let toml_string = toml::to_string_pretty(&default_config)
+            .context("Failed to serialize default configuration")?;
+
+        // Ensure parent directory exists
+        if let Some(parent) = target_path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+            }
+        }
+
+        fs::write(&target_path, toml_string)
+            .with_context(|| format!("Failed to write default configuration to {:?}", target_path))?;
+
+        Ok(default_config)
     }
 
     fn default_settings() -> Self {
@@ -83,6 +119,7 @@ impl AppConfig {
             tmdb_access_token: String::new(),
             external_server_url: None,
             jwt_secret: default_jwt_secret(),
+            data_dir: default_data_dir(),
         }
     }
 }
