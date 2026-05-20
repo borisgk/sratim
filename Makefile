@@ -21,13 +21,13 @@ REMOTE_TARGET = x86_64-unknown-linux-gnu
 LOCAL_BINARY = target/$(LOCAL_TARGET)/release/sratim
 REMOTE_BINARY = target/$(REMOTE_TARGET)/release/sratim
 
-.PHONY: all bump-version build-local build-remote test-local deploy-local install-local deploy-remote upload service-restart deploy-all clean
+.PHONY: all build-local build-remote test-local deploy-local install-local deploy-remote upload service-restart deploy-all clean
 
 # Default to deploying the local demo version
 all: deploy-local
 
-# Extract, increment, and update patch version in Cargo.toml
-bump-version:
+# Sentinel target: Increments the patch version exactly once per make invocation
+.bumped: Cargo.toml
 	@echo "🏷️ Incrementing version in Cargo.toml..."
 	@VERSION=$$(grep -E "^version =" Cargo.toml | head -n 1 | cut -d'"' -f2); \
 	IFS='.' read -r major minor patch <<< "$$VERSION"; \
@@ -35,6 +35,7 @@ bump-version:
 	NEW_VERSION="$$major.$$minor.$$NEW_PATCH"; \
 	sed -i "s/^version = \"$$VERSION\"/version = \"$$NEW_VERSION\"/" Cargo.toml; \
 	echo "🚀 Version bumped from $$VERSION to $$NEW_VERSION"
+	@touch .bumped
 
 # Run tests natively on the dev server
 test-local:
@@ -42,13 +43,13 @@ test-local:
 	cargo test --target $(LOCAL_TARGET)
 
 # Compile native release binary for the dev server (aarch64)
-build-local: bump-version test-local
+build-local: .bumped test-local
 	@echo "🔨 Building native release binary for $(LOCAL_TARGET)..."
 	cargo build --release --target $(LOCAL_TARGET)
 	@echo "✅ Native build complete: $(LOCAL_BINARY)"
 
 # Compile cross-compiled release binary for production (x86_64)
-build-remote: bump-version test-local
+build-remote: .bumped test-local
 	@echo "🔨 Building cross-compiled release binary for $(REMOTE_TARGET)..."
 	cargo build --release --target $(REMOTE_TARGET)
 	@echo "✅ Cross-compilation complete: $(REMOTE_BINARY)"
@@ -58,6 +59,7 @@ build-remote: bump-version test-local
 # ==========================================
 
 deploy-local: install-local
+	@rm -f .bumped
 	@echo "🚀 Local FHS deployment and service restart complete!"
 
 install-local: build-local
@@ -66,6 +68,8 @@ install-local: build-local
 	sudo mkdir -p $(REMOTE_BIN_DIR) $(REMOTE_ETC_DIR) $(REMOTE_VAR_DIR)
 	# Grant ownership to 'borisk' user locally
 	sudo chown -R borisk:borisk $(REMOTE_BIN_DIR) $(REMOTE_ETC_DIR) $(REMOTE_VAR_DIR)
+	# Stop the local service first to avoid "Text file busy"
+	sudo systemctl stop sratim || true
 	# Copy native ARM64 binary and service file
 	sudo cp $(LOCAL_BINARY) $(REMOTE_BIN_DIR)/sratim
 	sudo cp sratim.service /etc/systemd/system/sratim.service
@@ -81,6 +85,7 @@ install-local: build-local
 # ==========================================
 
 deploy-remote: upload service-restart
+	@rm -f .bumped
 	@echo "🚀 Remote production deployment and service restart complete!"
 
 upload: build-remote
@@ -108,8 +113,13 @@ service-restart:
 # 🌐 Double-Deployment Master Workflow
 # ==========================================
 
-deploy-all: deploy-local deploy-remote
+deploy-all:
+	@echo "🏁 Starting unified double-deployment..."
+	$(MAKE) build-local build-remote
+	$(MAKE) install-local upload service-restart
+	@rm -f .bumped
 	@echo "🚀 Double deployment successful: Local Demo & Remote Production updated!"
 
 clean:
 	cargo clean
+	rm -f .bumped
