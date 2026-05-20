@@ -43,13 +43,13 @@ test-local:
 	cargo test --target $(LOCAL_TARGET)
 
 # Compile native release binary for the dev server (aarch64)
-build-local: .bumped test-local
+build-local: .bumped
 	@echo "🔨 Building native release binary for $(LOCAL_TARGET)..."
 	cargo build --release --target $(LOCAL_TARGET)
 	@echo "✅ Native build complete: $(LOCAL_BINARY)"
 
 # Compile cross-compiled release binary for production (x86_64)
-build-remote: .bumped test-local
+build-remote: .bumped
 	@echo "🔨 Building cross-compiled release binary for $(REMOTE_TARGET)..."
 	cargo build --release --target $(REMOTE_TARGET)
 	@echo "✅ Cross-compilation complete: $(REMOTE_BINARY)"
@@ -58,7 +58,7 @@ build-remote: .bumped test-local
 # 🏠 Local Demo Deployment Workflow (aarch64)
 # ==========================================
 
-deploy-local: install-local
+deploy-local: test-local install-local
 	@rm -f .bumped
 	@echo "🚀 Local FHS deployment and service restart complete!"
 
@@ -84,7 +84,7 @@ install-local: build-local
 # ☁️ Remote Production Deployment Workflow (x86_64)
 # ==========================================
 
-deploy-remote: upload service-restart
+deploy-remote: test-local upload service-restart
 	@rm -f .bumped
 	@echo "🚀 Remote production deployment and service restart complete!"
 
@@ -115,7 +115,7 @@ service-restart:
 
 deploy-all:
 	@echo "🏁 Starting unified double-deployment..."
-	$(MAKE) build-local build-remote
+	$(MAKE) test-local build-local build-remote
 	$(MAKE) install-local upload service-restart
 	@rm -f .bumped
 	@echo "🚀 Double deployment successful: Local Demo & Remote Production updated!"
