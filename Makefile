@@ -5,7 +5,6 @@ HOST = borisk@padre.rus9n.com
 
 # Deployment Paths (Identical for both Local Demo & Remote Prod)
 REMOTE_BIN_DIR = /usr/local/bin
-REMOTE_ETC_DIR = /etc/sratim
 REMOTE_VAR_DIR = /var/lib/sratim
 
 # SSH Options (For Remote Deploy)
@@ -55,9 +54,9 @@ deploy-local: test-local install-local
 install-local: build-local
 	@echo "🔧 Installing native binary and service locally on dev server..."
 	# Create FHS folders on the local host
-	sudo mkdir -p $(REMOTE_BIN_DIR) $(REMOTE_ETC_DIR) $(REMOTE_VAR_DIR)
+	sudo mkdir -p $(REMOTE_BIN_DIR) $(REMOTE_VAR_DIR)
 	# Grant ownership to 'borisk' user locally
-	sudo chown -R borisk:borisk $(REMOTE_BIN_DIR) $(REMOTE_ETC_DIR) $(REMOTE_VAR_DIR)
+	sudo chown -R sratim:sratim $(REMOTE_BIN_DIR) $(REMOTE_VAR_DIR)
 	# Stop the local service first to avoid "Text file busy"
 	sudo systemctl stop sratim || true
 	# Copy native ARM64 binary and service file
@@ -79,17 +78,17 @@ deploy-remote: test-local upload service-restart
 
 upload: build-remote
 	@echo "📤 Uploading cross-compiled x86_64 binary and service file to PADRE..."
-	$(SSH) $(HOST) "sudo mkdir -p $(REMOTE_BIN_DIR) $(REMOTE_ETC_DIR) $(REMOTE_VAR_DIR)"
-	$(SSH) $(HOST) "sudo chown -R borisk:borisk $(REMOTE_BIN_DIR) $(REMOTE_ETC_DIR) $(REMOTE_VAR_DIR)"
+	$(SSH) $(HOST) "sudo mkdir -p $(REMOTE_BIN_DIR) $(REMOTE_VAR_DIR)"
+	$(SSH) $(HOST) "sudo chown -R sratim:sratim $(REMOTE_BIN_DIR) $(REMOTE_VAR_DIR)"
 	$(RSYNC) "$(REMOTE_BINARY)" "$(HOST):$(REMOTE_BIN_DIR)/sratim"
-	$(RSYNC) "sratim.service" "$(HOST):$(REMOTE_ETC_DIR)/sratim.service"
+	$(RSYNC) "sratim.service" "$(HOST):$(REMOTE_VAR_DIR)/sratim.service"
 
 service-restart:
 	@echo "🔧 Installing service and restarting remotely on PADRE..."
 	$(SSH) "$(HOST)" " \
 		set -e; \
 		echo '📋 Installing/updating sratim.service...'; \
-		sudo cp $(REMOTE_ETC_DIR)/sratim.service /etc/systemd/system/; \
+		sudo cp $(REMOTE_VAR_DIR)/sratim.service /etc/systemd/system/; \
 		sudo systemctl daemon-reload; \
 		sudo systemctl enable sratim; \
 		echo '🔄 Restarting sratim service...'; \

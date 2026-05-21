@@ -129,9 +129,7 @@ pub async fn browse_filesystem(Query(params): Query<BrowseParams>) -> impl IntoR
     let path = if let Some(p) = params.path.filter(|s| !s.is_empty()) {
         PathBuf::from(p)
     } else {
-        // Default to home dir or root
-        #[allow(deprecated)]
-        std::env::home_dir().unwrap_or(PathBuf::from("/"))
+        PathBuf::from("/")
     };
 
     if !path.exists() || !path.is_dir() {

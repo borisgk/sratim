@@ -79,7 +79,7 @@ async fn fallback_handler(
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    let config = AppConfig::load().expect("Failed to load configuration");
+    let config = AppConfig::load().await.expect("Failed to load configuration");
 
     // Ensure data directory exists
     if !config.data_dir.exists() {

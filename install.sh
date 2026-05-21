@@ -34,21 +34,10 @@ fi
 
 # Create directories
 echo "📁 Setting up directories..."
-mkdir -p /etc/sratim
 mkdir -p /var/lib/sratim
-chown -R sratim:sratim /etc/sratim
 chown -R sratim:sratim /var/lib/sratim
 
-# Download default config.toml if it doesn't exist
-if [ ! -f /etc/sratim/config.toml ]; then
-    echo "📥 Downloading default config.toml..."
-    curl -sL https://raw.githubusercontent.com/borisgk/sratim/main/config.toml -o /etc/sratim/config.toml
-    chown sratim:sratim /etc/sratim/config.toml
-    # Secure the config since it has a JWT secret
-    chmod 600 /etc/sratim/config.toml
-else
-    echo "✅ Existing config.toml found, skipping download."
-fi
+# The application now uses config.db in /var/lib/sratim and generates it automatically
 
 # Fetch the latest release information
 echo "🌐 Fetching latest release info from GitHub..."
