@@ -1,6 +1,6 @@
 [package]
 name = "sratim"
-version = "0.1.13"
+version = "0.1.16"
 edition = "2024"
 license = "GPL-3.0-only"
 
@@ -15,7 +15,7 @@ tracing-subscriber = "0.3"
 mime_guess = "2.0"
 walkdir = "2"
 uuid = { version = "1.0", features = ["v4"] }
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 regex = "1.10"
 urlencoding = "2.1"
 
@@ -39,5 +39,4 @@ askama = "0.15.4"
 futures = "0.3.31"
 serde_urlencoded = "0.7.1"
 turso = "0.6.0"
-openssl = { version = "0.10", features = ["vendored"] }
 rust-embed = "8.11.0"
