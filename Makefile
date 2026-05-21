@@ -26,16 +26,7 @@ REMOTE_BINARY = target/$(REMOTE_TARGET)/release/sratim
 # Default to deploying the local demo version
 all: deploy-local
 
-# Sentinel target: Increments the patch version exactly once per make invocation
-.bumped: Cargo.toml
-	@echo "🏷️ Incrementing version in Cargo.toml..."
-	@VERSION=$$(grep -E "^version =" Cargo.toml | head -n 1 | cut -d'"' -f2); \
-	IFS='.' read -r major minor patch <<< "$$VERSION"; \
-	NEW_PATCH=$$((patch + 1)); \
-	NEW_VERSION="$$major.$$minor.$$NEW_PATCH"; \
-	sed -i "s/^version = \"$$VERSION\"/version = \"$$NEW_VERSION\"/" Cargo.toml; \
-	echo "🚀 Version bumped from $$VERSION to $$NEW_VERSION"
-	@touch .bumped
+
 
 # Run tests natively on the dev server
 test-local:
@@ -43,13 +34,13 @@ test-local:
 	cargo test --target $(LOCAL_TARGET)
 
 # Compile native release binary for the dev server (aarch64)
-build-local: .bumped
+build-local:
 	@echo "🔨 Building native release binary for $(LOCAL_TARGET)..."
 	cargo build --release --target $(LOCAL_TARGET)
 	@echo "✅ Native build complete: $(LOCAL_BINARY)"
 
 # Compile cross-compiled release binary for production (x86_64)
-build-remote: .bumped
+build-remote:
 	@echo "🔨 Building cross-compiled release binary for $(REMOTE_TARGET)..."
 	cargo build --release --target $(REMOTE_TARGET)
 	@echo "✅ Cross-compilation complete: $(REMOTE_BINARY)"
@@ -59,7 +50,6 @@ build-remote: .bumped
 # ==========================================
 
 deploy-local: test-local install-local
-	@rm -f .bumped
 	@echo "🚀 Local FHS deployment and service restart complete!"
 
 install-local: build-local
@@ -85,7 +75,6 @@ install-local: build-local
 # ==========================================
 
 deploy-remote: test-local upload service-restart
-	@rm -f .bumped
 	@echo "🚀 Remote production deployment and service restart complete!"
 
 upload: build-remote
@@ -117,9 +106,27 @@ deploy-all:
 	@echo "🏁 Starting unified double-deployment..."
 	$(MAKE) test-local build-local build-remote
 	$(MAKE) install-local upload service-restart
-	@rm -f .bumped
 	@echo "🚀 Double deployment successful: Local Demo & Remote Production updated!"
 
 clean:
 	cargo clean
-	rm -f .bumped
+
+# ==========================================
+# 🚀 GitHub Release Automation
+# ==========================================
+
+release-github:
+	@echo "🏷️ Incrementing version in Cargo.toml..."
+	@VERSION=$$(grep -E "^version =" Cargo.toml | head -n 1 | cut -d'"' -f2); \
+	IFS='.' read -r major minor patch <<< "$$VERSION"; \
+	NEW_PATCH=$$((patch + 1)); \
+	NEW_VERSION="$$major.$$minor.$$NEW_PATCH"; \
+	sed -i "s/^version = \"$$VERSION\"/version = \"$$NEW_VERSION\"/" Cargo.toml; \
+	echo "🚀 Version bumped from $$VERSION to $$NEW_VERSION"; \
+	echo "📦 Preparing GitHub Release for v$$NEW_VERSION..."; \
+	git add Cargo.toml; \
+	git commit -m "chore: bump version to v$$NEW_VERSION"; \
+	git tag "v$$NEW_VERSION"; \
+	git push origin main; \
+	git push origin "v$$NEW_VERSION"; \
+	echo "✅ Pushed tag v$$NEW_VERSION to GitHub! The Action will now build and publish."
