@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" profiles="urn:mpeg:dash:profile:isoff-live:2011" type="static" mediaPresentationDuration="PT1H30M0S">
+  <Period>
+    
+    <AdaptationSet mimeType="video/mp4" codecs="hev1.1.6.L93.B0">
+      <Representation id="video" bandwidth="5000000">
+        <SegmentTemplate 
+             initialization="/api/stream/movie123/video/init.mp4" 
+             media="/api/stream/movie123/video/chunk_$Number$.m4s" 
+             startNumber="1" duration="10" timescale="1"/>
+      </Representation>
+    </AdaptationSet>
+
+    <AdaptationSet mimeType="audio/mp4" codecs="mp4a.40.2" lang="en">
+      <Label>English (Stereo)</Label>
+      <Representation id="audio_0" bandwidth="256000">
+        <SegmentTemplate 
+             initialization="/api/stream/movie123/audio/0/init.mp4" 
+             media="/api/stream/movie123/audio/0/chunk_$Number$.m4s" 
+             startNumber="1" duration="10" timescale="1"/>
+      </Representation>
+    </AdaptationSet>
+
+    <AdaptationSet mimeType="audio/mp4" codecs="mp4a.40.2" lang="he">
+      <Label>Hebrew</Label>
+      <Representation id="audio_1" bandwidth="256000">
+        <SegmentTemplate 
+             initialization="/api/stream/movie123/audio/1/init.mp4" 
+             media="/api/stream/movie123/audio/1/chunk_$Number$.m4s" 
+             startNumber="1" duration="10" timescale="1"/>
+      </Representation>
+    </AdaptationSet>
+
+  </Period>
+</MPD>

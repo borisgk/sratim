@@ -147,6 +147,21 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
 
+    const manifest_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/manifest_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    manifest_tests.root_module.link_libc = true;
+    manifest_tests.root_module.linkSystemLibrary("libavformat", .{});
+    manifest_tests.root_module.linkSystemLibrary("libavcodec", .{});
+    manifest_tests.root_module.linkSystemLibrary("libavutil", .{});
+
+    const run_manifest_tests = b.addRunArtifact(manifest_tests);
+    test_step.dependOn(&run_manifest_tests.step);
+
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
     // The Zig build system is entirely implemented in userland, which means
