@@ -16,7 +16,9 @@ pub fn generateHtmlListing(allocator: std.mem.Allocator, io: std.Io, folder_path
         \\        body { font-family: sans-serif; padding: 2rem; background: #f4f4f9; color: #333; }
         \\        h1 { color: #2c3e50; }
         \\        ul { list-style: none; padding: 0; }
-        \\        li { background: white; margin: 0.5rem 0; padding: 1rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        \\        li { background: white; margin: 0.5rem 0; padding: 1rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; }
+        \\        .info-icon { cursor: pointer; color: #3498db; font-weight: bold; border: 1px solid #3498db; border-radius: 50%; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.8rem; }
+        \\        .info-icon:hover { background: #3498db; color: white; }
         \\    </style>
         \\</head>
         \\<body>
@@ -30,9 +32,11 @@ pub fn generateHtmlListing(allocator: std.mem.Allocator, io: std.Io, folder_path
     while (try it.next(io)) |entry| {
         if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".mkv")) {
             count += 1;
-            try list.appendSlice(allocator, "        <li>");
+            try list.appendSlice(allocator, "        <li><span>");
             try list.appendSlice(allocator, entry.name);
-            try list.appendSlice(allocator, "</li>\n");
+            try list.appendSlice(allocator, "</span><a href=\"/info?file=");
+            try list.appendSlice(allocator, entry.name);
+            try list.appendSlice(allocator, "\" class=\"info-icon\" title=\"Information\" style=\"text-decoration:none;\">i</a></li>\n");
         }
     }
 
