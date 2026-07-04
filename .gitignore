@@ -1,0 +1,4 @@
+config.json
+*.mkv
+zig-out/
+.zig-cache/
