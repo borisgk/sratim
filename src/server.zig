@@ -3,7 +3,7 @@ const Config = @import("config.zig").Config;
 const indexer = @import("indexer.zig");
 
 const ffprobe = @import("ffprobe.zig");
-
+const player = @import("player.zig");
 const manifest = @import("manifest.zig");
 
 pub fn runServer(allocator: std.mem.Allocator, io: std.Io, config: *const Config) !void {
@@ -96,6 +96,41 @@ fn handleRequest(allocator: std.mem.Allocator, io: std.Io, request: *std.http.Se
             .status = .ok,
             .extra_headers = &.{
                 .{ .name = "content-type", .value = "text/html; charset=utf-8" },
+            },
+        });
+    } else if (std.mem.startsWith(u8, request.head.target, "/player?file=")) {
+        const raw_file_param = request.head.target["/player?file=".len..];
+        const html = try player.generatePlayerHtml(allocator, raw_file_param);
+        defer allocator.free(html);
+
+        try request.respond(html, .{
+            .status = .ok,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "text/html; charset=utf-8" },
+            },
+        });
+    } else if (std.mem.startsWith(u8, request.head.target, "/shaka/")) {
+        const file_path = request.head.target[1..]; // removes leading slash, becomes "shaka/..."
+        const full_path = try std.fs.path.join(allocator, &.{ "public", file_path });
+        defer allocator.free(full_path);
+
+        const contents = std.Io.Dir.cwd().readFileAlloc(io, full_path, allocator, .unlimited) catch |err| {
+            if (err != error.FileNotFound) {
+                std.debug.print("Failed to read static file {s}: {}\n", .{full_path, err});
+            }
+            try request.respond("Not Found", .{ .status = .not_found });
+            return;
+        };
+        defer allocator.free(contents);
+        
+        const content_type = if (std.mem.endsWith(u8, file_path, ".css")) "text/css"
+                            else if (std.mem.endsWith(u8, file_path, ".js")) "application/javascript"
+                            else "text/plain";
+                            
+        try request.respond(contents, .{
+            .status = .ok,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = content_type },
             },
         });
     } else {

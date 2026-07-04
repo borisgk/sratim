@@ -32,7 +32,7 @@ pub fn generateHtmlListing(allocator: std.mem.Allocator, io: std.Io, folder_path
     while (try it.next(io)) |entry| {
         if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".mkv")) {
             count += 1;
-            try list.appendSlice(allocator, "        <li><a href=\"/manifest.mpd?file=");
+            try list.appendSlice(allocator, "        <li><a href=\"/player?file=");
             try list.appendSlice(allocator, entry.name);
             try list.appendSlice(allocator, "\" style=\"text-decoration:none; color:#2c3e50; font-weight:bold;\">");
             try list.appendSlice(allocator, entry.name);
