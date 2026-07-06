@@ -13,5 +13,7 @@ pub fn main(init: std.process.Init) !void {
     };
     defer config.deinit(arena);
 
+    @import("packager.zig").init();
+
     try server.runServer(arena, io, &config);
 }

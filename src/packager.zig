@@ -24,6 +24,10 @@ const AVIndexEntry = extern struct {
     min_distance: i32,
 };
 
+pub fn init() void {
+    c.av_log_set_level(c.AV_LOG_ERROR);
+}
+
 pub fn generateChunk(allocator: std.mem.Allocator, file_path: []const u8, is_audio: bool, track_index: usize, chunk_index: usize, is_init: bool, splits: []const i64) ![]const u8 {
     var in_ctx: ?*c.AVFormatContext = null;
     
@@ -70,10 +74,6 @@ pub fn generateChunk(allocator: std.mem.Allocator, file_path: []const u8, is_aud
     // Convert video timestamps from splits (AV_TIME_BASE) to target stream timestamps
     const start_ts = c.av_rescale_q(chunk_start_ts_v, c.av_get_time_base_q(), target_stream.?.*.time_base);
     const end_ts = if (chunk_end_ts_v != c.AV_NOPTS_VALUE) c.av_rescale_q(chunk_end_ts_v, c.av_get_time_base_q(), target_stream.?.*.time_base) else c.AV_NOPTS_VALUE;
-
-    std.debug.print("Chunk {d}: splits [{d}, {d}], start_ts={d}, end_ts={d}\n", .{
-        chunk_index, chunk_start_ts_v, chunk_end_ts_v, start_ts, end_ts
-    });
 
     // Set up output context in memory
     var out_ctx: ?*c.AVFormatContext = null;

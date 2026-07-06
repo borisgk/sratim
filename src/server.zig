@@ -45,7 +45,6 @@ pub fn runServer(allocator: std.mem.Allocator, io: std.Io, config: *const Config
 }
 
 fn handleRequest(allocator: std.mem.Allocator, io: std.Io, request: *std.http.Server.Request, config: *const Config) !void {
-    std.debug.print("Target received: '{s}'\n", .{request.head.target});
     if (std.mem.eql(u8, request.head.target, "/")) {
         const html = indexer.generateHtmlListing(allocator, io, config.working_folder) catch |err| {
             std.debug.print("Failed to generate HTML: {}\n", .{err});
@@ -237,6 +236,20 @@ fn handleRequest(allocator: std.mem.Allocator, io: std.Io, request: *std.http.Se
             .status = .ok,
             .extra_headers = &.{
                 .{ .name = "content-type", .value = content_type },
+            },
+        });
+    } else if (std.mem.eql(u8, request.head.target, "/favicon.ico")) {
+        const full_path = "public/favicon.ico";
+        const contents = std.Io.Dir.cwd().readFileAlloc(io, full_path, allocator, .unlimited) catch {
+            try request.respond("Not Found", .{ .status = .not_found });
+            return;
+        };
+        defer allocator.free(contents);
+        
+        try request.respond(contents, .{
+            .status = .ok,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "image/x-icon" },
             },
         });
     } else {
