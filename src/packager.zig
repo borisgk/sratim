@@ -2,6 +2,10 @@ const std = @import("std");
 const c = @cImport({
     @cInclude("libavformat/avformat.h");
     @cInclude("libavcodec/avcodec.h");
+    @cInclude("libswresample/swresample.h");
+    @cInclude("libavutil/opt.h");
+    @cInclude("libavutil/channel_layout.h");
+    @cInclude("libavutil/audio_fifo.h");
     @cInclude("libavutil/avutil.h");
     @cInclude("libavutil/dict.h");
 });
@@ -86,6 +90,12 @@ pub fn generateChunk(allocator: std.mem.Allocator, file_path: []const u8, is_aud
     if (c.avcodec_parameters_copy(out_stream.*.codecpar, target_stream.?.*.codecpar) < 0) return error.CopyCodecFailed;
     out_stream.*.codecpar.*.codec_tag = 0; // Let muxer choose
 
+    var transcoder: ?AudioTranscoder = null;
+    if (is_audio and target_stream.?.*.codecpar.*.codec_id != c.AV_CODEC_ID_AAC) {
+        transcoder = AudioTranscoder.init(target_stream.?, out_stream) catch return error.TranscoderInitFailed;
+    }
+    defer if (transcoder) |*t| t.deinit();
+
     var mem_buffer = Buffer{ .list = .empty, .allocator = allocator };
     defer if (mem_buffer.list.capacity > 0) mem_buffer.list.deinit(allocator);
 
@@ -143,35 +153,45 @@ pub fn generateChunk(allocator: std.mem.Allocator, file_path: []const u8, is_aud
                     continue;
                 }
 
-                // Fix missing DTS caused by seeking in MKV
-                if (pkt.?.*.dts == c.AV_NOPTS_VALUE) {
-                    if (last_dts == c.AV_NOPTS_VALUE) {
-                        pkt.?.*.dts = if (pkt.?.*.pts != c.AV_NOPTS_VALUE) pkt.?.*.pts - 100 else 0;
-                    } else {
+                // Transcode or write directly
+                if (transcoder) |*t| {
+                    t.transcodePacket(pkt.?, out_ctx.?, target_stream.?) catch return error.TranscodeFailed;
+                } else {
+                    // Fix missing DTS caused by seeking in MKV
+                    if (pkt.?.*.dts == c.AV_NOPTS_VALUE) {
+                        const dur = if (pkt.?.*.duration > 0) pkt.?.*.duration else 40;
+                        if (last_dts == c.AV_NOPTS_VALUE) {
+                            pkt.?.*.dts = if (pkt.?.*.pts != c.AV_NOPTS_VALUE) pkt.?.*.pts - dur else 0;
+                        } else {
+                            pkt.?.*.dts = last_dts + dur;
+                        }
+                    }
+                    
+                    // Ensure strictly monotonic DTS for MP4 muxer
+                    if (last_dts != c.AV_NOPTS_VALUE and pkt.?.*.dts <= last_dts) {
                         pkt.?.*.dts = last_dts + 1;
                     }
-                }
-                
-                // Ensure strictly monotonic DTS for MP4 muxer
-                if (last_dts != c.AV_NOPTS_VALUE and pkt.?.*.dts <= last_dts) {
-                    pkt.?.*.dts = last_dts + 1;
-                }
-                last_dts = pkt.?.*.dts;
+                    last_dts = pkt.?.*.dts;
 
-                // Hack: If dts is still negative, clip it to 0 to avoid underflowing MP4 baseMediaDecodeTime
-                // (Only clip if it's the very first chunk's very first packets)
-                if (chunk_index == 1 and pkt.?.*.dts < 0) {
-                    pkt.?.*.dts = 0;
-                    last_dts = 0; // Prevent subsequent packets from being shifted backwards
+                    // Hack: If dts is still negative, clip it to 0 to avoid underflowing MP4 baseMediaDecodeTime
+                    // (Only clip if it's the very first chunk's very first packets)
+                    if (chunk_index == 1 and pkt.?.*.dts < 0) {
+                        pkt.?.*.dts = 0;
+                        last_dts = 0; // Prevent subsequent packets from being shifted backwards
+                    }
+
+                    pkt.?.*.stream_index = out_stream.*.index;
+                    c.av_packet_rescale_ts(pkt, target_stream.?.*.time_base, out_stream.*.time_base);
+                    pkt.?.*.pos = -1;
+
+                    _ = c.av_interleaved_write_frame(out_ctx, pkt);
                 }
-
-                pkt.?.*.stream_index = out_stream.*.index;
-                c.av_packet_rescale_ts(pkt, target_stream.?.*.time_base, out_stream.*.time_base);
-                pkt.?.*.pos = -1;
-
-                _ = c.av_interleaved_write_frame(out_ctx, pkt);
             }
         }
+    }
+
+    if (transcoder) |*t| {
+        t.flush(out_ctx.?) catch return error.TranscodeFlushFailed;
     }
 
     _ = c.av_write_trailer(out_ctx);
@@ -192,3 +212,168 @@ pub fn generateChunk(allocator: std.mem.Allocator, file_path: []const u8, is_aud
     const result = try allocator.dupe(u8, mem_buffer.list.items);
     return result;
 }
+
+pub const AudioTranscoder = struct {
+    dec_ctx: *c.AVCodecContext,
+    enc_ctx: *c.AVCodecContext,
+    swr: *c.SwrContext,
+    fifo: *c.AVAudioFifo,
+    out_stream: *c.AVStream,
+    pts: i64,
+
+    pub fn init(in_stream: *c.AVStream, out_stream: *c.AVStream) !AudioTranscoder {
+        const dec = c.avcodec_find_decoder(in_stream.*.codecpar.*.codec_id);
+        if (dec == null) return error.DecoderNotFound;
+
+        const dec_ctx = c.avcodec_alloc_context3(dec);
+        if (dec_ctx == null) return error.AllocDecFailed;
+        if (c.avcodec_parameters_to_context(dec_ctx, in_stream.*.codecpar) < 0) return error.DecParamsFailed;
+        if (c.avcodec_open2(dec_ctx, dec, null) < 0) return error.OpenDecFailed;
+
+        const enc = c.avcodec_find_encoder(c.AV_CODEC_ID_AAC);
+        if (enc == null) return error.EncoderNotFound;
+
+        const enc_ctx = c.avcodec_alloc_context3(enc);
+        if (enc_ctx == null) return error.AllocEncFailed;
+
+        enc_ctx.*.sample_rate = 48000;
+        enc_ctx.*.sample_fmt = c.AV_SAMPLE_FMT_FLTP;
+        enc_ctx.*.bit_rate = 128000;
+        c.av_channel_layout_default(&enc_ctx.*.ch_layout, 2);
+
+        // We are generating DASH fragments, so global header is good
+        enc_ctx.*.flags |= c.AV_CODEC_FLAG_GLOBAL_HEADER;
+
+        if (c.avcodec_open2(enc_ctx, enc, null) < 0) return error.OpenEncFailed;
+        if (c.avcodec_parameters_from_context(out_stream.*.codecpar, enc_ctx) < 0) return error.EncParamsFailed;
+        // Fix codec tag
+        out_stream.*.codecpar.*.codec_tag = 0;
+
+        var swr: ?*c.SwrContext = null;
+        if (c.swr_alloc_set_opts2(&swr, &enc_ctx.*.ch_layout, enc_ctx.*.sample_fmt, enc_ctx.*.sample_rate,
+                                  &dec_ctx.*.ch_layout, dec_ctx.*.sample_fmt, dec_ctx.*.sample_rate, 0, null) < 0) return error.SwrAllocFailed;
+        if (c.swr_init(swr) < 0) return error.SwrInitFailed;
+
+        const fifo = c.av_audio_fifo_alloc(enc_ctx.*.sample_fmt, enc_ctx.*.ch_layout.nb_channels, 1);
+        if (fifo == null) return error.FifoAllocFailed;
+
+        return AudioTranscoder{
+            .dec_ctx = dec_ctx,
+            .enc_ctx = enc_ctx,
+            .swr = swr.?,
+            .fifo = fifo.?,
+            .out_stream = out_stream,
+            .pts = c.AV_NOPTS_VALUE,
+        };
+    }
+
+    pub fn deinit(self: *AudioTranscoder) void {
+        var dec_ptr: ?*c.AVCodecContext = self.dec_ctx;
+        c.avcodec_free_context(&dec_ptr);
+        var enc_ptr: ?*c.AVCodecContext = self.enc_ctx;
+        c.avcodec_free_context(&enc_ptr);
+        var swr_ptr: ?*c.SwrContext = self.swr;
+        c.swr_free(&swr_ptr);
+        c.av_audio_fifo_free(self.fifo);
+    }
+
+    pub fn transcodePacket(self: *AudioTranscoder, pkt: *c.AVPacket, out_ctx: *c.AVFormatContext, in_stream: *c.AVStream) !void {
+        if (c.avcodec_send_packet(self.dec_ctx, pkt) == 0) {
+            var frame: ?*c.AVFrame = c.av_frame_alloc();
+            defer c.av_frame_free(&frame);
+            
+            var resampled_frame: ?*c.AVFrame = c.av_frame_alloc();
+            defer c.av_frame_free(&resampled_frame);
+            
+            while (c.avcodec_receive_frame(self.dec_ctx, frame) == 0) {
+                if (self.pts == c.AV_NOPTS_VALUE and frame.?.*.pts != c.AV_NOPTS_VALUE) {
+                    const tb_enc = c.AVRational{ .num = 1, .den = self.enc_ctx.*.sample_rate };
+                    self.pts = c.av_rescale_q(frame.?.*.pts, in_stream.*.time_base, tb_enc);
+                }
+
+                resampled_frame.?.*.nb_samples = frame.?.*.nb_samples;
+                resampled_frame.?.*.sample_rate = self.enc_ctx.*.sample_rate;
+                resampled_frame.?.*.format = self.enc_ctx.*.sample_fmt;
+                _ = c.av_channel_layout_copy(&resampled_frame.?.*.ch_layout, &self.enc_ctx.*.ch_layout);
+                
+                if (c.av_frame_get_buffer(resampled_frame, 0) < 0) return error.FrameBufFailed;
+
+                _ = c.swr_convert(self.swr, @as([*c]const [*c]u8, @ptrCast(&resampled_frame.?.*.data)), resampled_frame.?.*.nb_samples,
+                                  @as([*c]const [*c]const u8, @ptrCast(&frame.?.*.data)), frame.?.*.nb_samples);
+                
+                _ = c.av_audio_fifo_write(self.fifo, @ptrCast(&resampled_frame.?.*.data), resampled_frame.?.*.nb_samples);
+                c.av_frame_unref(resampled_frame);
+
+                try self.encodeAndWrite(out_ctx);
+            }
+        }
+    }
+
+    fn encodeAndWrite(self: *AudioTranscoder, out_ctx: *c.AVFormatContext) !void {
+        var enc_pkt: ?*c.AVPacket = c.av_packet_alloc();
+        defer c.av_packet_free(&enc_pkt);
+        
+        while (c.av_audio_fifo_size(self.fifo) >= self.enc_ctx.*.frame_size) {
+            var out_frame: ?*c.AVFrame = c.av_frame_alloc();
+            defer c.av_frame_free(&out_frame);
+            out_frame.?.*.nb_samples = self.enc_ctx.*.frame_size;
+            out_frame.?.*.format = self.enc_ctx.*.sample_fmt;
+            _ = c.av_channel_layout_copy(&out_frame.?.*.ch_layout, &self.enc_ctx.*.ch_layout);
+            out_frame.?.*.sample_rate = self.enc_ctx.*.sample_rate;
+            if (c.av_frame_get_buffer(out_frame, 0) < 0) return error.OutFrameBufFailed;
+
+            _ = c.av_audio_fifo_read(self.fifo, @ptrCast(&out_frame.?.*.data), self.enc_ctx.*.frame_size);
+            
+            out_frame.?.*.pts = self.pts;
+            self.pts += self.enc_ctx.*.frame_size;
+
+            if (c.avcodec_send_frame(self.enc_ctx, out_frame) == 0) {
+                while (c.avcodec_receive_packet(self.enc_ctx, enc_pkt) == 0) {
+                    c.av_packet_rescale_ts(enc_pkt, self.enc_ctx.*.time_base, self.out_stream.*.time_base);
+                    enc_pkt.?.*.stream_index = self.out_stream.*.index;
+                    _ = c.av_interleaved_write_frame(out_ctx, enc_pkt);
+                    c.av_packet_unref(enc_pkt);
+                }
+            }
+        }
+    }
+
+    pub fn flush(self: *AudioTranscoder, out_ctx: *c.AVFormatContext) !void {
+        var enc_pkt: ?*c.AVPacket = c.av_packet_alloc();
+        defer c.av_packet_free(&enc_pkt);
+        
+        while (c.av_audio_fifo_size(self.fifo) > 0) {
+            var out_frame: ?*c.AVFrame = c.av_frame_alloc();
+            defer c.av_frame_free(&out_frame);
+            const rem = c.av_audio_fifo_size(self.fifo);
+            out_frame.?.*.nb_samples = rem;
+            out_frame.?.*.format = self.enc_ctx.*.sample_fmt;
+            _ = c.av_channel_layout_copy(&out_frame.?.*.ch_layout, &self.enc_ctx.*.ch_layout);
+            out_frame.?.*.sample_rate = self.enc_ctx.*.sample_rate;
+            if (c.av_frame_get_buffer(out_frame, 0) < 0) return error.OutFrameBufFailed;
+
+            _ = c.av_audio_fifo_read(self.fifo, @ptrCast(&out_frame.?.*.data), rem);
+            
+            out_frame.?.*.pts = self.pts;
+            self.pts += rem;
+
+            if (c.avcodec_send_frame(self.enc_ctx, out_frame) == 0) {
+                while (c.avcodec_receive_packet(self.enc_ctx, enc_pkt) == 0) {
+                    c.av_packet_rescale_ts(enc_pkt, self.enc_ctx.*.time_base, self.out_stream.*.time_base);
+                    enc_pkt.?.*.stream_index = self.out_stream.*.index;
+                    _ = c.av_interleaved_write_frame(out_ctx, enc_pkt);
+                    c.av_packet_unref(enc_pkt);
+                }
+            }
+        }
+
+        if (c.avcodec_send_frame(self.enc_ctx, null) == 0) {
+            while (c.avcodec_receive_packet(self.enc_ctx, enc_pkt) == 0) {
+                c.av_packet_rescale_ts(enc_pkt, self.enc_ctx.*.time_base, self.out_stream.*.time_base);
+                enc_pkt.?.*.stream_index = self.out_stream.*.index;
+                _ = c.av_interleaved_write_frame(out_ctx, enc_pkt);
+                c.av_packet_unref(enc_pkt);
+            }
+        }
+    }
+};

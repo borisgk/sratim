@@ -108,7 +108,9 @@ fn handleRequest(allocator: std.mem.Allocator, io: std.Io, request: *std.http.Se
         try request.respond(xml, .{
             .status = .ok,
             .extra_headers = &.{
-                .{ .name = "content-type", .value = "application/dash+xml; charset=utf-8" },
+                .{ .name = "content-type", .value = "application/dash+xml" },
+                .{ .name = "access-control-allow-origin", .value = "*" },
+                .{ .name = "cache-control", .value = "no-cache, no-store, must-revalidate" },
             },
         });
     } else if (std.mem.startsWith(u8, request.head.target, "/api/stream/")) {
@@ -250,6 +252,7 @@ fn handleRequest(allocator: std.mem.Allocator, io: std.Io, request: *std.http.Se
             .status = .ok,
             .extra_headers = &.{
                 .{ .name = "content-type", .value = "image/x-icon" },
+                .{ .name = "cache-control", .value = "no-cache, no-store, must-revalidate" },
             },
         });
     } else {

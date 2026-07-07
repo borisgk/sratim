@@ -169,10 +169,8 @@ pub fn generateMpd(allocator: std.mem.Allocator, path: []const u8, url_file_para
             codec_str = "hev1.1.6.L93.B0";
         } else if (codec_id == c.AV_CODEC_ID_AAC) {
             codec_str = "mp4a.40.2";
-        } else if (codec_id == c.AV_CODEC_ID_AC3) {
-            codec_str = "ac-3";
-        } else if (codec_id == c.AV_CODEC_ID_EAC3) {
-            codec_str = "ec-3";
+        } else if (codec_id == c.AV_CODEC_ID_AC3 or codec_id == c.AV_CODEC_ID_EAC3 or codec_id == c.AV_CODEC_ID_DTS) {
+            codec_str = "mp4a.40.2"; // Transcoded to AAC
         }
         
         const bandwidth = if (codec_par.*.bit_rate > 0) codec_par.*.bit_rate else 5000000;
@@ -195,20 +193,36 @@ pub fn generateMpd(allocator: std.mem.Allocator, path: []const u8, url_file_para
             const lang_dict = c.av_dict_get(stream.*.metadata, "language", null, 0);
             const lang = if (lang_dict != null) std.mem.span(lang_dict.?.*.value) else "en";
 
+            const title_dict = c.av_dict_get(stream.*.metadata, "title", null, 0);
+            const title_xml = if (title_dict != null) std.mem.span(title_dict.?.*.value) else "";
+
             const audio_timescale: u32 = @intCast(codec_par.*.sample_rate);
             const timeline_str = try Builder.buildTimelineStr(allocator, &splits, audio_timescale);
             defer allocator.free(timeline_str);
 
-            try appendPrint(allocator, &list,
-                \\    <AdaptationSet mimeType="audio/mp4" codecs="{s}" lang="{s}">
-                \\      <Representation id="audio_{d}" bandwidth="{d}">
-                \\        <SegmentTemplate timescale="{d}" initialization="/api/stream/{s}/audio/{d}/init.mp4" media="/api/stream/{s}/audio/{d}/chunk_$Number$.m4s" startNumber="1">
-                \\{s}
-                \\        </SegmentTemplate>
-                \\      </Representation>
-                \\    </AdaptationSet>
-                \\
-            , .{ codec_str, lang, audio_index, bandwidth, audio_timescale, url_file_param, audio_index, url_file_param, audio_index, timeline_str });
+            if (title_dict != null) {
+                try appendPrint(allocator, &list,
+                    \\    <AdaptationSet mimeType="audio/mp4" codecs="{s}" lang="{s} ({s})">
+                    \\      <Representation id="audio_{d}" bandwidth="{d}">
+                    \\        <SegmentTemplate timescale="{d}" initialization="/api/stream/{s}/audio/{d}/init.mp4" media="/api/stream/{s}/audio/{d}/chunk_$Number$.m4s" startNumber="1">
+                    \\{s}
+                    \\        </SegmentTemplate>
+                    \\      </Representation>
+                    \\    </AdaptationSet>
+                    \\
+                , .{ codec_str, lang, title_xml, audio_index, bandwidth, audio_timescale, url_file_param, audio_index, url_file_param, audio_index, timeline_str });
+            } else {
+                try appendPrint(allocator, &list,
+                    \\    <AdaptationSet mimeType="audio/mp4" codecs="{s}" lang="{s}">
+                    \\      <Representation id="audio_{d}" bandwidth="{d}">
+                    \\        <SegmentTemplate timescale="{d}" initialization="/api/stream/{s}/audio/{d}/init.mp4" media="/api/stream/{s}/audio/{d}/chunk_$Number$.m4s" startNumber="1">
+                    \\{s}
+                    \\        </SegmentTemplate>
+                    \\      </Representation>
+                    \\    </AdaptationSet>
+                    \\
+                , .{ codec_str, lang, audio_index, bandwidth, audio_timescale, url_file_param, audio_index, url_file_param, audio_index, timeline_str });
+            }
             audio_index += 1;
         }
     }

@@ -6,3 +6,6 @@
 - Never optimize while compiling
 - Our zig version is 0.16.0
 - Always use MCP server for documentation
+- We are using zig 0.16.0
+- Never use python
+- Provide ongoing explanations instead of "Prioritizing tool usage"
