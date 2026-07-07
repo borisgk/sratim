@@ -123,19 +123,23 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, http_ctx: *HttpStream
 
     // Demux and remux loop
     while (c.av_read_frame(in_ctx, packet) >= 0) {
+        if (http_ctx.has_error) break;
+
         if (packet.*.stream_index == video_in_idx) {
             packet.*.stream_index = video_out_idx;
             c.av_packet_rescale_ts(packet, in_ctx.*.streams[@intCast(video_in_idx)].*.time_base, out_ctx.*.streams[@intCast(video_out_idx)].*.time_base);
             packet.*.pos = -1;
-            _ = c.av_interleaved_write_frame(out_ctx, packet);
+            if (c.av_interleaved_write_frame(out_ctx, packet) < 0) break;
         } else if (packet.*.stream_index == audio_in_idx) {
             if (audio_tr) |tr| {
-                tr.transcodePacket(packet, out_ctx, audio_out_idx) catch {};
+                tr.transcodePacket(packet, out_ctx, audio_out_idx) catch {
+                    if (http_ctx.has_error) break;
+                };
             } else {
                 packet.*.stream_index = audio_out_idx;
                 c.av_packet_rescale_ts(packet, in_ctx.*.streams[@intCast(audio_in_idx)].*.time_base, out_ctx.*.streams[@intCast(audio_out_idx)].*.time_base);
                 packet.*.pos = -1;
-                _ = c.av_interleaved_write_frame(out_ctx, packet);
+                if (c.av_interleaved_write_frame(out_ctx, packet) < 0) break;
             }
         }
         c.av_packet_unref(packet);
