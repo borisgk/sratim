@@ -1,11 +1,12 @@
 const std = @import("std");
 const html = @import("html.zig");
 const streamer = @import("streamer.zig");
+const catalog = @import("catalog.zig");
 
 /// Handles an incoming HTTP connection from a client.
 /// This function runs inside an isolated OS thread spawned specifically for this connection.
 /// It parses headers, routes endpoints, and serves content synchronously.
-pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io) void {
+pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: []const u8) void {
     // Ensure the socket is always closed when this function exits, no matter what happens
     defer stream.socket.close(io);
 
@@ -27,8 +28,24 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io) void {
 
         const target = request.head.target;
 
-        // Route: Web UI
-        if (std.mem.eql(u8, target, "/") or std.mem.eql(u8, target, "/player")) {
+        // Route: Catalog (Home Page)
+        if (std.mem.eql(u8, target, "/")) {
+            const html_content = catalog.generateHtml(std.heap.c_allocator, io, working_folder) catch |err| {
+                std.debug.print("Catalog error: {}\n", .{err});
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                return;
+            };
+            defer std.heap.c_allocator.free(html_content);
+            
+            request.respond(html_content, .{
+                .status = .ok,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "text/html" },
+                },
+            }) catch return;
+
+        // Route: Web UI (Player)
+        } else if (std.mem.startsWith(u8, target, "/player")) {
             request.respond(html.INDEX_HTML, .{
                 .status = .ok,
                 .extra_headers = &.{
@@ -70,6 +87,10 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io) void {
             }
 
             if (file_path_opt) |file_path| {
+                // Ensure the path is prefixed with working_folder to avoid reading absolute OS paths securely
+                const full_path = std.fs.path.join(std.heap.c_allocator, &[_][]const u8{ working_folder, file_path }) catch return;
+                defer std.heap.c_allocator.free(full_path);
+
                 // Initialize chunked response for MP4 stream
                 var resp = request.respondStreaming(&resp_buf, .{
                     .respond_options = .{
@@ -83,7 +104,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io) void {
 
                 // Fire up FFmpeg pipeline
                 var stream_ctx = streamer.HttpStreamContext{ .writer = &resp };
-                streamer.streamMedia(file_path, start_time, &stream_ctx) catch |e| {
+                streamer.streamMedia(full_path, start_time, &stream_ctx) catch |e| {
                     if (e != error.ConnectionDropped) {
                         std.debug.print("Stream error: {}\n", .{e});
                     }

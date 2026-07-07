@@ -44,9 +44,12 @@ pub const INDEX_HTML =
 \\            return m + ':' + (s < 10 ? '0' : '') + s;
 \\        }
 \\
+\\        const urlParams = new URLSearchParams(window.location.search);
+\\        const fileName = urlParams.get('file') || 'Action/H264.mkv';
+\\
 \\        function loadVideo(startTime) {
 \\            currentSeekTime = startTime;
-\\            video.src = `/stream?file=Action/H264.mkv&start=${startTime}`;
+\\            video.src = `/stream?file=${encodeURIComponent(fileName)}&start=${startTime}`;
 \\            video.play();
 \\        }
 \\

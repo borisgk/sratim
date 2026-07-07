@@ -1,6 +1,6 @@
 **ABSOLUTELY MANDATORY FOR ALL AGENTS**
 - Never use python
-- Never use cat
+- Never use "cat" command
 - Never run the binary via "zig build run"
 - Never run the binary directly
 - Never optimize while compiling natively. Optimize for speed when compiling for release. 

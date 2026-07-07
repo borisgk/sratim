@@ -1,5 +1,6 @@
 const std = @import("std");
 const server = @import("server.zig");
+const config_mod = @import("config.zig");
 
 /// The application entry point.
 /// Initializes the asynchronous I/O backend and starts accepting incoming HTTP connections.
@@ -8,8 +9,11 @@ pub fn main() !void {
     var t = std.Io.Threaded.init(std.heap.c_allocator, .{});
     const io = t.io();
     
-    // Parse the loopback IP and start listening on port 8000
-    const addr = try std.Io.net.IpAddress.parseIp4("0.0.0.0", 8000);
+    var config = try config_mod.Config.load(std.heap.c_allocator, io, "config.json");
+    defer config.deinit(std.heap.c_allocator);
+    
+    // Parse the loopback IP and start listening on port from config
+    const addr = try std.Io.net.IpAddress.parseIp4("0.0.0.0", config.port);
     var srv = try std.Io.net.IpAddress.listen(&addr, io, .{ .reuse_address = true });
     
     std.debug.print("Listening on http://127.0.0.1:8000\n", .{});
@@ -23,7 +27,7 @@ pub fn main() !void {
         };
         
         // Spawn a brand new OS thread to handle the client
-        const thread = try std.Thread.spawn(.{}, server.handleConnection, .{ stream, io });
+        const thread = try std.Thread.spawn(.{}, server.handleConnection, .{ stream, io, config.working_folder });
         
         // Detach the thread so it runs independently, allowing the main loop to instantly continue
         thread.detach();

@@ -7,7 +7,7 @@ const c = @import("c.zig").c;
 pub const AudioTranscoder = struct {
     decode_ctx: *c.AVCodecContext,
     encode_ctx: *c.AVCodecContext,
-    swr_ctx: *c.SwrContext,
+    swr_ctx: ?*c.SwrContext,
     fifo: *c.AVAudioFifo,
     frame_in: *c.AVFrame,
     frame_out: *c.AVFrame,
@@ -44,6 +44,7 @@ pub const AudioTranscoder = struct {
         if (c.avcodec_parameters_from_context(out_stream.*.codecpar, self.encode_ctx) < 0) return error.CodecParamsError;
 
         // SwrContext
+        self.swr_ctx = null;
         if (c.swr_alloc_set_opts2(
             @ptrCast(&self.swr_ctx),
             &self.encode_ctx.*.ch_layout,
@@ -56,7 +57,7 @@ pub const AudioTranscoder = struct {
             null,
         ) < 0) return error.SwrInitError;
         errdefer c.swr_free(@ptrCast(&self.swr_ctx));
-        if (c.swr_init(self.swr_ctx) < 0) return error.SwrInitError;
+        if (c.swr_init(self.swr_ctx.?) < 0) return error.SwrInitError;
 
         // Fifo
         self.fifo = c.av_audio_fifo_alloc(self.encode_ctx.*.sample_fmt, self.encode_ctx.*.ch_layout.nb_channels, 1) orelse return error.OutOfMemory;
@@ -84,6 +85,13 @@ pub const AudioTranscoder = struct {
         std.heap.c_allocator.destroy(self);
     }
 
+    /// Resets the transcoder state, primarily used after seeking.
+    pub fn reset(self: *AudioTranscoder, start_time: f64) void {
+        c.avcodec_flush_buffers(self.decode_ctx);
+        c.av_audio_fifo_reset(self.fifo);
+        self.pts_counter = @as(i64, @intFromFloat(start_time * @as(f64, @floatFromInt(self.encode_ctx.*.sample_rate))));
+    }
+
     /// Transcodes a single encoded input packet and writes it into the output context.
     /// Manages the FFmpeg send/receive decode loop, resampling, FIFO buffering, and encoding loop.
     pub fn transcodePacket(self: *AudioTranscoder, in_packet: *c.AVPacket, out_fmt_ctx: *c.AVFormatContext, stream_idx: c_int) !void {
@@ -91,7 +99,7 @@ pub const AudioTranscoder = struct {
 
         while (c.avcodec_receive_frame(self.decode_ctx, self.frame_in) >= 0) {
             const out_samples = c.av_rescale_rnd(
-                c.swr_get_delay(self.swr_ctx, self.decode_ctx.*.sample_rate) + self.frame_in.*.nb_samples,
+                c.swr_get_delay(self.swr_ctx.?, self.decode_ctx.*.sample_rate) + self.frame_in.*.nb_samples,
                 self.encode_ctx.*.sample_rate,
                 self.decode_ctx.*.sample_rate,
                 c.AV_ROUND_UP,
@@ -108,7 +116,7 @@ pub const AudioTranscoder = struct {
             const in_data = @as([*c][*c]const u8, @ptrCast(&self.frame_in.*.data));
             const out_data = @as([*c][*c]u8, @ptrCast(&converted_frame.*.data));
             
-            const real_out_samples = c.swr_convert(self.swr_ctx, out_data, @intCast(out_samples), in_data, self.frame_in.*.nb_samples);
+            const real_out_samples = c.swr_convert(self.swr_ctx.?, out_data, @intCast(out_samples), in_data, self.frame_in.*.nb_samples);
             if (real_out_samples > 0) {
                 _ = c.av_audio_fifo_write(self.fifo, @ptrCast(out_data), real_out_samples);
             }

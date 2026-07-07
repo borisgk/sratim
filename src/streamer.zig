@@ -39,7 +39,10 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, http_ctx: *HttpStream
     if (c.avformat_open_input(@ptrCast(&in_fmt_ctx), c_file_path.ptr, null, null) < 0) return error.OpenInputFailed;
     defer c.avformat_close_input(@ptrCast(&in_fmt_ctx));
 
-    if (c.avformat_find_stream_info(in_fmt_ctx, null) < 0) return error.StreamInfoFailed;
+    const in_ctx = in_fmt_ctx.?;
+
+
+    if (c.avformat_find_stream_info(in_ctx, null) < 0) return error.StreamInfoFailed;
 
     const out_fmt = c.av_guess_format("mp4", null, null);
     if (out_fmt == null) return error.OutputFormatFailed;
@@ -55,7 +58,6 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, http_ctx: *HttpStream
     var audio_tr: ?*transcoder.AudioTranscoder = null;
     defer if (audio_tr) |tr| tr.deinit();
 
-    const in_ctx = in_fmt_ctx.?;
     const out_ctx = out_fmt_ctx.?;
 
     for (0..@intCast(in_ctx.*.nb_streams)) |i| {
@@ -99,7 +101,8 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, http_ctx: *HttpStream
 
     // movflags: fragmented mp4 configuration
     var dict: ?*c.AVDictionary = null;
-    _ = c.av_dict_set(&dict, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
+    _ = c.av_dict_set(&dict, "movflags", "frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets", 0);
+    _ = c.av_dict_set(&dict, "avoid_negative_ts", "make_non_negative", 0);
     defer c.av_dict_free(@ptrCast(&dict));
 
     if (c.avformat_write_header(out_ctx, &dict) < 0) return error.WriteHeaderFailed;
@@ -110,6 +113,9 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, http_ctx: *HttpStream
         if (c.av_seek_frame(in_ctx, -1, start_ts, c.AVSEEK_FLAG_BACKWARD) < 0) {
             std.debug.print("Seek failed for {}s\n", .{start_time});
         }
+        if (audio_tr) |tr| {
+            tr.reset(start_time);
+        }
     }
 
     var packet = c.av_packet_alloc() orelse return error.OutOfMemory;
@@ -117,13 +123,6 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, http_ctx: *HttpStream
 
     // Demux and remux loop
     while (c.av_read_frame(in_ctx, packet) >= 0) {
-        // Fallback calculation for missing DTS/PTS caused by `av_seek_frame` ignoring pre-roll frames
-        if (packet.*.dts == c.AV_NOPTS_VALUE and packet.*.pts != c.AV_NOPTS_VALUE) {
-            packet.*.dts = packet.*.pts - if (packet.*.duration > 0) packet.*.duration else 0;
-        } else if (packet.*.pts == c.AV_NOPTS_VALUE and packet.*.dts != c.AV_NOPTS_VALUE) {
-            packet.*.pts = packet.*.dts + if (packet.*.duration > 0) packet.*.duration else 0;
-        }
-
         if (packet.*.stream_index == video_in_idx) {
             packet.*.stream_index = video_out_idx;
             c.av_packet_rescale_ts(packet, in_ctx.*.streams[@intCast(video_in_idx)].*.time_base, out_ctx.*.streams[@intCast(video_out_idx)].*.time_base);
