@@ -37,7 +37,7 @@ fn handleConnectionThread(args: *ConnectionArgs) void {
         const request_allocator = request_arena.allocator();
 
         var request = http_server.receiveHead() catch |err| {
-            if (err != error.HttpConnectionClosing and err != error.ConnectionResetByPeer and err != error.EndOfStream) {
+            if (err != error.HttpConnectionClosing and err != error.ConnectionResetByPeer and err != error.EndOfStream and err != error.ReadFailed and err != error.ConnectionTimedOut) {
                 std.debug.print("Failed to read head: {}\n", .{err});
             }
             break;

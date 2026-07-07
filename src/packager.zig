@@ -203,13 +203,17 @@ pub fn generateChunk(allocator: std.mem.Allocator, io: std.Io, file_path: []cons
                 if (transcoder) |*t| {
                     t.transcodePacket(pkt.?, out_ctx.?, target_stream.?) catch return error.TranscodeFailed;
                 } else {
-                    // Fix missing DTS caused by seeking in MKV
+                    // Fix missing DTS caused by seeking in MKV or missing in container
                     if (pkt.?.*.dts == c.AV_NOPTS_VALUE) {
-                        const dur = if (pkt.?.*.duration > 0) pkt.?.*.duration else 40;
-                        if (last_dts == c.AV_NOPTS_VALUE) {
-                            pkt.?.*.dts = if (pkt.?.*.pts != c.AV_NOPTS_VALUE) pkt.?.*.pts - dur else 0;
+                        if (pkt.?.*.pts != c.AV_NOPTS_VALUE) {
+                            pkt.?.*.dts = pkt.?.*.pts;
                         } else {
-                            pkt.?.*.dts = last_dts + dur;
+                            const dur = if (pkt.?.*.duration > 0) pkt.?.*.duration else 40;
+                            if (last_dts == c.AV_NOPTS_VALUE) {
+                                pkt.?.*.dts = 0;
+                            } else {
+                                pkt.?.*.dts = last_dts + dur;
+                            }
                         }
                     }
                     
@@ -217,6 +221,12 @@ pub fn generateChunk(allocator: std.mem.Allocator, io: std.Io, file_path: []cons
                     if (last_dts != c.AV_NOPTS_VALUE and pkt.?.*.dts <= last_dts) {
                         pkt.?.*.dts = last_dts + 1;
                     }
+                    
+                    // MP4 container strictly requires PTS >= DTS
+                    if (pkt.?.*.pts != c.AV_NOPTS_VALUE and pkt.?.*.pts < pkt.?.*.dts) {
+                        pkt.?.*.pts = pkt.?.*.dts;
+                    }
+                    
                     last_dts = pkt.?.*.dts;
 
                     // Hack: If dts is still negative, clip it to 0 to avoid underflowing MP4 baseMediaDecodeTime
