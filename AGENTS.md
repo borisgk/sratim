@@ -11,3 +11,4 @@
 - Provide ongoing explanations instead of "Prioritizing tool usage"
 - We have an MCP server for zig documentation. Use it at all times. Very important.
 - Never ever run "zig build run". Just run "zig build" and hand over to the user.
+- Always use the tmp/ folder to create files for testing that are not a part of the project.
