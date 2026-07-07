@@ -87,8 +87,12 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
             }
 
             if (file_path_opt) |file_path| {
+                const decoded_path = std.heap.c_allocator.dupe(u8, file_path) catch return;
+                defer std.heap.c_allocator.free(decoded_path);
+                const final_path = std.Uri.percentDecodeInPlace(decoded_path);
+
                 // Ensure the path is prefixed with working_folder to avoid reading absolute OS paths securely
-                const full_path = std.fs.path.join(std.heap.c_allocator, &[_][]const u8{ working_folder, file_path }) catch return;
+                const full_path = std.fs.path.join(std.heap.c_allocator, &[_][]const u8{ working_folder, final_path }) catch return;
                 defer std.heap.c_allocator.free(full_path);
 
                 // Initialize chunked response for MP4 stream
