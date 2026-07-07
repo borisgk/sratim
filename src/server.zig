@@ -114,10 +114,18 @@ fn handleRequest(allocator: std.mem.Allocator, io: std.Io, request: *std.http.Se
             },
         });
     } else if (std.mem.startsWith(u8, request.head.target, "/api/stream/")) {
-        const stream_path = request.head.target["/api/stream/".len..];
-        
+        var url_parts = std.mem.splitScalar(u8, request.head.target, '?');
+        const path_part = url_parts.next() orelse "";
+        const query_part = url_parts.next() orelse "";
+
+        var raw_file_param: []const u8 = "";
+        if (std.mem.startsWith(u8, query_part, "file=")) {
+            raw_file_param = query_part["file=".len..];
+        }
+
+        const stream_path = path_part["/api/stream/".len..];
         var iter = std.mem.splitScalar(u8, stream_path, '/');
-        const raw_file_param = iter.next() orelse "";
+        
         const stream_type = iter.next() orelse "";
         
         const decoded_file_buf = try allocator.alloc(u8, raw_file_param.len);

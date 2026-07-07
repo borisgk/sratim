@@ -182,7 +182,7 @@ pub fn generateMpd(allocator: std.mem.Allocator, path: []const u8, url_file_para
             try appendPrint(allocator, &list,
                 \\    <AdaptationSet mimeType="video/mp4" codecs="{s}">
                 \\      <Representation id="video" bandwidth="{d}">
-                \\        <SegmentTemplate timescale="{d}" initialization="/api/stream/{s}/video/init.mp4" media="/api/stream/{s}/video/chunk_$Number$.m4s" startNumber="1">
+                \\        <SegmentTemplate timescale="{d}" initialization="/api/stream/video/init.mp4?file={s}" media="/api/stream/video/chunk_$Number$.m4s?file={s}" startNumber="1">
                 \\{s}
                 \\        </SegmentTemplate>
                 \\      </Representation>
@@ -204,24 +204,24 @@ pub fn generateMpd(allocator: std.mem.Allocator, path: []const u8, url_file_para
                 try appendPrint(allocator, &list,
                     \\    <AdaptationSet mimeType="audio/mp4" codecs="{s}" lang="{s} ({s})">
                     \\      <Representation id="audio_{d}" bandwidth="{d}">
-                    \\        <SegmentTemplate timescale="{d}" initialization="/api/stream/{s}/audio/{d}/init.mp4" media="/api/stream/{s}/audio/{d}/chunk_$Number$.m4s" startNumber="1">
+                    \\        <SegmentTemplate timescale="{d}" initialization="/api/stream/audio/{d}/init.mp4?file={s}" media="/api/stream/audio/{d}/chunk_$Number$.m4s?file={s}" startNumber="1">
                     \\{s}
                     \\        </SegmentTemplate>
                     \\      </Representation>
                     \\    </AdaptationSet>
                     \\
-                , .{ codec_str, lang, title_xml, audio_index, bandwidth, audio_timescale, url_file_param, audio_index, url_file_param, audio_index, timeline_str });
+                , .{ codec_str, lang, title_xml, audio_index, bandwidth, audio_timescale, audio_index, url_file_param, audio_index, url_file_param, timeline_str });
             } else {
                 try appendPrint(allocator, &list,
                     \\    <AdaptationSet mimeType="audio/mp4" codecs="{s}" lang="{s}">
                     \\      <Representation id="audio_{d}" bandwidth="{d}">
-                    \\        <SegmentTemplate timescale="{d}" initialization="/api/stream/{s}/audio/{d}/init.mp4" media="/api/stream/{s}/audio/{d}/chunk_$Number$.m4s" startNumber="1">
+                    \\        <SegmentTemplate timescale="{d}" initialization="/api/stream/audio/{d}/init.mp4?file={s}" media="/api/stream/audio/{d}/chunk_$Number$.m4s?file={s}" startNumber="1">
                     \\{s}
                     \\        </SegmentTemplate>
                     \\      </Representation>
                     \\    </AdaptationSet>
                     \\
-                , .{ codec_str, lang, audio_index, bandwidth, audio_timescale, url_file_param, audio_index, url_file_param, audio_index, timeline_str });
+                , .{ codec_str, lang, audio_index, bandwidth, audio_timescale, audio_index, url_file_param, audio_index, url_file_param, timeline_str });
             }
             audio_index += 1;
         }

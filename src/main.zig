@@ -1,7 +1,7 @@
 const std = @import("std");
 const Config = @import("config.zig").Config;
 const server = @import("server.zig");
-
+const watcher = @import("watcher.zig");
 pub fn main(init: std.process.Init) !void {
     const arena: std.mem.Allocator = init.arena.allocator();
     const io = init.io;
@@ -14,6 +14,8 @@ pub fn main(init: std.process.Init) !void {
     defer config.deinit(arena);
 
     @import("packager.zig").init();
+
+    _ = try std.Thread.spawn(.{}, watcher.runWatcher, .{ arena, io, &config });
 
     try server.runServer(arena, io, &config);
 }

@@ -27,17 +27,53 @@ pub fn generateHtmlListing(allocator: std.mem.Allocator, io: std.Io, folder_path
         \\
     );
 
-    var it = dir.iterate();
+    var walker = try dir.walk(allocator);
+    defer walker.deinit();
+    
     var count: usize = 0;
-    while (try it.next(io)) |entry| {
-        if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".mkv")) {
+    while (try walker.next(io)) |entry| {
+        if (entry.kind == .file and std.mem.endsWith(u8, entry.basename, ".mkv")) {
             count += 1;
+            
+            // Allocate string for the relative path
+            const rel_path = try allocator.dupe(u8, entry.path);
+            defer allocator.free(rel_path);
+            
             try list.appendSlice(allocator, "        <li><a href=\"/player?file=");
-            try list.appendSlice(allocator, entry.name);
+            
+            // The path might contain spaces, we should URL encode it, but for now we just write it exactly as we did before.
+            // A more robust URL encoding could be added, but for simple paths it works.
+            
+            // URL encoding basic implementation
+            for (rel_path) |c| {
+                if (c == ' ') {
+                    try list.appendSlice(allocator, "%20");
+                } else if (c == '&') {
+                    try list.appendSlice(allocator, "%26");
+                } else {
+                    try list.append(allocator, c);
+                }
+            }
+            
             try list.appendSlice(allocator, "\" style=\"text-decoration:none; color:#2c3e50; font-weight:bold;\">");
-            try list.appendSlice(allocator, entry.name);
+            
+            // HTML escape name
+            for (rel_path) |c| {
+                if (c == '<') try list.appendSlice(allocator, "&lt;")
+                else if (c == '>') try list.appendSlice(allocator, "&gt;")
+                else try list.append(allocator, c);
+            }
+            
             try list.appendSlice(allocator, "</a><a href=\"/info?file=");
-            try list.appendSlice(allocator, entry.name);
+            for (rel_path) |c| {
+                if (c == ' ') {
+                    try list.appendSlice(allocator, "%20");
+                } else if (c == '&') {
+                    try list.appendSlice(allocator, "%26");
+                } else {
+                    try list.append(allocator, c);
+                }
+            }
             try list.appendSlice(allocator, "\" class=\"info-icon\" title=\"Information\" style=\"text-decoration:none;\">i</a></li>\n");
         }
     }

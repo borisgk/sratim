@@ -3,3 +3,5 @@ config.json
 zig-out/
 .zig-cache/
 .sratim/
+Action/
+Comedy/
