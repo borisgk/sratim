@@ -25,6 +25,15 @@ pub fn generatePlayerHtml(allocator: std.mem.Allocator, file_param: []const u8) 
         \\      const player = new shaka.Player();
         \\      await player.attach(video);
         \\
+        \\      // Pre-buffer more chunks in advance
+        \\      player.configure({{
+        \\        streaming: {{
+        \\          bufferingGoal: 60,      // Buffer up to 60 seconds ahead
+        \\          rebufferingGoal: 10,    // Wait for 10 seconds of buffer before resuming playback
+        \\          bufferBehind: 30        // Keep 30 seconds of history to allow quick seeking backwards
+        \\        }}
+        \\      }});
+        \\
         \\      // Set up the UI
         \\      const ui = new shaka.ui.Overlay(player, videoContainer, video);
         \\      
