@@ -28,7 +28,7 @@ pub fn generatePlayerHtml(allocator: std.mem.Allocator, file_param: []const u8) 
         \\      // Pre-buffer more chunks in advance
         \\      player.configure({{
         \\        streaming: {{
-        \\          bufferingGoal: 60,      // Buffer up to 60 seconds ahead
+        \\          bufferingGoal: 600,     // Buffer up to 10 minutes (600s) ahead. Note: May hit browser memory limits on high bitrates!
         \\          rebufferingGoal: 10,    // Wait for 10 seconds of buffer before resuming playback
         \\          bufferBehind: 30        // Keep 30 seconds of history to allow quick seeking backwards
         \\        }}
@@ -36,6 +36,15 @@ pub fn generatePlayerHtml(allocator: std.mem.Allocator, file_param: []const u8) 
         \\
         \\      // Set up the UI
         \\      const ui = new shaka.ui.Overlay(player, videoContainer, video);
+        \\
+        \\      // Make the prebuffered amount distinctly visible on the progress bar
+        \\      ui.configure({{
+        \\        seekBarColors: {{
+        \\          base: 'rgba(255, 255, 255, 0.2)',
+        \\          buffered: 'rgba(0, 255, 170, 0.6)', // Bright neon cyan/green for buffered
+        \\          played: '#FF0055' // Vibrant pink/red for played
+        \\        }}
+        \\      }});
         \\      
         \\      try {{
         \\        await player.load(manifestUri);
