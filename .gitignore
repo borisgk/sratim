@@ -5,3 +5,5 @@ zig-out/
 .sratim/
 Action/
 Comedy/
+test_*.*
+test_*

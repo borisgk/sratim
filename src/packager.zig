@@ -184,6 +184,15 @@ pub fn generateChunk(allocator: std.mem.Allocator, io: std.Io, file_path: []cons
         var pkt: ?*c.AVPacket = c.av_packet_alloc();
         defer c.av_packet_free(&pkt);
 
+        var missing_dts_queue: std.ArrayList(*c.AVPacket) = .empty;
+        defer {
+            for (missing_dts_queue.items) |q_pkt| {
+                var p: ?*c.AVPacket = q_pkt;
+                c.av_packet_free(&p);
+            }
+            missing_dts_queue.deinit(allocator);
+        }
+
         var last_dts: i64 = c.AV_NOPTS_VALUE;
         
         while (c.av_read_frame(in_ctx, pkt) >= 0) {
@@ -203,34 +212,71 @@ pub fn generateChunk(allocator: std.mem.Allocator, io: std.Io, file_path: []cons
                 if (transcoder) |*t| {
                     t.transcodePacket(pkt.?, out_ctx.?, target_stream.?) catch return error.TranscodeFailed;
                 } else {
-                    // Fix missing DTS caused by seeking in MKV or missing in container
                     if (pkt.?.*.dts == c.AV_NOPTS_VALUE) {
-                        if (pkt.?.*.pts != c.AV_NOPTS_VALUE) {
-                            pkt.?.*.dts = pkt.?.*.pts;
-                        } else {
-                            const dur = if (pkt.?.*.duration > 0) pkt.?.*.duration else 40;
-                            if (last_dts == c.AV_NOPTS_VALUE) {
-                                pkt.?.*.dts = 0;
-                            } else {
-                                pkt.?.*.dts = last_dts + dur;
-                            }
-                        }
+                        const clone = c.av_packet_alloc();
+                        _ = c.av_packet_ref(clone, pkt);
+                        try missing_dts_queue.append(allocator, clone.?);
+                        continue;
                     }
-                    
+
+                    // We found a valid DTS, flush the queue by extrapolating backwards
+                    if (missing_dts_queue.items.len > 0) {
+                        var curr_dts = pkt.?.*.dts;
+                        var i: usize = missing_dts_queue.items.len;
+                        while (i > 0) {
+                            i -= 1;
+                            const q_pkt = missing_dts_queue.items[i];
+                            var dur: i64 = 40;
+                            if (q_pkt.*.duration > 0) {
+                                dur = q_pkt.*.duration;
+                            } else if (target_stream.?.*.avg_frame_rate.num > 0) {
+                                const fps_num: i64 = @intCast(target_stream.?.*.avg_frame_rate.num);
+                                const fps_den: i64 = @intCast(target_stream.?.*.avg_frame_rate.den);
+                                const tb_num: i64 = @intCast(target_stream.?.*.time_base.num);
+                                const tb_den: i64 = @intCast(target_stream.?.*.time_base.den);
+                                if (fps_num > 0 and tb_num > 0) {
+                                    dur = @divTrunc(tb_den * fps_den, tb_num * fps_num);
+                                }
+                            }
+                            curr_dts -= dur;
+                            
+                            if (q_pkt.*.pts != c.AV_NOPTS_VALUE and curr_dts > q_pkt.*.pts) {
+                                curr_dts = q_pkt.*.pts;
+                            }
+                            q_pkt.*.dts = curr_dts;
+                        }
+
+                        for (missing_dts_queue.items) |q_pkt| {
+                            if (last_dts != c.AV_NOPTS_VALUE and q_pkt.*.dts <= last_dts) {
+                                q_pkt.*.dts = last_dts + 1;
+                            }
+                            last_dts = q_pkt.*.dts;
+
+                            if (chunk_index == 1 and q_pkt.*.dts < 0) {
+                                q_pkt.*.dts = 0;
+                                last_dts = 0;
+                            }
+
+                            q_pkt.*.stream_index = out_stream.*.index;
+                            c.av_packet_rescale_ts(q_pkt, target_stream.?.*.time_base, out_stream.*.time_base);
+                            q_pkt.*.pos = -1;
+
+                            _ = c.av_interleaved_write_frame(out_ctx, q_pkt);
+                            
+                            var p: ?*c.AVPacket = q_pkt;
+                            c.av_packet_free(&p);
+                        }
+                        missing_dts_queue.clearRetainingCapacity();
+                    }
+
                     // Ensure strictly monotonic DTS for MP4 muxer
                     if (last_dts != c.AV_NOPTS_VALUE and pkt.?.*.dts <= last_dts) {
                         pkt.?.*.dts = last_dts + 1;
                     }
                     
-                    // MP4 container strictly requires PTS >= DTS
-                    if (pkt.?.*.pts != c.AV_NOPTS_VALUE and pkt.?.*.pts < pkt.?.*.dts) {
-                        pkt.?.*.pts = pkt.?.*.dts;
-                    }
-                    
                     last_dts = pkt.?.*.dts;
 
                     // Hack: If dts is still negative, clip it to 0 to avoid underflowing MP4 baseMediaDecodeTime
-                    // (Only clip if it's the very first chunk's very first packets)
                     if (chunk_index == 1 and pkt.?.*.dts < 0) {
                         pkt.?.*.dts = 0;
                         last_dts = 0; // Prevent subsequent packets from being shifted backwards
@@ -243,6 +289,51 @@ pub fn generateChunk(allocator: std.mem.Allocator, io: std.Io, file_path: []cons
                     _ = c.av_interleaved_write_frame(out_ctx, pkt);
                 }
             }
+        }
+
+        // Flush remaining queue if end of chunk reached without finding valid DTS
+        if (missing_dts_queue.items.len > 0) {
+            for (missing_dts_queue.items) |q_pkt| {
+                if (q_pkt.*.pts != c.AV_NOPTS_VALUE) {
+                    q_pkt.*.dts = q_pkt.*.pts;
+                } else {
+                    var dur: i64 = 40;
+                    if (q_pkt.*.duration > 0) {
+                        dur = q_pkt.*.duration;
+                    } else if (target_stream.?.*.avg_frame_rate.num > 0) {
+                        const fps_num: i64 = @intCast(target_stream.?.*.avg_frame_rate.num);
+                        const fps_den: i64 = @intCast(target_stream.?.*.avg_frame_rate.den);
+                        const tb_num: i64 = @intCast(target_stream.?.*.time_base.num);
+                        const tb_den: i64 = @intCast(target_stream.?.*.time_base.den);
+                        if (fps_num > 0 and tb_num > 0) dur = @divTrunc(tb_den * fps_den, tb_num * fps_num);
+                    }
+                    if (last_dts == c.AV_NOPTS_VALUE) {
+                        q_pkt.*.dts = 0;
+                    } else {
+                        q_pkt.*.dts = last_dts + dur;
+                    }
+                }
+
+                if (last_dts != c.AV_NOPTS_VALUE and q_pkt.*.dts <= last_dts) {
+                    q_pkt.*.dts = last_dts + 1;
+                }
+                last_dts = q_pkt.*.dts;
+
+                if (chunk_index == 1 and q_pkt.*.dts < 0) {
+                    q_pkt.*.dts = 0;
+                    last_dts = 0;
+                }
+
+                q_pkt.*.stream_index = out_stream.*.index;
+                c.av_packet_rescale_ts(q_pkt, target_stream.?.*.time_base, out_stream.*.time_base);
+                q_pkt.*.pos = -1;
+
+                _ = c.av_interleaved_write_frame(out_ctx, q_pkt);
+                
+                var p: ?*c.AVPacket = q_pkt;
+                c.av_packet_free(&p);
+            }
+            missing_dts_queue.clearRetainingCapacity();
         }
     }
 
