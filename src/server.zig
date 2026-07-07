@@ -7,6 +7,51 @@ const player = @import("player.zig");
 const manifest = @import("manifest.zig");
 const packager = @import("packager.zig");
 
+const ConnectionArgs = struct {
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    config: *const Config,
+    connection: std.Io.net.Stream,
+};
+
+fn handleConnectionThread(args: *ConnectionArgs) void {
+    const allocator = args.allocator;
+    const io = args.io;
+    const config = args.config;
+    var connection = args.connection;
+
+    defer allocator.destroy(args);
+    defer connection.close(io);
+
+    var read_buffer: [4096]u8 = undefined;
+    var write_buffer: [4096]u8 = undefined;
+
+    var stream_reader = std.Io.net.Stream.Reader.init(connection, io, &read_buffer);
+    var stream_writer = std.Io.net.Stream.Writer.init(connection, io, &write_buffer);
+
+    var http_server = std.http.Server.init(&stream_reader.interface, &stream_writer.interface);
+
+    while (true) {
+        var request_arena = std.heap.ArenaAllocator.init(args.allocator);
+        defer request_arena.deinit();
+        const request_allocator = request_arena.allocator();
+
+        var request = http_server.receiveHead() catch |err| {
+            if (err != error.HttpConnectionClosing and err != error.ConnectionResetByPeer and err != error.EndOfStream) {
+                std.debug.print("Failed to read head: {}\n", .{err});
+            }
+            break;
+        };
+
+        handleRequest(request_allocator, io, &request, config) catch |err| {
+            if (err != error.ConnectionResetByPeer and err != error.BrokenPipe and err != error.WriteFailed and err != error.SocketUnconnected) {
+                std.debug.print("Request error: {}\n", .{err});
+            }
+            break;
+        };
+    }
+}
+
 pub fn runServer(allocator: std.mem.Allocator, io: std.Io, config: *const Config) !void {
     const address = try std.Io.net.IpAddress.parseIp4("127.0.0.1", config.port);
     var net_server = try address.listen(io, .{ .reuse_address = true });
@@ -19,28 +64,26 @@ pub fn runServer(allocator: std.mem.Allocator, io: std.Io, config: *const Config
             std.debug.print("Failed to accept connection: {}\n", .{err});
             continue;
         };
-        defer connection.close(io);
 
-        var read_buffer: [4096]u8 = undefined;
-        var write_buffer: [4096]u8 = undefined;
-
-        var stream_reader = std.Io.net.Stream.Reader.init(connection, io, &read_buffer);
-        var stream_writer = std.Io.net.Stream.Writer.init(connection, io, &write_buffer);
-
-        var http_server = std.http.Server.init(&stream_reader.interface, &stream_writer.interface);
-
-        var request = http_server.receiveHead() catch |err| {
-            if (err != error.HttpConnectionClosing and err != error.ConnectionResetByPeer) {
-                std.debug.print("Failed to read head: {}\n", .{err});
-            }
+        const args = allocator.create(ConnectionArgs) catch |err| {
+            std.debug.print("Failed to allocate connection args: {}\n", .{err});
+            connection.close(io);
             continue;
         };
-
-        handleRequest(allocator, io, &request, config) catch |err| {
-            if (err != error.ConnectionResetByPeer and err != error.BrokenPipe and err != error.WriteFailed and err != error.SocketUnconnected) {
-                std.debug.print("Request error: {}\n", .{err});
-            }
+        args.* = .{
+            .allocator = allocator,
+            .io = io,
+            .config = config,
+            .connection = connection,
         };
+
+        const thread = std.Thread.spawn(.{}, handleConnectionThread, .{args}) catch |err| {
+            std.debug.print("Failed to spawn thread: {}\n", .{err});
+            allocator.destroy(args);
+            connection.close(io);
+            continue;
+        };
+        thread.detach();
     }
 }
 
@@ -177,7 +220,7 @@ fn handleRequest(allocator: std.mem.Allocator, io: std.Io, request: *std.http.Se
         }
         defer if (splits.len > 0) allocator.free(splits);
 
-        const chunk_data = packager.generateChunk(allocator, full_path, is_audio, track_index, chunk_index, is_init, splits) catch |err| {
+        const chunk_data = packager.generateChunk(allocator, io, full_path, is_audio, track_index, chunk_index, is_init, splits) catch |err| {
             std.debug.print("Packager error: {}\n", .{err});
             try request.respond("Internal Server Error", .{ .status = .internal_server_error });
             return;

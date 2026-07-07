@@ -28,28 +28,74 @@ const AVIndexEntry = extern struct {
     min_distance: i32,
 };
 
+const ContextPool = struct {
+    in_ctx: *c.AVFormatContext,
+    mutex: std.Io.Mutex,
+};
+
+var cache: ?std.StringHashMap(ContextPool) = null;
+var cache_mutex: std.Io.Mutex = std.Io.Mutex.init;
+
+fn getContext(allocator: std.mem.Allocator, io: std.Io, file_path: []const u8) !*ContextPool {
+    cache_mutex.lockUncancelable(io);
+    defer cache_mutex.unlock(io);
+
+    if (cache == null) {
+        cache = std.StringHashMap(ContextPool).init(std.heap.c_allocator);
+    }
+
+    if (cache.?.getPtr(file_path)) |pool| {
+        return pool;
+    }
+
+    if (cache.?.count() >= 10) {
+        var it = cache.?.iterator();
+        while (it.next()) |entry| {
+            var ctx: ?*c.AVFormatContext = entry.value_ptr.in_ctx;
+            c.avformat_close_input(&ctx);
+            std.heap.c_allocator.free(entry.key_ptr.*);
+        }
+        cache.?.clearRetainingCapacity();
+    }
+
+    const path_z = try allocator.dupeZ(u8, file_path);
+    defer allocator.free(path_z);
+
+    var in_ctx: ?*c.AVFormatContext = null;
+    if (c.avformat_open_input(&in_ctx, path_z, null, null) != 0) return error.OpenInputFailed;
+    if (c.avformat_find_stream_info(in_ctx, null) < 0) {
+        c.avformat_close_input(&in_ctx);
+        return error.FindStreamInfoFailed;
+    }
+
+    const pool = ContextPool{
+        .in_ctx = in_ctx.?,
+        .mutex = std.Io.Mutex.init,
+    };
+    
+    const key_dup = try std.heap.c_allocator.dupe(u8, file_path);
+    try cache.?.put(key_dup, pool);
+    
+    return cache.?.getPtr(file_path).?;
+}
+
 pub fn init() void {
     c.av_log_set_level(c.AV_LOG_ERROR);
 }
 
-pub fn generateChunk(allocator: std.mem.Allocator, file_path: []const u8, is_audio: bool, track_index: usize, chunk_index: usize, is_init: bool, splits: []const i64) ![]const u8 {
-    var in_ctx: ?*c.AVFormatContext = null;
-    
-    const path_z = try allocator.dupeZ(u8, file_path);
-    defer allocator.free(path_z);
-    
-    if (c.avformat_open_input(&in_ctx, path_z, null, null) != 0) return error.OpenInputFailed;
-    defer c.avformat_close_input(&in_ctx);
-
-    if (c.avformat_find_stream_info(in_ctx, null) < 0) return error.FindStreamInfoFailed;
+pub fn generateChunk(allocator: std.mem.Allocator, io: std.Io, file_path: []const u8, is_audio: bool, track_index: usize, chunk_index: usize, is_init: bool, splits: []const i64) ![]const u8 {
+    const pool = try getContext(allocator, io, file_path);
+    pool.mutex.lockUncancelable(io);
+    defer pool.mutex.unlock(io);
+    const in_ctx = pool.in_ctx;
 
     // Find the requested stream and the master video stream (for timeline)
     var target_stream: ?*c.AVStream = null;
     var master_video_stream: ?*c.AVStream = null;
     var audio_count: usize = 0;
     
-    for (0..@intCast(in_ctx.?.*.nb_streams)) |i| {
-        const st = in_ctx.?.*.streams[i];
+    for (0..@intCast(in_ctx.*.nb_streams)) |i| {
+        const st = in_ctx.*.streams[i];
         if (st.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_VIDEO) {
             if (master_video_stream == null) master_video_stream = st;
             if (!is_audio) target_stream = st;
@@ -128,8 +174,8 @@ pub fn generateChunk(allocator: std.mem.Allocator, file_path: []const u8, is_aud
     if (c.avformat_write_header(out_ctx, &opts) < 0) return error.WriteHeaderFailed;
 
     if (!is_init) {
-        // Seek to the start timestamp if it's > 0
-        if (start_ts > 0) {
+        // Seek to the start timestamp
+        if (start_ts >= 0) {
             if (c.av_seek_frame(in_ctx, target_stream.?.*.index, start_ts, c.AVSEEK_FLAG_BACKWARD) < 0) {
                 std.debug.print("Seek failed\n", .{});
             }
