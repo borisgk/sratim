@@ -46,12 +46,46 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
 
         // Route: Web UI (Player)
         } else if (std.mem.startsWith(u8, target, "/player")) {
-            request.respond(html.INDEX_HTML, .{
-                .status = .ok,
-                .extra_headers = &.{
-                    .{ .name = "content-type", .value = "text/html" },
-                },
-            }) catch return;
+            var file_path_opt: ?[]const u8 = null;
+            if (std.mem.indexOf(u8, target, "?")) |q_idx| {
+                const query = target[q_idx + 1 ..];
+                var it = std.mem.splitScalar(u8, query, '&');
+                while (it.next()) |param| {
+                    if (std.mem.startsWith(u8, param, "file=")) {
+                        file_path_opt = param[5..];
+                    }
+                }
+            }
+
+            if (file_path_opt) |file_path| {
+                const decoded_path = std.heap.c_allocator.dupe(u8, file_path) catch return;
+                defer std.heap.c_allocator.free(decoded_path);
+                const final_path = std.Uri.percentDecodeInPlace(decoded_path);
+
+                const full_path = std.fs.path.join(std.heap.c_allocator, &[_][]const u8{ working_folder, final_path }) catch return;
+                defer std.heap.c_allocator.free(full_path);
+
+                // Ensure null-terminated string for C API
+                const c_full_path = std.heap.c_allocator.dupeZ(u8, full_path) catch return;
+                defer std.heap.c_allocator.free(c_full_path);
+
+                const media_info = streamer.getMediaInfo(c_full_path) catch streamer.MediaInfo{
+                    .duration = 2799.0,
+                    .codec_str = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\"",
+                };
+
+                const html_content = html.generatePlayerHtml(std.heap.c_allocator, final_path, media_info.duration, media_info.codec_str) catch return;
+                defer std.heap.c_allocator.free(html_content);
+
+                request.respond(html_content, .{
+                    .status = .ok,
+                    .extra_headers = &.{
+                        .{ .name = "content-type", .value = "text/html" },
+                    },
+                }) catch return;
+            } else {
+                request.respond("Missing file parameter", .{ .status = .bad_request }) catch return;
+            }
             
         // Route: Favicon
         } else if (std.mem.eql(u8, target, "/favicon.ico")) {

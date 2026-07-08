@@ -151,3 +151,35 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, http_ctx: *HttpStream
         return error.ConnectionDropped;
     }
 }
+
+pub const MediaInfo = struct {
+    duration: f64,
+    codec_str: []const u8,
+};
+
+/// Retrieves the duration and codec info of a media file.
+pub fn getMediaInfo(file_path: [:0]const u8) !MediaInfo {
+    var fmt_ctx: ?*c.AVFormatContext = null;
+    if (c.avformat_open_input(@ptrCast(&fmt_ctx), file_path.ptr, null, null) < 0) return error.OpenFailed;
+    defer c.avformat_close_input(@ptrCast(&fmt_ctx));
+
+    if (c.avformat_find_stream_info(fmt_ctx.?, null) < 0) return error.StreamInfoFailed;
+
+    const duration = @as(f64, @floatFromInt(fmt_ctx.?.duration)) / @as(f64, @floatFromInt(c.AV_TIME_BASE));
+    var codec_str: []const u8 = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\""; // Default
+
+    for (0..fmt_ctx.?.nb_streams) |i| {
+        const stream = fmt_ctx.?.streams[i];
+        if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_VIDEO) {
+            const codec_id = stream.*.codecpar.*.codec_id;
+            if (codec_id == c.AV_CODEC_ID_H264) {
+                codec_str = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\"";
+            } else if (codec_id == c.AV_CODEC_ID_HEVC) {
+                codec_str = "video/mp4; codecs=\"hev1.1.6.L93.B0, mp4a.40.2\"";
+            }
+            break;
+        }
+    }
+
+    return MediaInfo{ .duration = duration, .codec_str = codec_str };
+}
