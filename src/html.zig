@@ -44,7 +44,7 @@ pub fn generatePlayerHtml(allocator: std.mem.Allocator, file_name: []const u8, d
         \\        
         \\        const DURATION = {d}; // Real duration
         \\        const fileName = "{s}";
-        \\        const codecStr = "{s}";
+        \\        const codecStr = '{s}';
         \\        let currentSeekTime = 0;
         \\        let abortController = null;
         \\
@@ -59,6 +59,43 @@ pub fn generatePlayerHtml(allocator: std.mem.Allocator, file_name: []const u8, d
         \\                const response = await fetch(`/stream?file=${{encodeURIComponent(fileName)}}&start=${{startTime}}`, {{ signal }});
         \\                const reader = response.body.getReader();
         \\
+        \\                let queue = [];
+        \\                let isAppending = false;
+        \\
+        \\                function processQueue() {{
+        \\                    if (isAppending || queue.length === 0 || signal.aborted) return;
+        \\                    isAppending = true;
+        \\                    
+        \\                    // Combine chunks to minimize appendBuffer overhead
+        \\                    let totalLen = 0;
+        \\                    for (let q of queue) totalLen += q.length;
+        \\                    let combined = new Uint8Array(totalLen);
+        \\                    let offset = 0;
+        \\                    for (let q of queue) {{
+        \\                        combined.set(q, offset);
+        \\                        offset += q.length;
+        \\                    }}
+        \\                    queue = [];
+        \\
+        \\                    try {{
+        \\                        sourceBuffer.appendBuffer(combined);
+        \\                    }} catch (e) {{
+        \\                        if (e.name === 'QuotaExceededError') {{
+        \\                            // Buffer is physically full, wait and retry
+        \\                            queue.unshift(combined);
+        \\                            isAppending = false;
+        \\                            setTimeout(processQueue, 1000);
+        \\                        }} else {{
+        \\                            console.error('Append error:', e);
+        \\                        }}
+        \\                    }}
+        \\                }}
+        \\
+        \\                sourceBuffer.addEventListener('updateend', () => {{
+        \\                    isAppending = false;
+        \\                    processQueue();
+        \\                }});
+        \\
         \\                while (!signal.aborted) {{
         \\                    // Pause if buffer is far ahead (120 seconds)
         \\                    if (sourceBuffer.buffered.length > 0) {{
@@ -72,23 +109,8 @@ pub fn generatePlayerHtml(allocator: std.mem.Allocator, file_name: []const u8, d
         \\                    const {{done, value}} = await reader.read();
         \\                    if (done) break;
         \\
-        \\                    let appended = false;
-        \\                    while (!appended && !signal.aborted) {{
-        \\                        if (sourceBuffer.updating) {{
-        \\                            await new Promise(r => setTimeout(r, 50));
-        \\                            continue;
-        \\                        }}
-        \\                        try {{
-        \\                            sourceBuffer.appendBuffer(value);
-        \\                            appended = true;
-        \\                        }} catch (e) {{
-        \\                            if (e.name === 'QuotaExceededError') {{
-        \\                                await new Promise(r => setTimeout(r, 1000));
-        \\                            }} else {{
-        \\                                throw e;
-        \\                            }}
-        \\                        }}
-        \\                    }}
+        \\                    queue.push(value);
+        \\                    if (!isAppending) processQueue();
         \\                }}
         \\            }} catch (e) {{
         \\                if (e.name !== 'AbortError') console.error('Fetch error:', e);
