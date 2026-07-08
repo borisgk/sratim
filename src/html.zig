@@ -13,12 +13,15 @@ pub fn generatePlayerHtml(allocator: std.mem.Allocator, file_name: []const u8, d
         \\<head>
         \\    <title>Sratim Stream</title>
         \\    <style>
-        \\        body {{ margin: 0; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; color: white; }}
-        \\        .player-wrapper {{ position: relative; width: 80%; max-width: 1280px; }}
-        \\        video {{ width: 100%; display: block; }}
-        \\        .controls {{ display: flex; align-items: center; padding: 10px; background: #222; }}
-        \\        button {{ background: #444; color: white; border: none; padding: 10px; cursor: pointer; }}
-        \\        .seek-bar {{ flex: 1; margin: 0 10px; cursor: pointer; height: 10px; background: #444; position: relative; }}
+        \\        body {{ margin: 0; background: #000; height: 100vh; font-family: sans-serif; color: white; overflow: hidden; }}
+        \\        .player-wrapper {{ display: flex; flex-direction: column; height: 100%; width: 100%; }}
+        \\        video {{ width: 100%; flex: 1; min-height: 0; background: #000; display: block; object-fit: contain; }}
+        \\        .controls {{ display: flex; align-items: center; padding: 10px; background: #222; flex-shrink: 0; }}
+        \\        button {{ background: #444; color: white; border: none; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; padding: 0; }}
+        \\        button:hover {{ background: #555; }}
+        \\        #playpause {{ margin-right: 15px; }}
+        \\        #fullscreen {{ margin-left: 15px; }}
+        \\        .seek-bar {{ flex: 1; margin: 0 10px; cursor: pointer; height: 10px; background: #444; position: relative; border-radius: 5px; overflow: hidden; }}
         \\        .seek-fill {{ background: #f00; height: 100%; width: 0%; pointer-events: none; }}
         \\        .time {{ font-variant-numeric: tabular-nums; }}
         \\    </style>
@@ -27,12 +30,17 @@ pub fn generatePlayerHtml(allocator: std.mem.Allocator, file_name: []const u8, d
         \\    <div class="player-wrapper">
         \\        <video id="video" autoplay playsinline></video>
         \\        <div class="controls">
-        \\            <button id="playpause">Pause</button>
+        \\            <button id="playpause">
+        \\                <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+        \\            </button>
         \\            <div class="time" id="time-current">0:00</div>
         \\            <div class="seek-bar" id="seekbar">
         \\                <div class="seek-fill" id="seekfill"></div>
         \\            </div>
         \\            <div class="time" id="time-total">{s}</div>
+        \\            <button id="fullscreen">
+        \\                <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+        \\            </button>
         \\        </div>
         \\    </div>
         \\    <script>
@@ -41,12 +49,19 @@ pub fn generatePlayerHtml(allocator: std.mem.Allocator, file_name: []const u8, d
         \\        const seekbar = document.getElementById('seekbar');
         \\        const seekfill = document.getElementById('seekfill');
         \\        const timeCurrent = document.getElementById('time-current');
+        \\        const btnFullscreen = document.getElementById('fullscreen');
+        \\        const playerWrapper = document.querySelector('.player-wrapper');
         \\        
         \\        const DURATION = {d}; // Real duration
         \\        const fileName = "{s}";
         \\        const codecStr = '{s}';
         \\        let currentSeekTime = 0;
         \\        let abortController = null;
+        \\
+        \\        const svgPlay = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M8 5v14l11-7z"/></svg>';
+        \\        const svgPause = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+        \\        const svgFullscreen = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>';
+        \\        const svgExitFullscreen = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>';
         \\
         \\        function formatTime(seconds) {{
         \\            const m = Math.floor(seconds / 60);
@@ -146,10 +161,10 @@ pub fn generatePlayerHtml(allocator: std.mem.Allocator, file_name: []const u8, d
         \\        playpause.addEventListener('click', () => {{
         \\            if (video.paused) {{
         \\                video.play();
-        \\                playpause.innerText = 'Pause';
+        \\                playpause.innerHTML = svgPause;
         \\            }} else {{
         \\                video.pause();
-        \\                playpause.innerText = 'Play';
+        \\                playpause.innerHTML = svgPlay;
         \\            }}
         \\        }});
         \\
@@ -158,6 +173,22 @@ pub fn generatePlayerHtml(allocator: std.mem.Allocator, file_name: []const u8, d
         \\            const percentage = (e.clientX - rect.left) / rect.width;
         \\            const seekTo = Math.max(0, Math.floor(percentage * DURATION));
         \\            loadVideo(seekTo);
+        \\        }});
+        \\
+        \\        btnFullscreen.addEventListener('click', () => {{
+        \\            if (!document.fullscreenElement) {{
+        \\                playerWrapper.requestFullscreen().catch(err => console.error(err));
+        \\            }} else {{
+        \\                document.exitFullscreen();
+        \\            }}
+        \\        }});
+        \\
+        \\        document.addEventListener('fullscreenchange', () => {{
+        \\            if (document.fullscreenElement) {{
+        \\                btnFullscreen.innerHTML = svgExitFullscreen;
+        \\            }} else {{
+        \\                btnFullscreen.innerHTML = svgFullscreen;
+        \\            }}
         \\        }});
         \\
         \\        // Initial load
