@@ -210,7 +210,7 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
             if (codec_id == c.AV_CODEC_ID_H264) {
                 codec_str = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\"";
             } else if (codec_id == c.AV_CODEC_ID_HEVC) {
-                codec_str = "video/mp4; codecs=\"hev1.1.6.L93.B0, mp4a.40.2\"";
+                codec_str = "video/mp4; codecs=\"hev1.2.4.L153.B0, mp4a.40.2\"";
             }
         } else if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_AUDIO) {
             var label: []const u8 = "Unknown";

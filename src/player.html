@@ -109,6 +109,7 @@
 
                 let queue = [];
                 let isAppending = false;
+                let isQuotaExceeded = false;
 
                 function processQueue() {
                     if (isAppending || queue.length === 0 || signal.aborted) return;
@@ -127,11 +128,13 @@
 
                     try {
                         sourceBuffer.appendBuffer(combined);
+                        isQuotaExceeded = false;
                     } catch (e) {
                         if (e.name === 'QuotaExceededError') {
                             // Buffer is physically full, wait and retry
                             queue.unshift(combined);
                             isAppending = false;
+                            isQuotaExceeded = true;
                             setTimeout(processQueue, 1000);
                         } else {
                             console.error('Append error:', e);
@@ -145,6 +148,12 @@
                 });
 
                 while (!signal.aborted) {
+                    // Backpressure: pause if JS queue is growing out of control OR buffer is physically full
+                    if (isQuotaExceeded || queue.length > 50) {
+                        await new Promise(r => setTimeout(r, 100));
+                        continue;
+                    }
+
                     // Pause if buffer is far ahead (120 seconds)
                     if (sourceBuffer.buffered.length > 0) {
                         const end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
