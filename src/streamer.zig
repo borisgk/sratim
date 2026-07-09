@@ -28,7 +28,7 @@ pub fn write_packet(ptr: ?*anyopaque, buf: [*c]const u8, buf_size: c_int) callco
 /// The main streaming pipeline.
 /// Opens an input media file (e.g., MKV), reads streams, dynamically transcodes incompatible audio to AAC,
 /// remuxes video natively (e.g., H.264), and pipes the fragmented MP4 output over HTTP.
-pub fn streamMedia(file_path: []const u8, start_time: f64, http_ctx: *HttpStreamContext) !void {
+pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: c_int, http_ctx: *HttpStreamContext) !void {
     _ = c.avformat_network_init();
     defer { _ = c.avformat_network_deinit(); }
 
@@ -69,18 +69,41 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, http_ctx: *HttpStream
             out_stream.*.codecpar.*.codec_tag = 0; // Let the muxer choose the tag based on codec
             video_out_idx = @intCast(out_ctx.*.nb_streams - 1);
         } else if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_AUDIO and audio_in_idx < 0) {
-            audio_in_idx = @intCast(i);
-            const out_stream = c.avformat_new_stream(out_ctx, null);
-            
-            if (stream.*.codecpar.*.codec_id != c.AV_CODEC_ID_AAC) {
-                // Not AAC, spin up the transcoder
-                audio_tr = try transcoder.AudioTranscoder.init(stream, out_stream);
-            } else {
-                // Directly copy AAC stream
-                if (c.avcodec_parameters_copy(out_stream.*.codecpar, stream.*.codecpar) < 0) return error.CodecCopyFailed;
-                out_stream.*.codecpar.*.codec_tag = 0;
+            // Pick this track if it matches the requested one, or if no specific track was requested (fallback to first)
+            if (audio_idx_requested < 0 or audio_idx_requested == i) {
+                audio_in_idx = @intCast(i);
+                const out_stream = c.avformat_new_stream(out_ctx, null);
+                
+                if (stream.*.codecpar.*.codec_id != c.AV_CODEC_ID_AAC) {
+                    // Not AAC, spin up the transcoder
+                    audio_tr = try transcoder.AudioTranscoder.init(stream, out_stream);
+                } else {
+                    // Directly copy AAC stream
+                    if (c.avcodec_parameters_copy(out_stream.*.codecpar, stream.*.codecpar) < 0) return error.CodecCopyFailed;
+                    out_stream.*.codecpar.*.codec_tag = 0;
+                }
+                audio_out_idx = @intCast(out_ctx.*.nb_streams - 1);
             }
-            audio_out_idx = @intCast(out_ctx.*.nb_streams - 1);
+        }
+    }
+
+    // If requested track not found, fallback to first audio track
+    if (audio_in_idx < 0 and audio_idx_requested >= 0) {
+        for (0..@intCast(in_ctx.*.nb_streams)) |i| {
+            const stream = in_ctx.*.streams[i];
+            if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_AUDIO) {
+                audio_in_idx = @intCast(i);
+                const out_stream = c.avformat_new_stream(out_ctx, null);
+                
+                if (stream.*.codecpar.*.codec_id != c.AV_CODEC_ID_AAC) {
+                    audio_tr = try transcoder.AudioTranscoder.init(stream, out_stream);
+                } else {
+                    if (c.avcodec_parameters_copy(out_stream.*.codecpar, stream.*.codecpar) < 0) return error.CodecCopyFailed;
+                    out_stream.*.codecpar.*.codec_tag = 0;
+                }
+                audio_out_idx = @intCast(out_ctx.*.nb_streams - 1);
+                break;
+            }
         }
     }
 
@@ -147,26 +170,38 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, http_ctx: *HttpStream
 
     _ = c.av_write_trailer(out_ctx);
 
-    if (http_ctx.has_error) {
-        return error.ConnectionDropped;
+        if (http_ctx.has_error) {
+            return error.ConnectionDropped;
+        }
     }
-}
 
-pub const MediaInfo = struct {
-    duration: f64,
-    codec_str: []const u8,
-};
+    pub const AudioTrack = struct {
+        id: usize,
+        label: []const u8,
+    };
 
-/// Retrieves the duration and codec info of a media file.
-pub fn getMediaInfo(file_path: [:0]const u8) !MediaInfo {
-    var fmt_ctx: ?*c.AVFormatContext = null;
-    if (c.avformat_open_input(@ptrCast(&fmt_ctx), file_path.ptr, null, null) < 0) return error.OpenFailed;
+    pub const MediaInfo = struct {
+        duration: f64,
+        codec_str: []const u8,
+        audio_tracks: []AudioTrack,
+    };
+
+    /// Retrieves the duration, codec info, and available audio tracks of a media file.
+    pub fn getMediaInfo(allocator: std.mem.Allocator, file_path: [:0]const u8) !MediaInfo {
+        var fmt_ctx: ?*c.AVFormatContext = null;
+        if (c.avformat_open_input(@ptrCast(&fmt_ctx), file_path.ptr, null, null) < 0) return error.OpenFailed;
     defer c.avformat_close_input(@ptrCast(&fmt_ctx));
 
     if (c.avformat_find_stream_info(fmt_ctx.?, null) < 0) return error.StreamInfoFailed;
 
     const duration = @as(f64, @floatFromInt(fmt_ctx.?.duration)) / @as(f64, @floatFromInt(c.AV_TIME_BASE));
     var codec_str: []const u8 = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\""; // Default
+    
+    var audio_tracks: std.ArrayList(AudioTrack) = .empty;
+    errdefer {
+        for (audio_tracks.items) |track| allocator.free(track.label);
+        audio_tracks.deinit(allocator);
+    }
 
     for (0..fmt_ctx.?.nb_streams) |i| {
         const stream = fmt_ctx.?.streams[i];
@@ -177,9 +212,26 @@ pub fn getMediaInfo(file_path: [:0]const u8) !MediaInfo {
             } else if (codec_id == c.AV_CODEC_ID_HEVC) {
                 codec_str = "video/mp4; codecs=\"hev1.1.6.L93.B0, mp4a.40.2\"";
             }
-            break;
+        } else if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_AUDIO) {
+            var label: []const u8 = "Unknown";
+            
+            const title_entry = c.av_dict_get(stream.*.metadata, "title", null, 0);
+            const lang_entry = c.av_dict_get(stream.*.metadata, "language", null, 0);
+            
+            if (title_entry != null) {
+                label = std.mem.span(title_entry.*.value);
+            } else if (lang_entry != null) {
+                label = std.mem.span(lang_entry.*.value);
+            }
+
+            const label_dup = try allocator.dupe(u8, label);
+            try audio_tracks.append(allocator, .{ .id = i, .label = label_dup });
         }
     }
 
-    return MediaInfo{ .duration = duration, .codec_str = codec_str };
+    return MediaInfo{ 
+        .duration = duration, 
+        .codec_str = codec_str, 
+        .audio_tracks = try audio_tracks.toOwnedSlice(allocator),
+    };
 }

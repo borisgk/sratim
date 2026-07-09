@@ -14,6 +14,11 @@
         .seek-bar { flex: 1; margin: 0 10px; cursor: pointer; height: 10px; background: #444; position: relative; border-radius: 5px; overflow: hidden; }
         .seek-fill { background: #f00; height: 100%; width: 0%; pointer-events: none; }
         .time { font-variant-numeric: tabular-nums; }
+        #audio-menu { position: absolute; bottom: 65px; right: 15px; background: rgba(30,30,30,0.9); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 5px; }
+        .hidden { display: none !important; }
+        .audio-track-btn { background: transparent; color: white; border: none; padding: 8px 12px; text-align: left; cursor: pointer; border-radius: 4px; width: auto; height: auto; display: block; white-space: nowrap; }
+        .audio-track-btn:hover { background: #444; }
+        .audio-track-btn.active { background: #666; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -28,10 +33,14 @@
                 <div class="seek-fill" id="seekfill"></div>
             </div>
             <div class="time" id="time-total">__TIME_STR__</div>
+            <button id="audiobtn" style="display: none; margin-left: 15px;">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+            </button>
             <button id="fullscreen">
                 <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
             </button>
         </div>
+        <div id="audio-menu" class="hidden"></div>
     </div>
     <script>
         const video = document.getElementById('video');
@@ -45,13 +54,46 @@
         const DURATION = __DURATION__; // Real duration
         const fileName = "__FILE_NAME__";
         const codecStr = '__CODEC_STR__';
+        const AUDIO_TRACKS = __AUDIO_TRACKS_JSON__;
         let currentSeekTime = 0;
+        let currentAudioIdx = -1;
         let abortController = null;
 
         const svgPlay = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M8 5v14l11-7z"/></svg>';
         const svgPause = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
         const svgFullscreen = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>';
         const svgExitFullscreen = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>';
+
+        // Setup Audio Menu
+        const btnAudio = document.getElementById('audiobtn');
+        const audioMenu = document.getElementById('audio-menu');
+        
+        if (AUDIO_TRACKS && AUDIO_TRACKS.length > 1) {
+            btnAudio.style.display = 'flex';
+            AUDIO_TRACKS.forEach((track, i) => {
+                const btn = document.createElement('button');
+                btn.className = 'audio-track-btn';
+                btn.innerText = track.label || `Track ${track.id}`;
+                if (i === 0) btn.classList.add('active');
+                
+                btn.onclick = () => {
+                    if (currentAudioIdx === track.id) return;
+                    currentAudioIdx = track.id;
+                    audioMenu.classList.add('hidden');
+                    document.querySelectorAll('.audio-track-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    
+                    // Seamless switch
+                    const resumeTime = currentSeekTime + video.currentTime;
+                    loadVideo(resumeTime);
+                };
+                audioMenu.appendChild(btn);
+            });
+
+            btnAudio.addEventListener('click', () => {
+                audioMenu.classList.toggle('hidden');
+            });
+        }
 
         function formatTime(seconds) {
             const m = Math.floor(seconds / 60);
@@ -61,7 +103,8 @@
 
         async function fetchAndAppend(sourceBuffer, startTime, signal) {
             try {
-                const response = await fetch(`/stream?file=${encodeURIComponent(fileName)}&start=${startTime}`, { signal });
+                const audioParam = currentAudioIdx >= 0 ? `&audio=${currentAudioIdx}` : '';
+                const response = await fetch(`/stream?file=${encodeURIComponent(fileName)}&start=${startTime}${audioParam}`, { signal });
                 const reader = response.body.getReader();
 
                 let queue = [];

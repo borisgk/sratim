@@ -1,7 +1,7 @@
 const std = @import("std");
 
 /// Frontend HTML markup and embedded JavaScript for the custom video player.
-pub fn generatePlayerHtml(allocator: std.mem.Allocator, file_name: []const u8, duration: f64, codec_str: []const u8) ![]u8 {
+pub fn generatePlayerHtml(allocator: std.mem.Allocator, file_name: []const u8, duration: f64, codec_str: []const u8, audio_tracks_json: []const u8) ![]u8 {
     const min = @as(u32, @intFromFloat(duration)) / 60;
     const sec = @as(u32, @intFromFloat(duration)) % 60;
     const time_str = try std.fmt.allocPrint(allocator, "{d}:{d:0>2}", .{ min, sec });
@@ -29,6 +29,9 @@ pub fn generatePlayerHtml(allocator: std.mem.Allocator, file_name: []const u8, d
         } else if (std.mem.startsWith(u8, template[i..], "__CODEC_STR__")) {
             try out.appendSlice(allocator, codec_str);
             i += "__CODEC_STR__".len;
+        } else if (std.mem.startsWith(u8, template[i..], "__AUDIO_TRACKS_JSON__")) {
+            try out.appendSlice(allocator, audio_tracks_json);
+            i += "__AUDIO_TRACKS_JSON__".len;
         } else {
             try out.append(allocator, template[i]);
             i += 1;
