@@ -151,6 +151,7 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
 
     // Demux and remux loop
     while (c.av_read_frame(in_ctx, packet) >= 0) {
+        defer c.av_packet_unref(packet);
         if (http_ctx.has_error) break;
 
         if (packet.*.stream_index == video_in_idx) {
@@ -191,38 +192,37 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
                 if (c.av_interleaved_write_frame(out_ctx, packet) < 0) break;
             }
         }
-        c.av_packet_unref(packet);
     }
 
     _ = c.av_write_trailer(out_ctx);
 
-        if (http_ctx.has_error) {
-            return error.ConnectionDropped;
-        }
+    if (http_ctx.has_error) {
+        return error.ConnectionDropped;
     }
+}
 
-    pub const AudioTrack = struct {
-        id: usize,
-        label: []const u8,
-    };
+pub const AudioTrack = struct {
+    id: usize,
+    label: []const u8,
+};
 
-    pub const MediaInfo = struct {
-        duration: f64,
-        codec_str: []const u8,
-        audio_tracks: []AudioTrack,
-    };
+pub const MediaInfo = struct {
+    duration: f64,
+    codec_str: []const u8,
+    audio_tracks: []AudioTrack,
+};
 
-    /// Retrieves the duration, codec info, and available audio tracks of a media file.
-    pub fn getMediaInfo(allocator: std.mem.Allocator, file_path: [:0]const u8) !MediaInfo {
-        var fmt_ctx: ?*c.AVFormatContext = null;
-        if (c.avformat_open_input(@ptrCast(&fmt_ctx), file_path.ptr, null, null) < 0) return error.OpenFailed;
+/// Retrieves the duration, codec info, and available audio tracks of a media file.
+pub fn getMediaInfo(allocator: std.mem.Allocator, file_path: [:0]const u8) !MediaInfo {
+    var fmt_ctx: ?*c.AVFormatContext = null;
+    if (c.avformat_open_input(@ptrCast(&fmt_ctx), file_path.ptr, null, null) < 0) return error.OpenFailed;
     defer c.avformat_close_input(@ptrCast(&fmt_ctx));
 
     if (c.avformat_find_stream_info(fmt_ctx.?, null) < 0) return error.StreamInfoFailed;
 
     const duration = @as(f64, @floatFromInt(fmt_ctx.?.duration)) / @as(f64, @floatFromInt(c.AV_TIME_BASE));
     var codec_str: []const u8 = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\""; // Default
-    
+
     var audio_tracks: std.ArrayList(AudioTrack) = .empty;
     errdefer {
         for (audio_tracks.items) |track| allocator.free(track.label);
@@ -240,10 +240,10 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
             }
         } else if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_AUDIO) {
             var label: []const u8 = "Unknown";
-            
+
             const title_entry = c.av_dict_get(stream.*.metadata, "title", null, 0);
             const lang_entry = c.av_dict_get(stream.*.metadata, "language", null, 0);
-            
+
             if (title_entry != null) {
                 label = std.mem.span(title_entry.*.value);
             } else if (lang_entry != null) {
@@ -255,9 +255,9 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
         }
     }
 
-    return MediaInfo{ 
-        .duration = duration, 
-        .codec_str = codec_str, 
+    return MediaInfo{
+        .duration = duration,
+        .codec_str = codec_str,
         .audio_tracks = try audio_tracks.toOwnedSlice(allocator),
     };
 }

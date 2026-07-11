@@ -61,9 +61,14 @@ pub const AudioTranscoder = struct {
 
         // Fifo
         self.fifo = c.av_audio_fifo_alloc(self.encode_ctx.*.sample_fmt, self.encode_ctx.*.ch_layout.nb_channels, 1) orelse return error.OutOfMemory;
+        errdefer c.av_audio_fifo_free(self.fifo);
         
         self.frame_in = c.av_frame_alloc() orelse return error.OutOfMemory;
+        errdefer c.av_frame_free(@ptrCast(&self.frame_in));
+
         self.frame_out = c.av_frame_alloc() orelse return error.OutOfMemory;
+        errdefer c.av_frame_free(@ptrCast(&self.frame_out));
+
         self.frame_out.*.nb_samples = self.encode_ctx.*.frame_size;
         _ = c.av_channel_layout_copy(&self.frame_out.*.ch_layout, &self.encode_ctx.*.ch_layout);
         self.frame_out.*.format = self.encode_ctx.*.sample_fmt;

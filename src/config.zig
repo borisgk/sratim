@@ -11,8 +11,15 @@ pub const Config = struct {
         const parsed = try std.json.parseFromSlice(Config, allocator, file_content, .{
             .allocate = .alloc_always,
         });
-        
-        return parsed.value;
+        defer parsed.deinit();
+
+        // Dupe the string so it outlives the parser arena
+        const folder = try allocator.dupe(u8, parsed.value.working_folder);
+
+        return .{
+            .working_folder = folder,
+            .port = parsed.value.port,
+        };
     }
 
     pub fn deinit(self: *Config, allocator: std.mem.Allocator) void {

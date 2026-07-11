@@ -1,6 +1,30 @@
 const std = @import("std");
 
-/// Generates an HTML catalog of all .mkv files within the working folder.
+const video_extensions = [_][]const u8{ ".mkv", ".mp4", ".avi", ".ts", ".webm", ".mov" };
+
+fn isVideoFile(basename: []const u8) bool {
+    for (video_extensions) |ext| {
+        if (std.mem.endsWith(u8, basename, ext)) return true;
+    }
+    return false;
+}
+
+/// Percent-encodes a path for use in an HTML href attribute.
+fn writePercentEncoded(list: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
+    for (input) |ch| {
+        switch (ch) {
+            ' ' => try list.appendSlice(allocator, "%20"),
+            '#' => try list.appendSlice(allocator, "%23"),
+            '?' => try list.appendSlice(allocator, "%3F"),
+            '&' => try list.appendSlice(allocator, "%26"),
+            '%' => try list.appendSlice(allocator, "%25"),
+            '"' => try list.appendSlice(allocator, "%22"),
+            else => try list.append(allocator, ch),
+        }
+    }
+}
+
+/// Generates an HTML catalog of all video files within the working folder.
 pub fn generateHtml(allocator: std.mem.Allocator, io: std.Io, working_folder: []const u8) ![]u8 {
     var dir = try std.Io.Dir.cwd().openDir(io, working_folder, .{ .iterate = true });
     defer dir.close(io);
@@ -31,10 +55,14 @@ pub fn generateHtml(allocator: std.mem.Allocator, io: std.Io, working_folder: []
         \\
     );
 
-    // Collect and append each MKV file to the HTML
+    // Collect and append each video file to the HTML
     while (try walker.next(io)) |entry| {
-        if (entry.kind == .file and std.mem.endsWith(u8, entry.basename, ".mkv")) {
-            try html_buf.print(allocator, "        <li><a href=\"/player?file={s}\">{s}</a></li>\n", .{ entry.path, entry.path });
+        if (entry.kind == .file and isVideoFile(entry.basename)) {
+            try html_buf.appendSlice(allocator, "        <li><a href=\"/player?file=");
+            try writePercentEncoded(&html_buf, allocator, entry.path);
+            try html_buf.appendSlice(allocator, "\">");
+            try html_buf.appendSlice(allocator, entry.path);
+            try html_buf.appendSlice(allocator, "</a></li>\n");
         }
     }
 
@@ -47,3 +75,4 @@ pub fn generateHtml(allocator: std.mem.Allocator, io: std.Io, working_folder: []
 
     return try html_buf.toOwnedSlice(allocator);
 }
+

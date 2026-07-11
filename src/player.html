@@ -58,6 +58,7 @@
         let currentSeekTime = 0;
         let currentAudioIdx = -1;
         let abortController = null;
+        let currentObjectUrl = null;
 
         const svgPlay = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M8 5v14l11-7z"/></svg>';
         const svgPause = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
@@ -90,8 +91,16 @@
                 audioMenu.appendChild(btn);
             });
 
-            btnAudio.addEventListener('click', () => {
+            btnAudio.addEventListener('click', (e) => {
+                e.stopPropagation();
                 audioMenu.classList.toggle('hidden');
+            });
+
+            // Close audio menu when clicking outside
+            document.addEventListener('click', (e) => {
+                if (!audioMenu.contains(e.target) && e.target !== btnAudio) {
+                    audioMenu.classList.add('hidden');
+                }
             });
         }
 
@@ -181,8 +190,12 @@
             abortController = new AbortController();
             const signal = abortController.signal;
 
+            // Revoke old Blob URL to prevent memory leak
+            if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
+
             const ms = new MediaSource();
-            video.src = URL.createObjectURL(ms);
+            currentObjectUrl = URL.createObjectURL(ms);
+            video.src = currentObjectUrl;
 
             ms.addEventListener('sourceopen', () => {
                 if (signal.aborted) return;
@@ -191,6 +204,7 @@
             });
             
             video.play().catch(e => console.error("Play failed:", e));
+            playpause.innerHTML = svgPause;
         }
 
         video.addEventListener('timeupdate', () => {

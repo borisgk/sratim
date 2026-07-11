@@ -65,9 +65,15 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
                 const final_path = std.Uri.percentDecodeInPlace(decoded_path);
 
                 const full_path = std.fs.path.join(allocator, &[_][]const u8{ working_folder, final_path }) catch return;
+                const resolved_path = std.fs.path.resolve(allocator, &[_][]const u8{ full_path }) catch return;
+                const resolved_wf = std.fs.path.resolve(allocator, &[_][]const u8{ working_folder }) catch return;
+                if (!std.mem.startsWith(u8, resolved_path, resolved_wf)) {
+                    request.respond("Forbidden", .{ .status = .forbidden }) catch return;
+                    return;
+                }
 
                 // Ensure null-terminated string for C API
-                const c_full_path = allocator.dupeZ(u8, full_path) catch return;
+                const c_full_path = allocator.dupeZ(u8, resolved_path) catch return;
 
                 const media_info = streamer.getMediaInfo(allocator, c_full_path) catch streamer.MediaInfo{
                     .duration = 2799.0,
@@ -150,6 +156,12 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
 
                 // Ensure the path is prefixed with working_folder to avoid reading absolute OS paths securely
                 const full_path = std.fs.path.join(allocator, &[_][]const u8{ working_folder, final_path }) catch return;
+                const resolved_path = std.fs.path.resolve(allocator, &[_][]const u8{ full_path }) catch return;
+                const resolved_wf = std.fs.path.resolve(allocator, &[_][]const u8{ working_folder }) catch return;
+                if (!std.mem.startsWith(u8, resolved_path, resolved_wf)) {
+                    request.respond("Forbidden", .{ .status = .forbidden }) catch return;
+                    return;
+                }
 
                 // Initialize chunked response for MP4 stream
                 var resp = request.respondStreaming(&resp_buf, .{
@@ -164,7 +176,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
 
                 // Fire up FFmpeg pipeline
                 var stream_ctx = streamer.HttpStreamContext{ .writer = &resp };
-                streamer.streamMedia(full_path, start_time, audio_idx, &stream_ctx) catch |e| {
+                streamer.streamMedia(resolved_path, start_time, audio_idx, &stream_ctx) catch |e| {
                     if (e != error.ConnectionDropped) {
                         std.debug.print("Stream error: {}\n", .{e});
                     }

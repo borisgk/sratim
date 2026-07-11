@@ -20,7 +20,7 @@ pub fn main() !void {
     const addr = try std.Io.net.IpAddress.parseIp4("0.0.0.0", config.port);
     var srv = try std.Io.net.IpAddress.listen(&addr, io, .{ .reuse_address = true });
     
-    std.debug.print("Listening on http://127.0.0.1:8000\n", .{});
+    std.debug.print("Listening on http://0.0.0.0:{d}\n", .{config.port});
     
     // Main server loop: accept connections forever
     while (true) {
