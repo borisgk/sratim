@@ -1,4 +1,5 @@
 const std = @import("std");
+const template_engine = @import("template.zig");
 
 const video_extensions = [_][]const u8{ ".mkv", ".mp4", ".avi", ".ts", ".webm", ".mov" };
 
@@ -72,21 +73,7 @@ pub fn generateHtml(allocator: std.mem.Allocator, io: std.Io, working_folder: []
         }
     }
 
-    const template = @embedFile("catalog.html");
-
-    var out = std.ArrayList(u8).empty;
-    errdefer out.deinit(allocator);
-
-    var i: usize = 0;
-    while (i < template.len) {
-        if (std.mem.startsWith(u8, template[i..], "__MOVIE_CARDS__")) {
-            try out.appendSlice(allocator, cards_buf.items);
-            i += "__MOVIE_CARDS__".len;
-        } else {
-            try out.append(allocator, template[i]);
-            i += 1;
-        }
-    }
-
-    return try out.toOwnedSlice(allocator);
+    return template_engine.render(allocator, @embedFile("catalog.html"), .{
+        .MOVIE_CARDS = cards_buf.items,
+    });
 }
