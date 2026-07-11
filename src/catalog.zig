@@ -19,6 +19,23 @@ fn writePercentEncoded(list: *std.ArrayList(u8), allocator: std.mem.Allocator, i
             '&' => try list.appendSlice(allocator, "%26"),
             '%' => try list.appendSlice(allocator, "%25"),
             '"' => try list.appendSlice(allocator, "%22"),
+            '<' => try list.appendSlice(allocator, "%3C"),
+            '>' => try list.appendSlice(allocator, "%3E"),
+            '\''=> try list.appendSlice(allocator, "%27"),
+            else => try list.append(allocator, ch),
+        }
+    }
+}
+
+/// Escapes HTML special characters for safe injection into text content.
+fn escapeHtml(list: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
+    for (input) |ch| {
+        switch (ch) {
+            '<' => try list.appendSlice(allocator, "&lt;"),
+            '>' => try list.appendSlice(allocator, "&gt;"),
+            '&' => try list.appendSlice(allocator, "&amp;"),
+            '"' => try list.appendSlice(allocator, "&quot;"),
+            '\''=> try list.appendSlice(allocator, "&#39;"),
             else => try list.append(allocator, ch),
         }
     }
@@ -61,7 +78,7 @@ pub fn generateHtml(allocator: std.mem.Allocator, io: std.Io, working_folder: []
             try html_buf.appendSlice(allocator, "        <li><a href=\"/player?file=");
             try writePercentEncoded(&html_buf, allocator, entry.path);
             try html_buf.appendSlice(allocator, "\">");
-            try html_buf.appendSlice(allocator, entry.path);
+            try escapeHtml(&html_buf, allocator, entry.path);
             try html_buf.appendSlice(allocator, "</a></li>\n");
         }
     }
