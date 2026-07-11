@@ -32,7 +32,10 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
     _ = c.avformat_network_init();
     defer { _ = c.avformat_network_deinit(); }
 
-    var in_fmt_ctx: ?*c.AVFormatContext = null;
+    var in_fmt_ctx: ?*c.AVFormatContext = c.avformat_alloc_context();
+    if (in_fmt_ctx != null) {
+        in_fmt_ctx.?.flags |= c.AVFMT_FLAG_GENPTS;
+    }
     const c_file_path = try std.heap.c_allocator.dupeZ(u8, file_path);
     defer std.heap.c_allocator.free(c_file_path);
 
@@ -124,7 +127,7 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
 
     // movflags: fragmented mp4 configuration
     var dict: ?*c.AVDictionary = null;
-    _ = c.av_dict_set(&dict, "movflags", "frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets", 0);
+    _ = c.av_dict_set(&dict, "movflags", "frag_keyframe+empty_moov+delay_moov+default_base_moof+negative_cts_offsets", 0);
     _ = c.av_dict_set(&dict, "avoid_negative_ts", "make_non_negative", 0);
     defer c.av_dict_free(@ptrCast(&dict));
 
@@ -144,6 +147,8 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
     var packet = c.av_packet_alloc() orelse return error.OutOfMemory;
     defer c.av_packet_free(@ptrCast(&packet));
 
+    var last_video_dts: i64 = c.AV_NOPTS_VALUE;
+
     // Demux and remux loop
     while (c.av_read_frame(in_ctx, packet) >= 0) {
         if (http_ctx.has_error) break;
@@ -151,6 +156,27 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
         if (packet.*.stream_index == video_in_idx) {
             packet.*.stream_index = video_out_idx;
             c.av_packet_rescale_ts(packet, in_ctx.*.streams[@intCast(video_in_idx)].*.time_base, out_ctx.*.streams[@intCast(video_out_idx)].*.time_base);
+            
+            // Fix missing timestamps and enforce strict monotonicity for MP4 muxer
+            if (packet.*.dts == c.AV_NOPTS_VALUE) {
+                packet.*.dts = if (last_video_dts != c.AV_NOPTS_VALUE) last_video_dts + 1 else 0;
+            }
+            if (packet.*.pts == c.AV_NOPTS_VALUE) {
+                packet.*.pts = packet.*.dts;
+            }
+            
+            // Enforce strictly monotonic DTS
+            if (last_video_dts != c.AV_NOPTS_VALUE and packet.*.dts <= last_video_dts) {
+                packet.*.dts = last_video_dts + 1;
+            }
+            
+            // PTS must be >= DTS
+            if (packet.*.pts < packet.*.dts) {
+                packet.*.pts = packet.*.dts;
+            }
+
+            last_video_dts = packet.*.dts;
+
             packet.*.pos = -1;
             if (c.av_interleaved_write_frame(out_ctx, packet) < 0) break;
         } else if (packet.*.stream_index == audio_in_idx) {

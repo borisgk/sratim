@@ -76,6 +76,16 @@ pub const AudioTranscoder = struct {
 
     /// Cleans up all FFmpeg contexts, frames, and frees the struct memory.
     pub fn deinit(self: *AudioTranscoder) void {
+        // Flush the encoder to prevent "frames left in the queue" warning
+        _ = c.avcodec_send_frame(self.encode_ctx, null);
+        var out_pkt = c.av_packet_alloc();
+        if (out_pkt != null) {
+            while (c.avcodec_receive_packet(self.encode_ctx, out_pkt) >= 0) {
+                c.av_packet_unref(out_pkt);
+            }
+            c.av_packet_free(@ptrCast(&out_pkt));
+        }
+
         c.av_frame_free(@ptrCast(&self.frame_in));
         c.av_frame_free(@ptrCast(&self.frame_out));
         c.av_audio_fifo_free(self.fifo);
