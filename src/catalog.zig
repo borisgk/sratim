@@ -49,47 +49,44 @@ pub fn generateHtml(allocator: std.mem.Allocator, io: std.Io, working_folder: []
     var walker = try dir.walk(allocator);
     defer walker.deinit();
 
-    var html_buf = std.ArrayList(u8).empty;
-    errdefer html_buf.deinit(allocator);
+    var cards_buf = std.ArrayList(u8).empty;
+    defer cards_buf.deinit(allocator);
 
-    try html_buf.appendSlice(allocator,
-        \\<!DOCTYPE html>
-        \\<html>
-        \\<head>
-        \\    <title>Sratim Catalog</title>
-        \\    <style>
-        \\        body { background: #111; color: #eee; font-family: sans-serif; padding: 20px; }
-        \\        h1 { color: #fff; text-align: center; }
-        \\        ul { list-style: none; padding: 0; max-width: 800px; margin: 0 auto; }
-        \\        li { margin-bottom: 10px; padding: 15px; background: #222; border-radius: 5px; }
-        \\        a { color: #4af; text-decoration: none; font-size: 1.1em; display: block; }
-        \\        a:hover { color: #8cf; }
-        \\    </style>
-        \\</head>
-        \\<body>
-        \\    <h1>Movie Catalog</h1>
-        \\    <ul>
-        \\
-    );
-
-    // Collect and append each video file to the HTML
+    // Collect and append each video file to the card buffer
     while (try walker.next(io)) |entry| {
         if (entry.kind == .file and isVideoFile(entry.basename)) {
-            try html_buf.appendSlice(allocator, "        <li><a href=\"/player?file=");
-            try writePercentEncoded(&html_buf, allocator, entry.path);
-            try html_buf.appendSlice(allocator, "\">");
-            try escapeHtml(&html_buf, allocator, entry.path);
-            try html_buf.appendSlice(allocator, "</a></li>\n");
+            const ext = std.fs.path.extension(entry.basename);
+            const ext_idx = entry.basename.len - ext.len;
+            const clean_name = entry.basename[0..ext_idx];
+
+            try cards_buf.appendSlice(allocator, "        <a href=\"/player?file=");
+            try writePercentEncoded(&cards_buf, allocator, entry.path);
+            try cards_buf.appendSlice(allocator, "\" class=\"movie-card\" data-name=\"");
+            try escapeHtml(&cards_buf, allocator, entry.path);
+            try cards_buf.appendSlice(allocator, "\">\n            <div class=\"card-top\">\n                <div class=\"icon-wrapper\">\n                    <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" width=\"24\" height=\"24\">\n                        <path d=\"M15 10l5-3.07v10.14L15 14v-4z\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n                        <rect x=\"4\" y=\"6\" width=\"11\" height=\"12\" rx=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n                    </svg>\n                </div>\n                <h3 class=\"movie-title\">");
+            try escapeHtml(&cards_buf, allocator, clean_name);
+            try cards_buf.appendSlice(allocator, "</h3>\n            </div>\n            <div class=\"card-bottom\">\n                <div class=\"metadata\">\n                    <span class=\"ext-badge\">");
+            const ext_no_dot = if (ext.len > 0) ext[1..] else ext;
+            try escapeHtml(&cards_buf, allocator, ext_no_dot);
+            try cards_buf.appendSlice(allocator, "</span>\n                </div>\n                <span class=\"watch-pill\">Watch</span>\n            </div>\n        </a>\n");
         }
     }
 
-    try html_buf.appendSlice(allocator,
-        \\    </ul>
-        \\</body>
-        \\</html>
-        \\
-    );
+    const template = @embedFile("catalog.html");
 
-    return try html_buf.toOwnedSlice(allocator);
+    var out = std.ArrayList(u8).empty;
+    errdefer out.deinit(allocator);
+
+    var i: usize = 0;
+    while (i < template.len) {
+        if (std.mem.startsWith(u8, template[i..], "__MOVIE_CARDS__")) {
+            try out.appendSlice(allocator, cards_buf.items);
+            i += "__MOVIE_CARDS__".len;
+        } else {
+            try out.append(allocator, template[i]);
+            i += 1;
+        }
+    }
+
+    return try out.toOwnedSlice(allocator);
 }
-
