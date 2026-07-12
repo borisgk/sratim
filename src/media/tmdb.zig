@@ -40,7 +40,7 @@ pub fn searchMovie(
     defer client.deinit();
 
     // Configure proxy if provided
-    var proxy: ?std.http.Client.Proxy = null;
+    var proxy_storage: std.http.Client.Proxy = undefined;
     if (proxy_url) |p_url| {
         if (p_url.len > 0) {
             const uri = try std.Uri.parse(p_url);
@@ -50,15 +50,15 @@ pub fn searchMovie(
             };
             const host_name = try std.Io.net.HostName.init(host_bytes);
             const protocol = std.http.Client.Protocol.fromScheme(uri.scheme) orelse return error.UnsupportedUriScheme;
-            proxy = .{
+            proxy_storage = .{
                 .protocol = protocol,
                 .host = host_name,
                 .port = uri.port orelse (if (protocol == .tls) 443 else 80),
                 .authorization = null,
                 .supports_connect = true,
             };
-            client.http_proxy = &proxy.?;
-            client.https_proxy = &proxy.?;
+            client.http_proxy = &proxy_storage;
+            client.https_proxy = &proxy_storage;
         }
     }
 

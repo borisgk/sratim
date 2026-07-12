@@ -177,19 +177,19 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             };
             continue;
 
-        // Route: API Metadata Link
-        } else if (std.mem.startsWith(u8, target, "/api/metadata/link") and method == .POST) {
-            handleApiMetadataLink(&request, allocator, database, &resp_buf) catch |err| {
-                std.debug.print("API Metadata Link error: {}\n", .{err});
+        // Route: API Metadata Auto Link (must be before /api/metadata/link to avoid prefix match)
+        } else if (std.mem.startsWith(u8, target, "/api/metadata/auto-link") and method == .POST) {
+            handleApiMetadataAutoLink(&request, allocator, io, database, config, &resp_buf) catch |err| {
+                std.debug.print("API Metadata Auto Link error: {}\n", .{err});
                 request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
                 return;
             };
             continue;
 
-        // Route: API Metadata Auto Link
-        } else if (std.mem.startsWith(u8, target, "/api/metadata/auto-link") and method == .POST) {
-            handleApiMetadataAutoLink(&request, allocator, io, database, config, &resp_buf) catch |err| {
-                std.debug.print("API Metadata Auto Link error: {}\n", .{err});
+        // Route: API Metadata Link
+        } else if (std.mem.startsWith(u8, target, "/api/metadata/link") and method == .POST) {
+            handleApiMetadataLink(&request, allocator, database, &resp_buf) catch |err| {
+                std.debug.print("API Metadata Link error: {}\n", .{err});
                 request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
                 return;
             };
