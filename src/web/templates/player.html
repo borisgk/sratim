@@ -62,6 +62,13 @@
         let currentObjectUrl = null;
         let lastReportedPosition = -100;
 
+        function getAbsoluteTime() {
+            if (video.readyState < 1) {
+                return currentSeekTime;
+            }
+            return currentSeekTime + video.currentTime;
+        }
+
         async function sendWatchEvent(eventType, position) {
             try {
                 const body = JSON.stringify({
@@ -116,7 +123,7 @@
                     btn.classList.add('active');
                     
                     // Seamless switch
-                    const resumeTime = currentSeekTime + video.currentTime;
+                    const resumeTime = getAbsoluteTime();
                     loadVideo(resumeTime);
                 };
                 audioMenu.appendChild(btn);
@@ -240,11 +247,11 @@
         }
 
         video.addEventListener('play', () => {
-            sendWatchEvent('start', currentSeekTime + video.currentTime);
+            sendWatchEvent('start', getAbsoluteTime());
         });
 
         video.addEventListener('timeupdate', () => {
-            const actualTime = currentSeekTime + video.currentTime;
+            const actualTime = getAbsoluteTime();
             const percentage = (actualTime / DURATION) * 100;
             seekfill.style.width = percentage + '%';
             timeCurrent.innerText = formatTime(actualTime);
@@ -290,7 +297,7 @@
         });
 
         const handleStop = () => {
-            sendWatchEvent('stop', currentSeekTime + video.currentTime);
+            sendWatchEvent('stop', getAbsoluteTime());
         };
         window.addEventListener('beforeunload', handleStop);
         window.addEventListener('pagehide', handleStop);
