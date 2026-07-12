@@ -8,4 +8,6 @@ pub const c = @cImport({
     @cInclude("libavutil/avutil.h");
     @cInclude("libavutil/dict.h");
     @cInclude("libavutil/time.h");
+    @cInclude("sqlite3.h");
+    @cInclude("time.h");
 });

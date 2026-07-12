@@ -1,6 +1,8 @@
 const std = @import("std");
 const server = @import("server.zig");
 const config_mod = @import("config.zig");
+const db_mod = @import("db.zig");
+const users_mod = @import("users.zig");
 const c = @import("c.zig").c;
 
 /// The application entry point.
@@ -15,6 +17,13 @@ pub fn main() !void {
     
     var config = try config_mod.Config.load(std.heap.c_allocator, io, "config.json");
     defer config.deinit(std.heap.c_allocator);
+
+    // Open SQLite database and initialize schema
+    var database = try db_mod.Database.open("sratim.db");
+    defer database.close();
+
+    try db_mod.initSchema(&database);
+    try users_mod.ensureAdminExists(&database, io);
     
     // Parse the loopback IP and start listening on port from config
     const addr = try std.Io.net.IpAddress.parseIp4("0.0.0.0", config.port);
@@ -31,7 +40,7 @@ pub fn main() !void {
         };
         
         // Spawn a brand new OS thread to handle the client
-        const thread = try std.Thread.spawn(.{}, server.handleConnection, .{ stream, io, config.working_folder });
+        const thread = try std.Thread.spawn(.{}, server.handleConnection, .{ stream, io, config.working_folder, &database });
         
         // Detach the thread so it runs independently, allowing the main loop to instantly continue
         thread.detach();
