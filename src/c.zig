@@ -10,4 +10,5 @@ pub const c = @cImport({
     @cInclude("libavutil/time.h");
     @cInclude("sqlite3.h");
     @cInclude("time.h");
+    @cInclude("stdlib.h");
 });
