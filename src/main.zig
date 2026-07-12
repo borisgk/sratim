@@ -46,7 +46,7 @@ pub fn main() !void {
         };
         
         // Spawn a brand new OS thread to handle the client
-        const thread = try std.Thread.spawn(.{}, server.handleConnection, .{ stream, io, config.working_folder, &database, &logs_database });
+        const thread = try std.Thread.spawn(.{}, server.handleConnection, .{ stream, io, &config, &database, &logs_database });
         
         // Detach the thread so it runs independently, allowing the main loop to instantly continue
         thread.detach();

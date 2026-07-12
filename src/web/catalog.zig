@@ -3,6 +3,7 @@ const template_engine = @import("../core/template.zig");
 const db_mod = @import("../db/db.zig");
 const library_mod = @import("../db/library.zig");
 const logging_mod = @import("../db/logging.zig");
+const metadata_mod = @import("../db/metadata.zig");
 
 const video_extensions = [_][]const u8{ ".mkv", ".mp4", ".avi", ".ts", ".webm", ".mov" };
 
@@ -153,6 +154,23 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
             const ext_idx = entry.basename.len - ext.len;
             const clean_name = entry.basename[0..ext_idx];
 
+            const meta = try metadata_mod.getMetadata(database, allocator, lib.id, entry.path);
+
+            var title_buf = std.ArrayList(u8).empty;
+            defer title_buf.deinit(allocator);
+            if (meta) |m| {
+                try title_buf.appendSlice(allocator, m.title);
+                if (m.release_date) |d| {
+                    if (d.len >= 4) {
+                        try title_buf.appendSlice(allocator, " (");
+                        try title_buf.appendSlice(allocator, d[0..4]);
+                        try title_buf.appendSlice(allocator, ")");
+                    }
+                }
+            } else {
+                try title_buf.appendSlice(allocator, clean_name);
+            }
+
             var progress_pct: ?f64 = null;
             for (progress_list) |item| {
                 if (std.mem.eql(u8, item.file_path, entry.path)) {
@@ -166,20 +184,40 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
             // In /player, the file path parameter should be scoped. Wait! Let's pass the relative path
             // from the library. Or pass the file ID? For now, we will pass library_id and path to player/stream
             // e.g. /player?library=1&file=path/to/movie.mp4. This is much safer than absolute paths!
-            try cards_buf.appendSlice(allocator, "        <a href=\"/player?library=");
+            if (meta != null and meta.?.poster_path != null and meta.?.poster_path.?.len > 0) {
+                try cards_buf.appendSlice(allocator, "        <div class=\"movie-card has-poster\" style=\"background-image: url('https://image.tmdb.org/t/p/w500");
+                try cards_buf.appendSlice(allocator, meta.?.poster_path.?);
+                try cards_buf.appendSlice(allocator, "')\" data-name=\"");
+            } else {
+                try cards_buf.appendSlice(allocator, "        <div class=\"movie-card\" data-name=\"");
+            }
+            try escapeHtml(&cards_buf, allocator, entry.path);
+            try cards_buf.appendSlice(allocator, "\">\n            <button class=\"context-menu-btn\" title=\"Actions\">\n                <svg viewBox=\"0 0 24 24\" fill=\"currentColor\" width=\"20\" height=\"20\">\n                    <circle cx=\"12\" cy=\"5\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"12\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"19\" r=\"2\"/>\n                </svg>\n            </button>\n            <div class=\"context-dropdown\">\n                <button class=\"dropdown-item lookup-btn\" data-file=\"");
+            try escapeHtml(&cards_buf, allocator, entry.path);
+            const lookup_mid = try std.fmt.allocPrint(allocator, "\" data-library=\"{d}\">Lookup Metadata</button>\n                <button class=\"dropdown-item reset-btn\" data-file=\"", .{lib.id});
+            defer allocator.free(lookup_mid);
+            try cards_buf.appendSlice(allocator, lookup_mid);
+            try escapeHtml(&cards_buf, allocator, entry.path);
+            const dropdown_middle = try std.fmt.allocPrint(allocator, "\" data-library=\"{d}\">Reset Progress</button>\n                <button class=\"dropdown-item watch-btn\" data-file=\"", .{lib.id});
+            defer allocator.free(dropdown_middle);
+            try cards_buf.appendSlice(allocator, dropdown_middle);
+            try escapeHtml(&cards_buf, allocator, entry.path);
+            const dropdown_end = try std.fmt.allocPrint(allocator, "\" data-library=\"{d}\">Mark as Watched</button>\n            </div>\n\n", .{lib.id});
+            defer allocator.free(dropdown_end);
+            try cards_buf.appendSlice(allocator, dropdown_end);
+
+            try cards_buf.appendSlice(allocator, "            <a href=\"/player?library=");
             const lib_id_str = try std.fmt.allocPrint(allocator, "{d}", .{lib.id});
             defer allocator.free(lib_id_str);
             try cards_buf.appendSlice(allocator, lib_id_str);
             try cards_buf.appendSlice(allocator, "&file=");
             try writePercentEncoded(&cards_buf, allocator, entry.path);
-            try cards_buf.appendSlice(allocator, "\" class=\"movie-card\" data-name=\"");
-            try escapeHtml(&cards_buf, allocator, entry.path);
-            try cards_buf.appendSlice(allocator, "\">\n            <div class=\"card-top\">\n                <div class=\"icon-wrapper\">\n                    <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" width=\"24\" height=\"24\">\n                        <path d=\"M15 10l5-3.07v10.14L15 14v-4z\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n                        <rect x=\"4\" y=\"6\" width=\"11\" height=\"12\" rx=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n                    </svg>\n                </div>\n                <h3 class=\"movie-title\">");
-            try escapeHtml(&cards_buf, allocator, clean_name);
-            try cards_buf.appendSlice(allocator, "</h3>\n            </div>\n            <div class=\"card-bottom\">\n                <div class=\"metadata\">\n                    <span class=\"ext-badge\">");
+            try cards_buf.appendSlice(allocator, "\" class=\"play-link\"></a>\n\n            <div class=\"card-content\">\n                <div class=\"card-top\">\n                    <div class=\"icon-wrapper\">\n                        <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" width=\"24\" height=\"24\">\n                            <path d=\"M15 10l5-3.07v10.14L15 14v-4z\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n                            <rect x=\"4\" y=\"6\" width=\"11\" height=\"12\" rx=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n                        </svg>\n                    </div>\n                    <h3 class=\"movie-title\">");
+            try escapeHtml(&cards_buf, allocator, title_buf.items);
+            try cards_buf.appendSlice(allocator, "</h3>\n                </div>\n                <div class=\"card-bottom\">\n                    <div class=\"metadata\">\n                        <span class=\"ext-badge\">");
             const ext_no_dot = if (ext.len > 0) ext[1..] else ext;
             try escapeHtml(&cards_buf, allocator, ext_no_dot);
-            try cards_buf.appendSlice(allocator, "</span>\n                </div>\n                <span class=\"watch-pill\">Watch</span>\n            </div>\n");
+            try cards_buf.appendSlice(allocator, "</span>\n                    </div>\n                    <span class=\"watch-pill\">Watch</span>\n                </div>\n            </div>\n");
 
             if (progress_pct) |pct| {
                 if (pct >= 1.0 and pct < 95.0) {
@@ -194,7 +232,7 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
                 }
             }
 
-            try cards_buf.appendSlice(allocator, "        </a>\n");
+            try cards_buf.appendSlice(allocator, "        </div>\n");
         }
     }
 

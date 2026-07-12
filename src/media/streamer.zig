@@ -29,9 +29,6 @@ pub fn write_packet(ptr: ?*anyopaque, buf: [*c]const u8, buf_size: c_int) callco
 /// Opens an input media file (e.g., MKV), reads streams, dynamically transcodes incompatible audio to AAC,
 /// remuxes video natively (e.g., H.264), and pipes the fragmented MP4 output over HTTP.
 pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: c_int, http_ctx: *HttpStreamContext) !void {
-    _ = c.avformat_network_init();
-    defer { _ = c.avformat_network_deinit(); }
-
     var in_fmt_ctx: ?*c.AVFormatContext = c.avformat_alloc_context();
     if (in_fmt_ctx != null) {
         in_fmt_ctx.?.flags |= c.AVFMT_FLAG_GENPTS;
@@ -52,7 +49,28 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
 
     var out_fmt_ctx: ?*c.AVFormatContext = null;
     if (c.avformat_alloc_output_context2(@ptrCast(&out_fmt_ctx), out_fmt, null, null) < 0) return error.AllocOutputFailed;
-    defer c.avformat_free_context(out_fmt_ctx);
+
+    var avio_buf: ?*anyopaque = null;
+    defer {
+        // Retrieve pb pointer before context gets freed
+        const pb_ptr = if (out_fmt_ctx) |ctx| ctx.*.pb else null;
+        
+        // 1. Free the output format context first
+        if (out_fmt_ctx) |ctx| {
+            c.avformat_free_context(ctx);
+        }
+        
+        // 2. Free the avio buffer second
+        if (avio_buf) |buf| {
+            c.av_free(buf);
+        }
+        
+        // 3. Free the AVIOContext last
+        if (pb_ptr) |pb| {
+            var temp_pb = pb;
+            c.avio_context_free(@ptrCast(&temp_pb));
+        }
+    }
 
     var video_in_idx: c_int = -1;
     var audio_in_idx: c_int = -1;
@@ -79,7 +97,7 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
                 
                 if (stream.*.codecpar.*.codec_id != c.AV_CODEC_ID_AAC) {
                     // Not AAC, spin up the transcoder
-                    audio_tr = try transcoder.AudioTranscoder.init(stream, out_stream);
+                    audio_tr = try transcoder.AudioTranscoder.init(stream, out_stream, start_time);
                 } else {
                     // Directly copy AAC stream
                     if (c.avcodec_parameters_copy(out_stream.*.codecpar, stream.*.codecpar) < 0) return error.CodecCopyFailed;
@@ -99,7 +117,7 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
                 const out_stream = c.avformat_new_stream(out_ctx, null);
                 
                 if (stream.*.codecpar.*.codec_id != c.AV_CODEC_ID_AAC) {
-                    audio_tr = try transcoder.AudioTranscoder.init(stream, out_stream);
+                    audio_tr = try transcoder.AudioTranscoder.init(stream, out_stream, start_time);
                 } else {
                     if (c.avcodec_parameters_copy(out_stream.*.codecpar, stream.*.codecpar) < 0) return error.CodecCopyFailed;
                     out_stream.*.codecpar.*.codec_tag = 0;
@@ -111,11 +129,10 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
     }
 
     const avio_buf_size = 32768;
-    const avio_buf = c.av_malloc(avio_buf_size) orelse return error.OutOfMemory;
-    defer c.av_free(avio_buf);
+    avio_buf = c.av_malloc(avio_buf_size) orelse return error.OutOfMemory;
     
     out_ctx.*.pb = c.avio_alloc_context(
-        @ptrCast(avio_buf),
+        @ptrCast(avio_buf.?),
         avio_buf_size,
         1, // write_flag
         @ptrCast(http_ctx), // opaque
@@ -123,7 +140,6 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
         write_packet, // write_packet callback
         null, // seek
     ) orelse return error.AvioContextFailed;
-    defer c.avio_context_free(@ptrCast(&out_ctx.*.pb));
 
     // movflags: fragmented mp4 configuration
     var dict: ?*c.AVDictionary = null;
@@ -138,9 +154,6 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
         const start_ts = @as(i64, @intFromFloat(start_time * c.AV_TIME_BASE));
         if (c.av_seek_frame(in_ctx, -1, start_ts, c.AVSEEK_FLAG_BACKWARD) < 0) {
             std.debug.print("Seek failed for {}s\n", .{start_time});
-        }
-        if (audio_tr) |tr| {
-            tr.reset(start_time);
         }
     }
 
@@ -194,7 +207,9 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
         }
     }
 
-    _ = c.av_write_trailer(out_ctx);
+    if (!http_ctx.has_error) {
+        _ = c.av_write_trailer(out_ctx);
+    }
 
     if (http_ctx.has_error) {
         return error.ConnectionDropped;

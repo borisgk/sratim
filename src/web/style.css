@@ -128,11 +128,31 @@ p.subtitle {
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     backdrop-filter: blur(8px);
     position: relative;
-    overflow: hidden;
 }
 
 .movie-card {
     min-height: 230px;
+}
+
+.play-link {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 2;
+    border-radius: inherit;
+}
+
+.card-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    height: 100%;
+    width: 100%;
+    pointer-events: none;
+    position: relative;
+    z-index: 1;
 }
 
 .library-card::before, .movie-card::before {
@@ -146,6 +166,7 @@ p.subtitle {
     opacity: 0;
     transition: opacity 0.3s ease;
     z-index: 0;
+    border-radius: inherit;
 }
 
 .library-card:hover, .movie-card:hover {
@@ -639,4 +660,371 @@ p.subtitle {
     box-shadow: 0 0 8px rgba(99, 102, 241, 0.5);
     border-radius: 0 2px 2px 0;
     transition: width 0.3s ease;
+}
+
+/* Movie Card Contextual Menu */
+.context-menu-btn {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    color: #9ca3af;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    z-index: 10;
+}
+
+.context-menu-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.15);
+    color: #ffffff;
+    transform: scale(1.05);
+}
+
+.context-dropdown {
+    position: absolute;
+    top: 56px;
+    right: 20px;
+    background: rgba(13, 13, 21, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 6px;
+    display: none;
+    flex-direction: column;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+    z-index: 20;
+    min-width: 140px;
+    backdrop-filter: blur(12px);
+}
+
+.context-dropdown.active {
+    display: flex;
+}
+
+.dropdown-item {
+    background: transparent;
+    border: none;
+    color: #d1d5db;
+    padding: 10px 14px;
+    text-align: left;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+    width: 100%;
+}
+
+.dropdown-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: #ffffff;
+}
+
+.dropdown-item.reset-btn:hover {
+    background: rgba(239, 68, 68, 0.08);
+    color: #fca5a5;
+}
+
+/* Movie Card with poster background */
+.movie-card.has-poster {
+    background-size: cover;
+    background-position: center;
+}
+
+.movie-card.has-poster::before {
+    opacity: 1;
+    background: linear-gradient(to bottom, rgba(13, 13, 21, 0.3) 0%, rgba(13, 13, 21, 0.88) 100%);
+}
+
+.movie-card.has-poster:hover::before {
+    background: linear-gradient(to bottom, rgba(13, 13, 21, 0.15) 0%, rgba(13, 13, 21, 0.8) 100%);
+}
+
+/* --- Portrait Movie Cards Layout --- */
+#movie-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 24px;
+}
+
+#movie-grid .movie-card {
+    min-height: unset;
+    aspect-ratio: 2 / 3;
+    padding: 18px;
+    border-radius: 20px;
+}
+
+#movie-grid .movie-card .icon-wrapper {
+    width: 44px;
+    height: 44px;
+    margin-bottom: 16px;
+    border-radius: 12px;
+}
+
+#movie-grid .movie-card .movie-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+#movie-grid .movie-card.has-poster .icon-wrapper {
+    display: none;
+}
+
+#movie-grid .movie-card.has-poster .movie-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+#movie-grid .movie-card .card-bottom {
+    margin-top: 16px;
+}
+
+#movie-grid .movie-card .watch-pill {
+    padding: 6px 14px;
+    font-size: 0.75rem;
+}
+
+#movie-grid .movie-card .type-badge {
+    font-size: 0.65rem;
+    padding: 2px 8px;
+}
+
+/* Modal Overlay styling */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(8, 8, 12, 0.7);
+    backdrop-filter: blur(8px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.modal-overlay.visible {
+    display: flex;
+    opacity: 1;
+}
+
+.modal-content {
+    background: rgba(18, 18, 28, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+    overflow: hidden;
+    animation: modalSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modalSlideIn {
+    from {
+        transform: translateY(20px) scale(0.97);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+    }
+}
+
+.modal-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.close-btn {
+    background: transparent;
+    border: none;
+    color: #9ca3af;
+    font-size: 1.75rem;
+    cursor: pointer;
+    transition: color 0.2s ease;
+    padding: 0;
+    line-height: 1;
+}
+
+.close-btn:hover {
+    color: #ffffff;
+}
+
+.modal-body {
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    overflow-y: auto;
+    flex-grow: 1;
+}
+
+.modal-search-row {
+    display: flex;
+    gap: 12px;
+}
+
+.modal-search-input {
+    flex-grow: 1;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 12px 16px;
+    color: #ffffff;
+    font-family: inherit;
+    font-size: 0.95rem;
+    transition: all 0.2s ease;
+}
+
+.modal-search-input:focus {
+    outline: none;
+    border-color: #a78bfa;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.modal-search-btn {
+    background: linear-gradient(135deg, #a78bfa 0%, #6366f1 100%);
+    border: none;
+    border-radius: 12px;
+    color: #ffffff;
+    padding: 0 24px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.modal-search-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+}
+
+.results-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.result-row {
+    display: flex;
+    gap: 16px;
+    padding: 12px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.result-row:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.1);
+    transform: translateX(4px);
+}
+
+.result-row.linking {
+    opacity: 0.5;
+    pointer-events: none;
+    background: rgba(99, 102, 241, 0.1);
+}
+
+.result-poster-wrapper {
+    width: 60px;
+    height: 90px;
+    border-radius: 8px;
+    overflow: hidden;
+    flex-shrink: 0;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.result-poster {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.result-poster-fallback {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    background: rgba(255, 255, 255, 0.04);
+    color: #4b5563;
+}
+
+.result-details {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.result-title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.result-year {
+    font-weight: 400;
+    font-size: 0.85rem;
+    color: #9ca3af;
+    margin-left: 4px;
+}
+
+.result-overview {
+    margin: 0;
+    font-size: 0.85rem;
+    color: #9ca3af;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.4;
+}
+
+.modal-info, .modal-loader, .modal-error {
+    text-align: center;
+    padding: 40px 20px;
+    color: #9ca3af;
+    font-size: 0.95rem;
+}
+
+.modal-loader {
+    color: #a78bfa;
+}
+
+.modal-error {
+    color: #fca5a5;
 }

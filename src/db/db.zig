@@ -80,6 +80,13 @@ pub const Statement = struct {
         }
     }
 
+    /// Binds NULL to a parameter (1-indexed).
+    pub fn bindNull(self: *Statement, index: c_int) !void {
+        if (c.sqlite3_bind_null(self.stmt, index) != c.SQLITE_OK) {
+            return error.SqliteBindFailed;
+        }
+    }
+
     pub const StepResult = enum { row, done };
 
     /// Advances the statement by one step. Returns `.row` if a result row is available.
@@ -157,6 +164,18 @@ pub fn initSchema(database: *Database) !void {
         \\    created_at INTEGER NOT NULL,
         \\    updated_at INTEGER NOT NULL,
         \\    last_scanned_at INTEGER
+        \\);
+    );
+    try database.exec(
+        \\CREATE TABLE IF NOT EXISTS movie_metadata (
+        \\    library_id INTEGER NOT NULL,
+        \\    file_path TEXT NOT NULL,
+        \\    tmdb_id INTEGER NOT NULL,
+        \\    title TEXT NOT NULL,
+        \\    overview TEXT,
+        \\    poster_path TEXT,
+        \\    release_date TEXT,
+        \\    PRIMARY KEY (library_id, file_path)
         \\);
     );
 }

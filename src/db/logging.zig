@@ -154,6 +154,18 @@ pub fn getLibraryProgressForUser(database: *db_mod.Database, allocator: std.mem.
     return try list.toOwnedSlice(allocator);
 }
 
+/// Deletes the saved playback progress for a specific user and video file.
+pub fn deletePlaybackProgress(database: *db_mod.Database, username: []const u8, library_id: i64, file_path: []const u8) !void {
+    var stmt = try database.prepare("DELETE FROM playback_progress WHERE username = ?1 AND library_id = ?2 AND file_path = ?3;");
+    defer stmt.finalize();
+
+    try stmt.bindText(1, username);
+    try stmt.bindInt64(2, library_id);
+    try stmt.bindText(3, file_path);
+
+    _ = try stmt.step();
+}
+
 test "logging: test login and playback event logs" {
     const allocator = std.testing.allocator;
     
@@ -185,4 +197,9 @@ test "logging: test login and playback event logs" {
     try std.testing.expectEqualStrings("movie.mkv", items[0].file_path);
     try std.testing.expectEqual(@as(f64, 42.5), items[0].position);
     try std.testing.expectEqual(@as(f64, 120.0), items[0].duration);
+
+    // Test playback progress deletion
+    try deletePlaybackProgress(&db, "testuser", 1, "movie.mkv");
+    const progress_after_delete = try getPlaybackProgress(&db, "testuser", 1, "movie.mkv");
+    try std.testing.expectEqual(@as(f64, 0.0), progress_after_delete);
 }

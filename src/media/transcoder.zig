@@ -15,7 +15,7 @@ pub const AudioTranscoder = struct {
 
     /// Initializes a new AudioTranscoder instance.
     /// Allocates decoder, encoder, resampler, and internal frames/buffers.
-    pub fn init(in_stream: [*c]c.AVStream, out_stream: [*c]c.AVStream) !*AudioTranscoder {
+    pub fn init(in_stream: [*c]c.AVStream, out_stream: [*c]c.AVStream, start_time: f64) !*AudioTranscoder {
         const allocator = std.heap.c_allocator;
         var self = try allocator.create(AudioTranscoder);
         errdefer allocator.destroy(self);
@@ -75,7 +75,7 @@ pub const AudioTranscoder = struct {
         self.frame_out.*.sample_rate = self.encode_ctx.*.sample_rate;
         if (c.av_frame_get_buffer(self.frame_out, 0) < 0) return error.OutOfMemory;
 
-        self.pts_counter = 0;
+        self.pts_counter = @as(i64, @intFromFloat(start_time * @as(f64, @floatFromInt(self.encode_ctx.*.sample_rate))));
         return self;
     }
 
@@ -98,13 +98,6 @@ pub const AudioTranscoder = struct {
         c.avcodec_free_context(@ptrCast(&self.encode_ctx));
         c.avcodec_free_context(@ptrCast(&self.decode_ctx));
         std.heap.c_allocator.destroy(self);
-    }
-
-    /// Resets the transcoder state, primarily used after seeking.
-    pub fn reset(self: *AudioTranscoder, start_time: f64) void {
-        c.avcodec_flush_buffers(self.decode_ctx);
-        c.av_audio_fifo_reset(self.fifo);
-        self.pts_counter = @as(i64, @intFromFloat(start_time * @as(f64, @floatFromInt(self.encode_ctx.*.sample_rate))));
     }
 
     /// Transcodes a single encoded input packet and writes it into the output context.

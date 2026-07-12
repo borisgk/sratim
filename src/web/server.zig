@@ -8,6 +8,9 @@ const session_mod = @import("../db/session.zig");
 const template_engine = @import("../core/template.zig");
 const library_mod = @import("../db/library.zig");
 const logging_mod = @import("../db/logging.zig");
+const config_mod = @import("../config.zig");
+const tmdb = @import("../media/tmdb.zig");
+const metadata_mod = @import("../db/metadata.zig");
 const global_css = @embedFile("style.css");
 const favicon_ico = @embedFile("favicon.ico");
 const c = @import("../core/c.zig").c;
@@ -15,7 +18,25 @@ const c = @import("../core/c.zig").c;
 /// Handles an incoming HTTP connection from a client.
 /// This function runs inside an isolated OS thread spawned specifically for this connection.
 /// It parses headers, routes endpoints, and serves content synchronously.
-pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: []const u8, database: *db_mod.Database, logs_database: *db_mod.Database) void {
+pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const config_mod.Config, database_shared: *db_mod.Database, logs_database_shared: *db_mod.Database) void {
+    _ = database_shared;
+    _ = logs_database_shared;
+
+    var database_val = db_mod.Database.open("sratim.db") catch |err| {
+        std.debug.print("Failed to open database in thread: {}\n", .{err});
+        return;
+    };
+    defer database_val.close();
+    const database = &database_val;
+
+    var logs_database_val = db_mod.Database.open("logs.db") catch |err| {
+        std.debug.print("Failed to open logs database in thread: {}\n", .{err});
+        return;
+    };
+    defer logs_database_val.close();
+    const logs_database = &logs_database_val;
+
+    const working_folder = config.working_folder;
     // Ensure the socket is always closed when this function exits, no matter what happens
     defer stream.socket.close(io);
 
@@ -61,7 +82,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
         }
 
         // Route: Stylesheet
-        if (std.mem.eql(u8, target, "/style.css")) {
+        if (std.mem.startsWith(u8, target, "/style.css")) {
             request.respond(global_css, .{
                 .status = .ok,
                 .extra_headers = &.{
@@ -72,7 +93,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
         }
 
         // Route: Favicon
-        if (std.mem.eql(u8, target, "/favicon.ico")) {
+        if (std.mem.startsWith(u8, target, "/favicon.ico")) {
             request.respond(favicon_ico, .{
                 .status = .ok,
                 .extra_headers = &.{
@@ -133,6 +154,42 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
         } else if (std.mem.startsWith(u8, target, "/api/watch/event") and method == .POST) {
             handleApiWatchEvent(&request, allocator, logs_database, session_info.?.username, &resp_buf) catch |err| {
                 std.debug.print("API Watch Event error: {}\n", .{err});
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                return;
+            };
+            continue;
+
+        // Route: API Playback Progress Modification (reset/watched)
+        } else if (std.mem.startsWith(u8, target, "/api/watch/progress/update") and method == .POST) {
+            handleApiWatchProgressUpdate(&request, allocator, database, logs_database, session_info.?.username, working_folder, &resp_buf) catch |err| {
+                std.debug.print("API Watch Progress Update error: {}\n", .{err});
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                return;
+            };
+            continue;
+
+        // Route: API Metadata Search
+        } else if (std.mem.startsWith(u8, target, "/api/metadata/search") and method == .GET) {
+            handleApiMetadataSearch(&request, allocator, io, config) catch |err| {
+                std.debug.print("API Metadata Search error: {}\n", .{err});
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                return;
+            };
+            continue;
+
+        // Route: API Metadata Link
+        } else if (std.mem.startsWith(u8, target, "/api/metadata/link") and method == .POST) {
+            handleApiMetadataLink(&request, allocator, database, &resp_buf) catch |err| {
+                std.debug.print("API Metadata Link error: {}\n", .{err});
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                return;
+            };
+            continue;
+
+        // Route: API Metadata Auto Link
+        } else if (std.mem.startsWith(u8, target, "/api/metadata/auto-link") and method == .POST) {
+            handleApiMetadataAutoLink(&request, allocator, io, database, config, &resp_buf) catch |err| {
+                std.debug.print("API Metadata Auto Link error: {}\n", .{err});
                 request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
                 return;
             };
@@ -677,4 +734,322 @@ fn handleApiWatchEvent(request: *std.http.Server.Request, allocator: std.mem.All
     try logging_mod.savePlaybackProgress(logs_database, username, payload.library_id, payload.file, payload.position, payload.duration);
 
     request.respond("OK", .{ .status = .ok }) catch return;
+}
+
+const WatchProgressUpdatePayload = struct {
+    library_id: i64,
+    file: []const u8,
+    action: []const u8,
+};
+
+fn handleApiWatchProgressUpdate(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database, logs_database: *db_mod.Database, username: []const u8, working_folder: []const u8, body_buf: *[8192]u8) !void {
+    var reader = request.readerExpectNone(body_buf);
+    var body_data = std.ArrayList(u8).empty;
+    defer body_data.deinit(allocator);
+
+    var chunk_buf: [4096]u8 = undefined;
+    while (true) {
+        const n = reader.readSliceShort(&chunk_buf) catch break;
+        if (n == 0) break;
+        try body_data.appendSlice(allocator, chunk_buf[0..n]);
+    }
+
+    const parsed = std.json.parseFromSlice(WatchProgressUpdatePayload, allocator, body_data.items, .{}) catch |err| {
+        std.debug.print("Failed to parse watch progress update JSON: {any}\n", .{err});
+        request.respond("Bad Request", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    defer parsed.deinit();
+
+    const payload = parsed.value;
+
+    if (std.mem.eql(u8, payload.action, "reset")) {
+        try logging_mod.deletePlaybackProgress(logs_database, username, payload.library_id, payload.file);
+    } else if (std.mem.eql(u8, payload.action, "watched")) {
+        var resolved_wf = try allocator.dupe(u8, working_folder);
+        if (payload.library_id != -1) {
+            if (library_mod.getLibraryById(database, allocator, payload.library_id) catch null) |lib| {
+                allocator.free(resolved_wf);
+                resolved_wf = try allocator.dupe(u8, lib.path);
+                allocator.free(lib.name);
+                allocator.free(lib.path);
+                allocator.free(lib.metadata_language);
+                if (lib.ignore_patterns) |pat| allocator.free(pat);
+            }
+        }
+        
+        const full_path = try std.fs.path.join(allocator, &[_][]const u8{ resolved_wf, payload.file });
+        const resolved_path = try std.fs.path.resolve(allocator, &[_][]const u8{ full_path });
+        const abs_wf_path = try std.fs.path.resolve(allocator, &[_][]const u8{ resolved_wf });
+        allocator.free(resolved_wf);
+
+        if (!std.mem.startsWith(u8, resolved_path, abs_wf_path)) {
+            request.respond("Forbidden", .{ .status = .forbidden }) catch return;
+            return;
+        }
+
+        const c_full_path = try allocator.dupeZ(u8, resolved_path);
+        const media_info = streamer.getMediaInfo(allocator, c_full_path) catch streamer.MediaInfo{
+            .duration = 3600.0,
+            .codec_str = "",
+            .audio_tracks = &[_]streamer.AudioTrack{},
+        };
+
+        try logging_mod.savePlaybackProgress(logs_database, username, payload.library_id, payload.file, media_info.duration, media_info.duration);
+    }
+
+    request.respond("OK", .{ .status = .ok }) catch return;
+}
+
+fn handleApiMetadataSearch(request: *std.http.Server.Request, allocator: std.mem.Allocator, io: std.Io, config: *const config_mod.Config) !void {
+    const token = config.tmdb_access_token orelse {
+        request.respond("TMDB Access Token not configured in config.json", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    if (token.len == 0) {
+        request.respond("TMDB Access Token is empty in config.json", .{ .status = .bad_request }) catch return;
+        return;
+    }
+
+    var query: []const u8 = "";
+    if (std.mem.indexOf(u8, request.head.target, "?")) |q_idx| {
+        const params = request.head.target[q_idx + 1 ..];
+        var it = std.mem.splitScalar(u8, params, '&');
+        while (it.next()) |param| {
+            if (std.mem.startsWith(u8, param, "query=")) {
+                query = param[6..];
+            }
+        }
+    }
+
+    if (query.len == 0) {
+        request.respond("Missing query parameter", .{ .status = .bad_request }) catch return;
+        return;
+    }
+
+    // Percent decode query
+    const decoded_query = try allocator.dupe(u8, query);
+    defer allocator.free(decoded_query);
+    const clean_query = std.Uri.percentDecodeInPlace(decoded_query);
+
+    var response_parsed = tmdb.searchMovie(allocator, io, clean_query, null, token, config.tmdb_proxy) catch |err| {
+        std.debug.print("TMDB Search error: {}\n", .{err});
+        request.respond("TMDB API request failed", .{ .status = .internal_server_error }) catch return;
+        return;
+    };
+    defer response_parsed.deinit();
+
+    // Stringify the results array
+    var response_allocating = std.Io.Writer.Allocating.init(allocator);
+    defer response_allocating.deinit();
+    try std.json.Stringify.value(response_parsed.value.results, .{}, &response_allocating.writer);
+
+    request.respond(response_allocating.written(), .{
+        .status = .ok,
+        .extra_headers = &.{
+            .{ .name = "content-type", .value = "application/json" },
+        },
+    }) catch return;
+}
+
+const MetadataLinkPayload = struct {
+    library_id: i64,
+    file: []const u8,
+    tmdb_id: i64,
+    title: []const u8,
+    overview: ?[]const u8 = null,
+    poster_path: ?[]const u8 = null,
+    release_date: ?[]const u8 = null,
+};
+
+fn handleApiMetadataLink(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database, body_buf: *[8192]u8) !void {
+    var reader = request.readerExpectNone(body_buf);
+    var body_data = std.ArrayList(u8).empty;
+    defer body_data.deinit(allocator);
+
+    var chunk_buf: [4096]u8 = undefined;
+    while (true) {
+        const n = reader.readSliceShort(&chunk_buf) catch break;
+        if (n == 0) break;
+        try body_data.appendSlice(allocator, chunk_buf[0..n]);
+    }
+
+    const parsed = std.json.parseFromSlice(MetadataLinkPayload, allocator, body_data.items, .{
+        .ignore_unknown_fields = true,
+    }) catch |err| {
+        std.debug.print("Failed to parse metadata link JSON: {any}\n", .{err});
+        request.respond("Bad Request", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    defer parsed.deinit();
+
+    const payload = parsed.value;
+
+    try metadata_mod.saveMetadata(
+        database,
+        payload.library_id,
+        payload.file,
+        payload.tmdb_id,
+        payload.title,
+        payload.overview,
+        payload.poster_path,
+        payload.release_date,
+    );
+
+    request.respond("OK", .{ .status = .ok }) catch return;
+}
+
+fn parseYearAndCleanName(allocator: std.mem.Allocator, raw_name: []const u8) !struct { clean: []const u8, year: ?[]const u8 } {
+    // Look for a 4-digit number (1800-2100) in the string
+    var year_idx: ?usize = null;
+    var i: usize = 0;
+    while (i + 4 <= raw_name.len) : (i += 1) {
+        const slice = raw_name[i .. i + 4];
+        var is_digit = true;
+        for (slice) |c_val| {
+            if (!std.ascii.isDigit(c_val)) {
+                is_digit = false;
+                break;
+            }
+        }
+        if (is_digit) {
+            const year_val = try std.fmt.parseInt(u32, slice, 10);
+            if (year_val >= 1800 and year_val <= 2100) {
+                year_idx = i;
+                break; // Found the first year-like digits
+            }
+        }
+    }
+
+    if (year_idx) |idx| {
+        // Year found! Let's extract the clean name by taking everything before the year
+        // and trimming any trailing spaces, dots, parentheses, or brackets.
+        var name_end = idx;
+        while (name_end > 0) {
+            const last_char = raw_name[name_end - 1];
+            if (last_char == ' ' or last_char == '.' or last_char == '(' or last_char == '[' or last_char == '-') {
+                name_end -= 1;
+            } else {
+                break;
+            }
+        }
+        
+        const clean = std.mem.trim(u8, raw_name[0..name_end], " \t\r\n.-_");
+        const year = raw_name[idx .. idx + 4];
+        
+        return .{
+            .clean = try allocator.dupe(u8, clean),
+            .year = try allocator.dupe(u8, year),
+        };
+    }
+
+    // No year found, just clean the raw name
+    const clean = std.mem.trim(u8, raw_name, " \t\r\n.-_");
+    return .{
+        .clean = try allocator.dupe(u8, clean),
+        .year = null,
+    };
+}
+
+const MetadataAutoLinkPayload = struct {
+    library_id: i64,
+    file: []const u8,
+};
+
+fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, config: *const config_mod.Config, body_buf: *[8192]u8) !void {
+    const token = config.tmdb_access_token orelse {
+        request.respond("TMDB Access Token not configured in config.json", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    if (token.len == 0) {
+        request.respond("TMDB Access Token is empty in config.json", .{ .status = .bad_request }) catch return;
+        return;
+    }
+
+    var reader = request.readerExpectNone(body_buf);
+    var body_data = std.ArrayList(u8).empty;
+    defer body_data.deinit(allocator);
+
+    var chunk_buf: [4096]u8 = undefined;
+    while (true) {
+        const n = reader.readSliceShort(&chunk_buf) catch break;
+        if (n == 0) break;
+        try body_data.appendSlice(allocator, chunk_buf[0..n]);
+    }
+
+    const parsed = std.json.parseFromSlice(MetadataAutoLinkPayload, allocator, body_data.items, .{
+        .ignore_unknown_fields = true,
+    }) catch |err| {
+        std.debug.print("Failed to parse metadata auto-link JSON: {any}\n", .{err});
+        request.respond("Bad Request", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    defer parsed.deinit();
+
+    const payload = parsed.value;
+
+    // Get clean name from file path
+    const basename = std.fs.path.basename(payload.file);
+    const ext = std.fs.path.extension(basename);
+    const clean_name = basename[0 .. basename.len - ext.len];
+
+    const parsed_name = try parseYearAndCleanName(allocator, clean_name);
+    defer allocator.free(parsed_name.clean);
+    defer if (parsed_name.year) |y| allocator.free(y);
+
+    // Search TMDB
+    var response_parsed = tmdb.searchMovie(allocator, io, parsed_name.clean, parsed_name.year, token, config.tmdb_proxy) catch |err| {
+        std.debug.print("TMDB Auto Search error: {}\n", .{err});
+        request.respond("TMDB API request failed", .{ .status = .internal_server_error }) catch return;
+        return;
+    };
+    defer response_parsed.deinit();
+
+    if (response_parsed.value.results.len == 0) {
+        request.respond("No metadata found for this movie name.", .{ .status = .not_found }) catch return;
+        return;
+    }
+
+    const first_movie = response_parsed.value.results[0];
+
+    try metadata_mod.saveMetadata(
+        database,
+        payload.library_id,
+        payload.file,
+        first_movie.id,
+        first_movie.title,
+        first_movie.overview,
+        first_movie.poster_path,
+        first_movie.release_date,
+    );
+
+    request.respond("OK", .{ .status = .ok }) catch return;
+}
+
+test "parseYearAndCleanName tests" {
+    const allocator = std.testing.allocator;
+
+    {
+        const res = try parseYearAndCleanName(allocator, "Inception (2010)");
+        defer allocator.free(res.clean);
+        defer if (res.year) |y| allocator.free(y);
+        try std.testing.expectEqualStrings("Inception", res.clean);
+        try std.testing.expectEqualStrings("2010", res.year.?);
+    }
+
+    {
+        const res = try parseYearAndCleanName(allocator, "Inception.2010.1080p");
+        defer allocator.free(res.clean);
+        defer if (res.year) |y| allocator.free(y);
+        try std.testing.expectEqualStrings("Inception", res.clean);
+        try std.testing.expectEqualStrings("2010", res.year.?);
+    }
+
+    {
+        const res = try parseYearAndCleanName(allocator, "Inception");
+        defer allocator.free(res.clean);
+        defer if (res.year) |y| allocator.free(y);
+        try std.testing.expectEqualStrings("Inception", res.clean);
+        try std.testing.expect(res.year == null);
+    }
 }

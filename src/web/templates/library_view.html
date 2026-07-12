@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sratim — Browse</title>
-    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/style.css?v=3">
 </head>
 <body>
     <div class="container">
@@ -39,6 +39,8 @@
         </div>
     </div>
 
+
+
     <script>
         const searchInput = document.getElementById('search-input');
         const cards = document.querySelectorAll('.movie-card');
@@ -63,6 +65,112 @@
             } else {
                 noResults.style.display = 'block';
             }
+        });
+
+        // Context Menu Handlers
+        document.querySelectorAll('.context-menu-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                const dropdown = btn.nextElementSibling;
+                const isCurrentlyActive = dropdown.classList.contains('active');
+                
+                // Close all dropdowns
+                document.querySelectorAll('.context-dropdown').forEach(d => d.classList.remove('active'));
+                
+                if (!isCurrentlyActive) {
+                    dropdown.classList.add('active');
+                }
+            });
+        });
+
+        // Close dropdowns on clicking anywhere else
+        document.addEventListener('click', () => {
+            document.querySelectorAll('.context-dropdown').forEach(d => d.classList.remove('active'));
+        });
+
+        // Handle Dropdown Item clicks
+        document.querySelectorAll('.dropdown-item').forEach(item => {
+            item.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                const file = item.getAttribute('data-file');
+                const libraryId = item.getAttribute('data-library');
+                const action = item.classList.contains('reset-btn') ? 'reset' : 'watched';
+                const card = item.closest('.movie-card');
+                
+                try {
+                    const res = await fetch('/api/watch/progress/update', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            library_id: parseInt(libraryId, 10),
+                            file: file,
+                            action: action
+                        })
+                    });
+                    
+                    if (res.ok) {
+                        // Remove the progress bar if present since both "reset" and "watched" hide it
+                        const progressEl = card.querySelector('.card-progress');
+                        if (progressEl) {
+                            progressEl.remove();
+                        }
+                    } else {
+                        console.error('Failed to update progress');
+                    }
+                } catch (err) {
+                    console.error('Error updating progress:', err);
+                }
+                
+                // Close dropdown
+                item.parentElement.classList.remove('active');
+            });
+        });
+
+        // Automatic Lookup Logic
+        document.querySelectorAll('.lookup-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                const file = btn.getAttribute('data-file');
+                const libraryId = btn.getAttribute('data-library');
+                
+                const originalText = btn.innerText;
+                btn.innerText = 'Looking up...';
+                btn.disabled = true;
+
+                try {
+                    const res = await fetch('/api/metadata/auto-link', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            library_id: parseInt(libraryId, 10),
+                            file: file
+                        })
+                    });
+                    
+                    if (res.ok) {
+                        window.location.reload();
+                    } else {
+                        const text = await res.text();
+                        alert('Lookup failed: ' + text);
+                        btn.innerText = originalText;
+                        btn.disabled = false;
+                    }
+                } catch (err) {
+                    console.error('Error lookup metadata:', err);
+                    alert('Error lookup metadata');
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                }
+                
+                // Close dropdown
+                btn.parentElement.classList.remove('active');
+            });
         });
     </script>
 </body>
