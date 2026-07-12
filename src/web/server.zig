@@ -9,6 +9,7 @@ const template_engine = @import("../core/template.zig");
 const library_mod = @import("../db/library.zig");
 const logging_mod = @import("../db/logging.zig");
 const global_css = @embedFile("style.css");
+const favicon_ico = @embedFile("favicon.ico");
 const c = @import("../core/c.zig").c;
 
 /// Handles an incoming HTTP connection from a client.
@@ -72,17 +73,12 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
 
         // Route: Favicon
         if (std.mem.eql(u8, target, "/favicon.ico")) {
-            const file_content = std.Io.Dir.cwd().readFileAlloc(io, "public/favicon.ico", allocator, @enumFromInt(1024 * 1024)) catch null;
-            if (file_content) |content| {
-                request.respond(content, .{
-                    .status = .ok,
-                    .extra_headers = &.{
-                        .{ .name = "content-type", .value = "image/x-icon" },
-                    },
-                }) catch return;
-            } else {
-                request.respond("Not found", .{ .status = .not_found }) catch return;
-            }
+            request.respond(favicon_ico, .{
+                .status = .ok,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "image/x-icon" },
+                },
+            }) catch return;
             continue;
         }
 
