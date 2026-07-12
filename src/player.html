@@ -60,6 +60,9 @@
         let abortController = null;
         let currentObjectUrl = null;
 
+        const urlParams = new URLSearchParams(window.location.search);
+        const libraryId = urlParams.get('library') || '';
+
         const svgPlay = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M8 5v14l11-7z"/></svg>';
         const svgPause = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
         const svgFullscreen = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>';
@@ -113,7 +116,8 @@
         async function fetchAndAppend(sourceBuffer, startTime, signal) {
             try {
                 const audioParam = currentAudioIdx >= 0 ? `&audio=${currentAudioIdx}` : '';
-                const response = await fetch(`/stream?file=${encodeURIComponent(fileName)}&start=${startTime}${audioParam}`, { signal });
+                const libParam = libraryId ? `&library=${libraryId}` : '';
+                const response = await fetch(`/stream?file=${encodeURIComponent(fileName)}&start=${startTime}${audioParam}${libParam}`, { signal });
                 const reader = response.body.getReader();
 
                 let queue = [];

@@ -7,6 +7,7 @@ const users_mod = @import("users.zig");
 const session_mod = @import("session.zig");
 const template_engine = @import("template.zig");
 const library_mod = @import("library.zig");
+const global_css = @embedFile("style.css");
 
 /// Handles an incoming HTTP connection from a client.
 /// This function runs inside an isolated OS thread spawned specifically for this connection.
@@ -53,6 +54,17 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
         // Route: Logout
         if (std.mem.eql(u8, target, "/logout")) {
             handleLogout(&request, allocator, database) catch return;
+            continue;
+        }
+
+        // Route: Stylesheet
+        if (std.mem.eql(u8, target, "/style.css")) {
+            request.respond(global_css, .{
+                .status = .ok,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "text/css" },
+                },
+            }) catch return;
             continue;
         }
 
