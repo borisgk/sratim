@@ -1,5 +1,7 @@
 const std = @import("std");
 const template_engine = @import("template.zig");
+const db_mod = @import("db.zig");
+const library_mod = @import("library.zig");
 
 const video_extensions = [_][]const u8{ ".mkv", ".mp4", ".avi", ".ts", ".webm", ".mov" };
 
@@ -42,9 +44,93 @@ fn escapeHtml(list: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []c
     }
 }
 
-/// Generates an HTML catalog of all video files within the working folder.
-pub fn generateHtml(allocator: std.mem.Allocator, io: std.Io, working_folder: []const u8) ![]u8 {
-    var dir = try std.Io.Dir.cwd().openDir(io, working_folder, .{ .iterate = true });
+/// Generates the HTML catalog of libraries.
+pub fn generateHtml(allocator: std.mem.Allocator, database: *db_mod.Database) ![]u8 {
+    const libraries = try library_mod.getLibraries(database, allocator);
+    defer {
+        for (libraries) |lib| {
+            allocator.free(lib.name);
+            allocator.free(lib.path);
+            allocator.free(lib.metadata_language);
+            if (lib.ignore_patterns) |pat| allocator.free(pat);
+        }
+        allocator.free(libraries);
+    }
+
+    var cards_buf = std.ArrayList(u8).empty;
+    defer cards_buf.deinit(allocator);
+
+    if (libraries.len == 0) {
+        try cards_buf.appendSlice(allocator,
+            \\            <div class="empty-state">
+            \\                <h3>No Libraries Configured</h3>
+            \\                <p>Get started by adding a media folder. Click the '+' button in the bottom right corner.</p>
+            \\            </div>
+        );
+    } else {
+        for (libraries) |lib| {
+            const icon_svg = switch (lib.lib_type) {
+                .Movies => 
+                    \\<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
+                    \\    <circle cx="12" cy="12" r="10"></circle>
+                    \\    <circle cx="12" cy="12" r="2"></circle>
+                    \\    <circle cx="12" cy="7" r="1.5"></circle>
+                    \\    <circle cx="12" cy="17" r="1.5"></circle>
+                    \\    <circle cx="7" cy="12" r="1.5"></circle>
+                    \\    <circle cx="17" cy="12" r="1.5"></circle>
+                    \\</svg>
+                ,
+                .Shows => 
+                    \\<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
+                    \\    <rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect>
+                    \\    <polyline points="17 2 12 7 7 2"></polyline>
+                    \\</svg>
+                ,
+                .Other => 
+                    \\<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
+                    \\    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                    \\</svg>
+                ,
+            };
+
+            const card_start = try std.fmt.allocPrint(allocator, "            <a href=\"/library?id={d}\" class=\"library-card\">\n", .{lib.id});
+            defer allocator.free(card_start);
+            try cards_buf.appendSlice(allocator, card_start);
+
+            try cards_buf.appendSlice(allocator, "                <div class=\"card-top\">\n                    <div class=\"icon-wrapper\">\n                        ");
+            try cards_buf.appendSlice(allocator, icon_svg);
+            try cards_buf.appendSlice(allocator, "\n                    </div>\n                    <div class=\"card-info\">\n                        <h3 class=\"library-title\">");
+            try escapeHtml(&cards_buf, allocator, lib.name);
+            try cards_buf.appendSlice(allocator, "</h3>\n                        <span class=\"library-path\">");
+            try escapeHtml(&cards_buf, allocator, lib.path);
+            try cards_buf.appendSlice(allocator, "</span>\n                    </div>\n                </div>\n                <div class=\"card-bottom\">\n                    <span class=\"type-badge\">");
+            try cards_buf.appendSlice(allocator, lib.lib_type.toString());
+            try cards_buf.appendSlice(allocator, "</span>\n                    <span class=\"browse-pill\">Browse</span>\n                </div>\n            </a>\n");
+        }
+    }
+
+    return template_engine.render(allocator, @embedFile("catalog.html"), .{
+        .LIBRARY_CARDS = cards_buf.items,
+    });
+}
+
+/// Generates the HTML display of the files inside a specific library.
+pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, library_id: i64) !?[]u8 {
+    const lib_opt = try library_mod.getLibraryById(database, allocator, library_id);
+    if (lib_opt == null) return null;
+
+    const lib = lib_opt.?;
+    defer {
+        allocator.free(lib.name);
+        allocator.free(lib.path);
+        allocator.free(lib.metadata_language);
+        if (lib.ignore_patterns) |pat| allocator.free(pat);
+    }
+
+    var dir = std.Io.Dir.cwd().openDir(io, lib.path, .{ .iterate = true }) catch |err| {
+        std.debug.print("Failed to open library path {s}: {}\n", .{lib.path, err});
+        return error.LibraryPathNotFound;
+    };
     defer dir.close(io);
 
     var walker = try dir.walk(allocator);
@@ -53,14 +139,20 @@ pub fn generateHtml(allocator: std.mem.Allocator, io: std.Io, working_folder: []
     var cards_buf = std.ArrayList(u8).empty;
     defer cards_buf.deinit(allocator);
 
-    // Collect and append each video file to the card buffer
     while (try walker.next(io)) |entry| {
         if (entry.kind == .file and isVideoFile(entry.basename)) {
             const ext = std.fs.path.extension(entry.basename);
             const ext_idx = entry.basename.len - ext.len;
             const clean_name = entry.basename[0..ext_idx];
 
-            try cards_buf.appendSlice(allocator, "        <a href=\"/player?file=");
+            // In /player, the file path parameter should be scoped. Wait! Let's pass the relative path
+            // from the library. Or pass the file ID? For now, we will pass library_id and path to player/stream
+            // e.g. /player?library=1&file=path/to/movie.mp4. This is much safer than absolute paths!
+            try cards_buf.appendSlice(allocator, "        <a href=\"/player?library=");
+            const lib_id_str = try std.fmt.allocPrint(allocator, "{d}", .{lib.id});
+            defer allocator.free(lib_id_str);
+            try cards_buf.appendSlice(allocator, lib_id_str);
+            try cards_buf.appendSlice(allocator, "&file=");
             try writePercentEncoded(&cards_buf, allocator, entry.path);
             try cards_buf.appendSlice(allocator, "\" class=\"movie-card\" data-name=\"");
             try escapeHtml(&cards_buf, allocator, entry.path);
@@ -73,7 +165,9 @@ pub fn generateHtml(allocator: std.mem.Allocator, io: std.Io, working_folder: []
         }
     }
 
-    return template_engine.render(allocator, @embedFile("catalog.html"), .{
+    return try template_engine.render(allocator, @embedFile("library_view.html"), .{
+        .LIBRARY_NAME = lib.name,
+        .LIBRARY_PATH = lib.path,
         .MOVIE_CARDS = cards_buf.items,
     });
 }

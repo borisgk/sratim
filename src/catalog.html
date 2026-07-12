@@ -82,51 +82,14 @@
             font-weight: 300;
         }
 
-        .search-container {
-            position: relative;
-            max-width: 500px;
-            margin: 0 auto 50px auto;
-        }
-
-        .search-input {
-            width: 100%;
-            padding: 16px 24px 16px 52px;
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 30px;
-            color: #f3f4f6;
-            font-family: 'Inter', sans-serif;
-            font-size: 1.05rem;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            backdrop-filter: blur(10px);
-        }
-
-        .search-input:focus {
-            outline: none;
-            border-color: rgba(99, 102, 241, 0.4);
-            box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.4), 0 0 25px rgba(99, 102, 241, 0.15);
-            background: rgba(255, 255, 255, 0.04);
-        }
-
-        .search-icon {
-            position: absolute;
-            left: 20px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #9ca3af;
-            pointer-events: none;
-            width: 20px;
-            height: 20px;
-        }
-
         .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
             gap: 30px;
             width: 100%;
         }
 
-        .movie-card {
+        .library-card {
             background: rgba(255, 255, 255, 0.015);
             border: 1px solid rgba(255, 255, 255, 0.05);
             border-radius: 24px;
@@ -136,14 +99,14 @@
             display: flex;
             flex-direction: column;
             justify-content: space-between;
-            min-height: 230px;
+            min-height: 200px;
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             backdrop-filter: blur(8px);
             position: relative;
             overflow: hidden;
         }
 
-        .movie-card::before {
+        .library-card::before {
             content: '';
             position: absolute;
             top: 0;
@@ -156,70 +119,67 @@
             z-index: 0;
         }
 
-        .movie-card:hover {
+        .library-card:hover {
             transform: translateY(-6px);
             border-color: rgba(99, 102, 241, 0.3);
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4), 0 0 20px rgba(99, 102, 241, 0.1);
         }
 
-        .movie-card:hover::before {
+        .library-card:hover::before {
             opacity: 1;
         }
 
         .card-top {
             position: relative;
             z-index: 1;
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
         }
 
         .icon-wrapper {
-            width: 52px;
-            height: 52px;
+            width: 56px;
+            height: 56px;
             border-radius: 16px;
             background: rgba(255, 255, 255, 0.03);
             display: flex;
             align-items: center;
             justify-content: center;
-            margin-bottom: 24px;
             border: 1px solid rgba(255, 255, 255, 0.05);
             color: #a78bfa;
             transition: all 0.3s ease;
+            flex-shrink: 0;
         }
 
-        .movie-card:hover .icon-wrapper {
+        .library-card:hover .icon-wrapper {
             background: rgba(99, 102, 241, 0.15);
             color: #e9d5ff;
             border-color: rgba(168, 85, 247, 0.25);
             box-shadow: 0 0 15px rgba(168, 85, 247, 0.15);
         }
 
-        .movie-title {
+        .card-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .library-title {
             font-family: 'Outfit', sans-serif;
-            font-size: 1.25rem;
+            font-size: 1.35rem;
             font-weight: 600;
-            line-height: 1.4;
             color: #ffffff;
-            margin-bottom: 8px;
+            line-height: 1.3;
+        }
+
+        .library-path {
+            font-size: 0.85rem;
+            color: #9ca3af;
+            word-break: break-all;
             display: -webkit-box;
             -webkit-line-clamp: 2;
             -webkit-box-orient: vertical;
             overflow: hidden;
-        }
-
-        .metadata {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .ext-badge {
-            font-size: 0.72rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            padding: 3px 8px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 6px;
-            color: #9ca3af;
-            border: 1px solid rgba(255, 255, 255, 0.04);
         }
 
         .card-bottom {
@@ -228,10 +188,21 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-top: 24px;
+            margin-top: 28px;
         }
 
-        .watch-pill {
+        .type-badge {
+            font-size: 0.72rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            padding: 3px 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            color: #a78bfa;
+            border: 1px solid rgba(167, 139, 250, 0.2);
+        }
+
+        .browse-pill {
             padding: 8px 18px;
             background: rgba(255, 255, 255, 0.04);
             border: 1px solid rgba(255, 255, 255, 0.06);
@@ -242,20 +213,188 @@
             transition: all 0.3s ease;
         }
 
-        .movie-card:hover .watch-pill {
+        .library-card:hover .browse-pill {
             background: linear-gradient(135deg, #a78bfa 0%, #6366f1 100%);
             border-color: transparent;
             color: #ffffff;
             box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
         }
 
-        .no-results {
-            display: none;
-            text-align: center;
-            padding: 60px 20px;
-            color: #9ca3af;
-            font-size: 1.1rem;
+        .empty-state {
             grid-column: 1 / -1;
+            text-align: center;
+            padding: 80px 20px;
+            background: rgba(255, 255, 255, 0.01);
+            border: 1px dashed rgba(255, 255, 255, 0.08);
+            border-radius: 24px;
+            color: #9ca3af;
+        }
+
+        .empty-state h3 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.5rem;
+            color: #ffffff;
+            margin-bottom: 12px;
+        }
+
+        .empty-state p {
+            font-size: 0.95rem;
+            margin-bottom: 24px;
+            max-width: 400px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* FAB Button */
+        .fab {
+            position: fixed;
+            bottom: 40px;
+            right: 40px;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #c084fc 0%, #6366f1 100%);
+            border: none;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 8px 30px rgba(99, 102, 241, 0.4);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 90;
+        }
+
+        .fab:hover {
+            transform: scale(1.1);
+            box-shadow: 0 12px 35px rgba(99, 102, 241, 0.6), 0 0 25px rgba(167, 139, 250, 0.3);
+        }
+
+        .fab:active {
+            transform: scale(0.95);
+        }
+
+        /* Modal Overlay */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(3, 3, 8, 0.6);
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .modal-card {
+            width: 100%;
+            max-width: 480px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 28px;
+            padding: 40px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            transform: scale(0.95);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .modal-overlay.active .modal-card {
+            transform: scale(1);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        .modal-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.75rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #c084fc 0%, #38bdf8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: #9ca3af;
+            cursor: pointer;
+            transition: color 0.2s ease;
+        }
+
+        .close-btn:hover {
+            color: #ffffff;
+        }
+
+        .form-group {
+            margin-bottom: 24px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: #d1d5db;
+            margin-bottom: 8px;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 14px 18px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 14px;
+            color: #f3f4f6;
+            font-family: 'Inter', sans-serif;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        .form-group select option {
+            background-color: #0d0d15;
+            color: #f3f4f6;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: rgba(99, 102, 241, 0.4);
+            box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.4), 0 0 20px rgba(99, 102, 241, 0.1);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .submit-btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #a78bfa 0%, #6366f1 100%);
+            border: none;
+            border-radius: 14px;
+            color: #ffffff;
+            font-family: 'Inter', sans-serif;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.2);
+        }
+
+        .submit-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(99, 102, 241, 0.35);
         }
     </style>
 </head>
@@ -269,45 +408,83 @@
         </a>
         <header>
             <h1>Sratim</h1>
-            <p class="subtitle">Stream your personal video library in style</p>
+            <p class="subtitle">Select a media library to start streaming</p>
         </header>
 
-        <div class="search-container">
-            <svg class="search-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-            </svg>
-            <input type="text" id="search-input" class="search-input" placeholder="Search your library..." autocomplete="off">
+        <div class="grid">
+            __LIBRARY_CARDS__
         </div>
+    </div>
 
-        <div class="grid" id="movie-grid">
-            __MOVIE_CARDS__
-            <div id="no-results" class="no-results">No movies found matching your search.</div>
+    <!-- FAB -->
+    <button class="fab" id="add-lib-fab" aria-label="Add Library">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="24" height="24">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+    </button>
+
+    <!-- Modal Dialog -->
+    <div class="modal-overlay" id="modal-overlay">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2 class="modal-title">Add Library</h2>
+                <button class="close-btn" id="modal-close" aria-label="Close modal">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="22" height="22">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <form method="POST" action="/libraries/add">
+                <div class="form-group">
+                    <label for="lib-name">Library Name</label>
+                    <input type="text" id="lib-name" name="name" required placeholder="e.g. Movies, TV Shows" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label for="lib-path">Folder Path</label>
+                    <input type="text" id="lib-path" name="path" required placeholder="e.g. /Users/borisk/Movies" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label for="lib-type">Library Type</label>
+                    <select id="lib-type" name="type" required>
+                        <option value="Movies">Movies</option>
+                        <option value="Shows">TV Shows</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+                <button type="submit" class="submit-btn">Save Library</button>
+            </form>
         </div>
     </div>
 
     <script>
-        const searchInput = document.getElementById('search-input');
-        const cards = document.querySelectorAll('.movie-card');
-        const noResults = document.getElementById('no-results');
+        const fab = document.getElementById('add-lib-fab');
+        const overlay = document.getElementById('modal-overlay');
+        const closeBtn = document.getElementById('modal-close');
 
-        searchInput.addEventListener('input', (e) => {
-            const query = e.target.value.toLowerCase().trim();
-            let hasMatches = false;
+        function openModal() {
+            overlay.classList.add('active');
+            document.getElementById('lib-name').focus();
+        }
 
-            cards.forEach(card => {
-                const name = card.getAttribute('data-name').toLowerCase();
-                if (name.includes(query)) {
-                    card.style.display = 'flex';
-                    hasMatches = true;
-                } else {
-                    card.style.display = 'none';
-                }
-            });
+        function closeModal() {
+            overlay.classList.remove('active');
+        }
 
-            if (hasMatches || query === '') {
-                noResults.style.display = 'none';
-            } else {
-                noResults.style.display = 'block';
+        fab.addEventListener('click', openModal);
+        closeBtn.addEventListener('click', closeModal);
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                closeModal();
+            }
+        });
+
+        // ESC key to close modal
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeModal();
             }
         });
     </script>

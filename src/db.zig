@@ -142,4 +142,21 @@ pub fn initSchema(database: *Database) !void {
         \\    FOREIGN KEY (username) REFERENCES users(username)
         \\);
     );
+    try database.exec(
+        \\CREATE TABLE IF NOT EXISTS libraries (
+        \\    id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\    name TEXT NOT NULL,
+        \\    path TEXT UNIQUE NOT NULL,
+        \\    type TEXT NOT NULL CHECK(type IN ('Movies', 'Shows', 'Other')),
+        \\    is_enabled INTEGER NOT NULL DEFAULT 1,
+        \\    depth_limit INTEGER NOT NULL DEFAULT -1,
+        \\    scan_interval INTEGER NOT NULL DEFAULT 0,
+        \\    metadata_language TEXT NOT NULL DEFAULT 'en',
+        \\    ignore_patterns TEXT,
+        \\    include_in_dashboard INTEGER NOT NULL DEFAULT 1,
+        \\    created_at INTEGER NOT NULL,
+        \\    updated_at INTEGER NOT NULL,
+        \\    last_scanned_at INTEGER
+        \\);
+    );
 }

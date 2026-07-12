@@ -6,6 +6,7 @@ const db_mod = @import("db.zig");
 const users_mod = @import("users.zig");
 const session_mod = @import("session.zig");
 const template_engine = @import("template.zig");
+const library_mod = @import("library.zig");
 
 /// Handles an incoming HTTP connection from a client.
 /// This function runs inside an isolated OS thread spawned specifically for this connection.
@@ -89,9 +90,9 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
             continue;
         }
 
-        // Route: Catalog (Home Page)
+        // Route: Catalog (Libraries Home Page)
         if (std.mem.eql(u8, target, "/")) {
-            const html_content = catalog.generateHtml(allocator, io, working_folder) catch |err| {
+            const html_content = catalog.generateHtml(allocator, database) catch |err| {
                 std.debug.print("Catalog error: {}\n", .{err});
                 request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
                 return;
@@ -104,27 +105,88 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
                 },
             }) catch return;
 
+        // Route: Add Library
+        } else if (std.mem.startsWith(u8, target, "/libraries/add") and method == .POST) {
+            handleLibraryAdd(&request, allocator, database, &resp_buf) catch return;
+            continue;
+
+        // Route: Browse Specific Library
+        } else if (std.mem.startsWith(u8, target, "/library")) {
+            var lib_id: i64 = -1;
+            if (std.mem.indexOf(u8, target, "?")) |q_idx| {
+                const query = target[q_idx + 1 ..];
+                var it = std.mem.splitScalar(u8, query, '&');
+                while (it.next()) |param| {
+                    if (std.mem.startsWith(u8, param, "id=")) {
+                        lib_id = std.fmt.parseInt(i64, param[3..], 10) catch -1;
+                    }
+                }
+            }
+
+            if (lib_id != -1) {
+                const html_content = catalog.generateLibraryContentHtml(allocator, io, database, lib_id) catch |err| {
+                    std.debug.print("Browse Library content error: {}\n", .{err});
+                    if (err == error.LibraryPathNotFound) {
+                        request.respond("Library path not found or inaccessible.", .{ .status = .not_found }) catch return;
+                    } else {
+                        request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                    }
+                    return;
+                };
+
+                if (html_content) |content| {
+                    request.respond(content, .{
+                        .status = .ok,
+                        .extra_headers = &.{
+                            .{ .name = "content-type", .value = "text/html" },
+                        },
+                    }) catch return;
+                } else {
+                    request.respond("Library not found", .{ .status = .not_found }) catch return;
+                }
+            } else {
+                request.respond("Missing library id", .{ .status = .bad_request }) catch return;
+            }
+
         // Route: Web UI (Player)
         } else if (std.mem.startsWith(u8, target, "/player")) {
             var file_path_opt: ?[]const u8 = null;
+            var lib_id: i64 = -1;
             if (std.mem.indexOf(u8, target, "?")) |q_idx| {
                 const query = target[q_idx + 1 ..];
                 var it = std.mem.splitScalar(u8, query, '&');
                 while (it.next()) |param| {
                     if (std.mem.startsWith(u8, param, "file=")) {
                         file_path_opt = param[5..];
+                    } else if (std.mem.startsWith(u8, param, "library=")) {
+                        lib_id = std.fmt.parseInt(i64, param[8..], 10) catch -1;
                     }
                 }
             }
 
             if (file_path_opt) |file_path| {
+                var resolved_wf = allocator.dupe(u8, working_folder) catch return;
+                if (lib_id != -1) {
+                    if (library_mod.getLibraryById(database, allocator, lib_id) catch null) |lib| {
+                        allocator.free(resolved_wf);
+                        resolved_wf = allocator.dupe(u8, lib.path) catch return;
+                        allocator.free(lib.name);
+                        allocator.free(lib.path);
+                        allocator.free(lib.metadata_language);
+                        if (lib.ignore_patterns) |pat| allocator.free(pat);
+                    }
+                }
+
                 const decoded_path = allocator.dupe(u8, file_path) catch return;
                 const final_path = std.Uri.percentDecodeInPlace(decoded_path);
 
-                const full_path = std.fs.path.join(allocator, &[_][]const u8{ working_folder, final_path }) catch return;
+                const full_path = std.fs.path.join(allocator, &[_][]const u8{ resolved_wf, final_path }) catch return;
                 const resolved_path = std.fs.path.resolve(allocator, &[_][]const u8{ full_path }) catch return;
-                const resolved_wf = std.fs.path.resolve(allocator, &[_][]const u8{ working_folder }) catch return;
-                if (!std.mem.startsWith(u8, resolved_path, resolved_wf)) {
+                const abs_wf_path = std.fs.path.resolve(allocator, &[_][]const u8{ resolved_wf }) catch return;
+                
+                allocator.free(resolved_wf);
+
+                if (!std.mem.startsWith(u8, resolved_path, abs_wf_path)) {
                     request.respond("Forbidden", .{ .status = .forbidden }) catch return;
                     return;
                 }
@@ -176,6 +238,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
         } else if (std.mem.startsWith(u8, target, "/stream")) {
             // Parse query parameters
             var file_path_opt: ?[]const u8 = null;
+            var lib_id: i64 = -1;
             var start_time: f64 = 0;
             var audio_idx: c_int = -1;
 
@@ -185,6 +248,8 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
                 while (it.next()) |param| {
                     if (std.mem.startsWith(u8, param, "file=")) {
                         file_path_opt = param[5..];
+                    } else if (std.mem.startsWith(u8, param, "library=")) {
+                        lib_id = std.fmt.parseInt(i64, param[8..], 10) catch -1;
                     } else if (std.mem.startsWith(u8, param, "start=")) {
                         start_time = std.fmt.parseFloat(f64, param[6..]) catch 0;
                     } else if (std.mem.startsWith(u8, param, "audio=")) {
@@ -194,14 +259,29 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
             }
 
             if (file_path_opt) |file_path| {
+                var resolved_wf = allocator.dupe(u8, working_folder) catch return;
+                if (lib_id != -1) {
+                    if (library_mod.getLibraryById(database, allocator, lib_id) catch null) |lib| {
+                        allocator.free(resolved_wf);
+                        resolved_wf = allocator.dupe(u8, lib.path) catch return;
+                        allocator.free(lib.name);
+                        allocator.free(lib.path);
+                        allocator.free(lib.metadata_language);
+                        if (lib.ignore_patterns) |pat| allocator.free(pat);
+                    }
+                }
+
                 const decoded_path = allocator.dupe(u8, file_path) catch return;
                 const final_path = std.Uri.percentDecodeInPlace(decoded_path);
 
                 // Ensure the path is prefixed with working_folder to avoid reading absolute OS paths securely
-                const full_path = std.fs.path.join(allocator, &[_][]const u8{ working_folder, final_path }) catch return;
+                const full_path = std.fs.path.join(allocator, &[_][]const u8{ resolved_wf, final_path }) catch return;
                 const resolved_path = std.fs.path.resolve(allocator, &[_][]const u8{ full_path }) catch return;
-                const resolved_wf = std.fs.path.resolve(allocator, &[_][]const u8{ working_folder }) catch return;
-                if (!std.mem.startsWith(u8, resolved_path, resolved_wf)) {
+                const abs_wf_path = std.fs.path.resolve(allocator, &[_][]const u8{ resolved_wf }) catch return;
+                
+                allocator.free(resolved_wf);
+
+                if (!std.mem.startsWith(u8, resolved_path, abs_wf_path)) {
                     request.respond("Forbidden", .{ .status = .forbidden }) catch return;
                     return;
                 }
@@ -311,6 +391,59 @@ fn handleLoginPost(request: *std.http.Server.Request, allocator: std.mem.Allocat
             .{ .name = "set-cookie", .value = cookie_value },
         },
     }) catch return;
+}
+
+/// Handles POST /libraries/add — validates library config and inserts to DB.
+fn handleLibraryAdd(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database, body_buf: *[8192]u8) !void {
+    var reader = request.readerExpectNone(body_buf);
+    var body_data = std.ArrayList(u8).empty;
+    defer body_data.deinit(allocator);
+
+    var chunk_buf: [4096]u8 = undefined;
+    while (true) {
+        const n = reader.readSliceShort(&chunk_buf) catch break;
+        if (n == 0) break;
+        try body_data.appendSlice(allocator, chunk_buf[0..n]);
+    }
+
+    var name: ?[]const u8 = null;
+    var path: ?[]const u8 = null;
+    var type_str: ?[]const u8 = null;
+
+    var pairs = std.mem.splitScalar(u8, body_data.items, '&');
+    while (pairs.next()) |pair| {
+        if (std.mem.startsWith(u8, pair, "name=")) {
+            const raw = pair[5..];
+            const decoded = allocator.dupe(u8, raw) catch continue;
+            name = std.Uri.percentDecodeInPlace(decoded);
+        } else if (std.mem.startsWith(u8, pair, "path=")) {
+            const raw = pair[5..];
+            const decoded = allocator.dupe(u8, raw) catch continue;
+            path = std.Uri.percentDecodeInPlace(decoded);
+        } else if (std.mem.startsWith(u8, pair, "type=")) {
+            const raw = pair[5..];
+            const decoded = allocator.dupe(u8, raw) catch continue;
+            type_str = std.Uri.percentDecodeInPlace(decoded);
+        }
+    }
+
+    if (name != null and path != null and type_str != null) {
+        const lib_type = library_mod.LibraryType.fromString(type_str.?) orelse .Other;
+        library_mod.addLibrary(database, name.?, path.?, lib_type) catch |err| {
+            std.debug.print("Failed to add library: {}\n", .{err});
+            request.respond("Error adding library folder.", .{ .status = .internal_server_error }) catch return;
+            return;
+        };
+
+        request.respond("", .{
+            .status = .found,
+            .extra_headers = &.{
+                .{ .name = "location", .value = "/" },
+            },
+        }) catch return;
+    } else {
+        request.respond("Missing name, path or type", .{ .status = .bad_request }) catch return;
+    }
 }
 
 /// Handles GET /logout — destroys session and redirects.
