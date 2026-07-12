@@ -3,6 +3,7 @@ const server = @import("web/server.zig");
 const config_mod = @import("config.zig");
 const db_mod = @import("db/db.zig");
 const users_mod = @import("db/users.zig");
+const logging_mod = @import("db/logging.zig");
 const c = @import("core/c.zig").c;
 
 /// The application entry point.
@@ -22,7 +23,12 @@ pub fn main() !void {
     var database = try db_mod.Database.open("sratim.db");
     defer database.close();
 
+    var logs_database = try db_mod.Database.open("logs.db");
+    defer logs_database.close();
+
     try db_mod.initSchema(&database);
+    try logging_mod.initLogsSchema(&logs_database);
+    
     try users_mod.ensureAdminExists(&database, io);
     
     // Parse the loopback IP and start listening on port from config
@@ -40,7 +46,7 @@ pub fn main() !void {
         };
         
         // Spawn a brand new OS thread to handle the client
-        const thread = try std.Thread.spawn(.{}, server.handleConnection, .{ stream, io, config.working_folder, &database });
+        const thread = try std.Thread.spawn(.{}, server.handleConnection, .{ stream, io, config.working_folder, &database, &logs_database });
         
         // Detach the thread so it runs independently, allowing the main loop to instantly continue
         thread.detach();

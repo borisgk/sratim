@@ -55,10 +55,38 @@
         const fileName = "__FILE_NAME__";
         const codecStr = '__CODEC_STR__';
         const AUDIO_TRACKS = __AUDIO_TRACKS_JSON__;
+        const START_POSITION = __START_POSITION__;
         let currentSeekTime = 0;
         let currentAudioIdx = -1;
         let abortController = null;
         let currentObjectUrl = null;
+        let lastReportedPosition = -100;
+
+        async function sendWatchEvent(eventType, position) {
+            try {
+                const body = JSON.stringify({
+                    library_id: parseInt(libraryId, 10),
+                    file: fileName,
+                    event: eventType,
+                    position: parseFloat(position),
+                    duration: parseFloat(DURATION)
+                });
+                
+                const keepalive = (eventType === 'stop');
+                if (keepalive && navigator.sendBeacon) {
+                    navigator.sendBeacon('/api/watch/event', body);
+                } else {
+                    await fetch('/api/watch/event', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: body,
+                        keepalive: keepalive
+                    });
+                }
+            } catch (e) {
+                console.error('Error logging watch event:', e);
+            }
+        }
 
         const urlParams = new URLSearchParams(window.location.search);
         const libraryId = urlParams.get('library') || '';
@@ -211,11 +239,20 @@
             playpause.innerHTML = svgPause;
         }
 
+        video.addEventListener('play', () => {
+            sendWatchEvent('start', currentSeekTime + video.currentTime);
+        });
+
         video.addEventListener('timeupdate', () => {
             const actualTime = currentSeekTime + video.currentTime;
             const percentage = (actualTime / DURATION) * 100;
             seekfill.style.width = percentage + '%';
             timeCurrent.innerText = formatTime(actualTime);
+
+            if (Math.abs(actualTime - lastReportedPosition) >= 10) {
+                lastReportedPosition = actualTime;
+                sendWatchEvent('progress', actualTime);
+            }
         });
 
         playpause.addEventListener('click', () => {
@@ -232,6 +269,7 @@
             const rect = seekbar.getBoundingClientRect();
             const percentage = (e.clientX - rect.left) / rect.width;
             const seekTo = Math.max(0, Math.floor(percentage * DURATION));
+            sendWatchEvent('seek', seekTo);
             loadVideo(seekTo);
         });
 
@@ -251,8 +289,14 @@
             }
         });
 
+        const handleStop = () => {
+            sendWatchEvent('stop', currentSeekTime + video.currentTime);
+        };
+        window.addEventListener('beforeunload', handleStop);
+        window.addEventListener('pagehide', handleStop);
+
         // Initial load
-        loadVideo(0);
+        loadVideo(START_POSITION);
     </script>
 </body>
 </html>

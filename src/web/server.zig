@@ -7,13 +7,14 @@ const users_mod = @import("../db/users.zig");
 const session_mod = @import("../db/session.zig");
 const template_engine = @import("../core/template.zig");
 const library_mod = @import("../db/library.zig");
+const logging_mod = @import("../db/logging.zig");
 const global_css = @embedFile("style.css");
 const c = @import("../core/c.zig").c;
 
 /// Handles an incoming HTTP connection from a client.
 /// This function runs inside an isolated OS thread spawned specifically for this connection.
 /// It parses headers, routes endpoints, and serves content synchronously.
-pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: []const u8, database: *db_mod.Database) void {
+pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: []const u8, database: *db_mod.Database, logs_database: *db_mod.Database) void {
     // Ensure the socket is always closed when this function exits, no matter what happens
     defer stream.socket.close(io);
 
@@ -45,7 +46,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
         // Route: Login Page
         if (std.mem.startsWith(u8, target, "/login")) {
             if (method == .POST) {
-                handleLoginPost(&request, allocator, database, &resp_buf, io) catch return;
+                handleLoginPost(&request, allocator, database, logs_database, &resp_buf, io) catch return;
             } else {
                 serveLoginPage(&request, allocator, "") catch return;
             }
@@ -132,6 +133,15 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
             };
             continue;
 
+        // Route: API Playback Log / Progress Event
+        } else if (std.mem.startsWith(u8, target, "/api/watch/event") and method == .POST) {
+            handleApiWatchEvent(&request, allocator, logs_database, session_info.?.username, &resp_buf) catch |err| {
+                std.debug.print("API Watch Event error: {}\n", .{err});
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                return;
+            };
+            continue;
+
         // Route: Browse Specific Library
         } else if (std.mem.startsWith(u8, target, "/library")) {
             var lib_id: i64 = -1;
@@ -144,9 +154,8 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
                     }
                 }
             }
-
             if (lib_id != -1) {
-                const html_content = catalog.generateLibraryContentHtml(allocator, io, database, lib_id) catch |err| {
+                const html_content = catalog.generateLibraryContentHtml(allocator, io, database, logs_database, lib_id, session_info.?.username) catch |err| {
                     std.debug.print("Browse Library content error: {}\n", .{err});
                     if (err == error.LibraryPathNotFound) {
                         request.respond("Library path not found or inaccessible.", .{ .status = .not_found }) catch return;
@@ -244,7 +253,8 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, working_folder: [
                 json_out.appendSlice(allocator, "]") catch return;
                 const audio_tracks_json = json_out.items;
 
-                const html_content = html.generatePlayerHtml(allocator, final_path, media_info.duration, media_info.codec_str, audio_tracks_json) catch return;
+                const resume_pos = logging_mod.getPlaybackProgress(logs_database, session_info.?.username, lib_id, final_path) catch 0.0;
+                const html_content = html.generatePlayerHtml(allocator, final_path, media_info.duration, media_info.codec_str, audio_tracks_json, resume_pos) catch return;
 
                 request.respond(html_content, .{
                     .status = .ok,
@@ -357,7 +367,16 @@ fn serveLoginPage(request: *std.http.Server.Request, allocator: std.mem.Allocato
 }
 
 /// Handles POST /login — validates credentials and creates a session.
-fn handleLoginPost(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database, body_buf: *[8192]u8, io: std.Io) !void {
+fn handleLoginPost(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database, logs_database: *db_mod.Database, body_buf: *[8192]u8, io: std.Io) !void {
+    var client_ip: []const u8 = "127.0.0.1";
+    var headers = request.iterateHeaders();
+    while (headers.next()) |header| {
+        if (std.ascii.eqlIgnoreCase(header.name, "x-forwarded-for") or std.ascii.eqlIgnoreCase(header.name, "x-real-ip")) {
+            client_ip = header.value;
+            break;
+        }
+    }
+
     // Read request body
     var reader = request.readerExpectNone(body_buf);
     var body_data = std.ArrayList(u8).empty;
@@ -395,12 +414,22 @@ fn handleLoginPost(request: *std.http.Server.Request, allocator: std.mem.Allocat
     // Verify credentials
     const valid = users_mod.verifyPassword(database, allocator, username.?, password.?) catch false;
     if (!valid) {
+        if (username) |u| {
+            logging_mod.logLoginAttempt(logs_database, u, "failed", client_ip) catch |err| {
+                std.debug.print("Failed to log failed auth attempt: {}\n", .{err});
+            };
+        }
         try serveLoginPage(request, allocator, "Invalid username or password.");
         return;
     }
 
     // Check if user is admin
     const is_admin = users_mod.isAdmin(database, username.?) catch false;
+
+    // Log successful login
+    logging_mod.logLoginAttempt(logs_database, username.?, "success", client_ip) catch |err| {
+        std.debug.print("Failed to log successful auth attempt: {}\n", .{err});
+    };
 
     // Create session
     const token = try session_mod.createSession(database, allocator, io, username.?, is_admin);
@@ -617,4 +646,39 @@ fn escapeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, input
             else => try out.append(allocator, ch),
         }
     }
+}
+
+const WatchEventPayload = struct {
+    library_id: i64,
+    file: []const u8,
+    event: []const u8,
+    position: f64,
+    duration: f64,
+};
+
+fn handleApiWatchEvent(request: *std.http.Server.Request, allocator: std.mem.Allocator, logs_database: *db_mod.Database, username: []const u8, body_buf: *[8192]u8) !void {
+    var reader = request.readerExpectNone(body_buf);
+    var body_data = std.ArrayList(u8).empty;
+    defer body_data.deinit(allocator);
+
+    var chunk_buf: [4096]u8 = undefined;
+    while (true) {
+        const n = reader.readSliceShort(&chunk_buf) catch break;
+        if (n == 0) break;
+        try body_data.appendSlice(allocator, chunk_buf[0..n]);
+    }
+
+    const parsed = std.json.parseFromSlice(WatchEventPayload, allocator, body_data.items, .{}) catch |err| {
+        std.debug.print("Failed to parse watch event JSON: {any}\n", .{err});
+        request.respond("Bad Request", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    defer parsed.deinit();
+
+    const payload = parsed.value;
+
+    try logging_mod.logPlaybackEvent(logs_database, username, payload.library_id, payload.file, payload.event, payload.position);
+    try logging_mod.savePlaybackProgress(logs_database, username, payload.library_id, payload.file, payload.position, payload.duration);
+
+    request.respond("OK", .{ .status = .ok }) catch return;
 }

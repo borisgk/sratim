@@ -2,6 +2,7 @@ const std = @import("std");
 const template_engine = @import("../core/template.zig");
 const db_mod = @import("../db/db.zig");
 const library_mod = @import("../db/library.zig");
+const logging_mod = @import("../db/logging.zig");
 
 const video_extensions = [_][]const u8{ ".mkv", ".mp4", ".avi", ".ts", ".webm", ".mov" };
 
@@ -114,8 +115,7 @@ pub fn generateHtml(allocator: std.mem.Allocator, database: *db_mod.Database) ![
     });
 }
 
-/// Generates the HTML display of the files inside a specific library.
-pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, library_id: i64) !?[]u8 {
+pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, logs_database: *db_mod.Database, library_id: i64, username: []const u8) !?[]u8 {
     const lib_opt = try library_mod.getLibraryById(database, allocator, library_id);
     if (lib_opt == null) return null;
 
@@ -125,6 +125,14 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
         allocator.free(lib.path);
         allocator.free(lib.metadata_language);
         if (lib.ignore_patterns) |pat| allocator.free(pat);
+    }
+
+    const progress_list = logging_mod.getLibraryProgressForUser(logs_database, allocator, username, library_id) catch &[_]logging_mod.ProgressInfo{};
+    defer {
+        for (progress_list) |item| {
+            allocator.free(item.file_path);
+        }
+        allocator.free(progress_list);
     }
 
     var dir = std.Io.Dir.cwd().openDir(io, lib.path, .{ .iterate = true }) catch |err| {
@@ -145,6 +153,16 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
             const ext_idx = entry.basename.len - ext.len;
             const clean_name = entry.basename[0..ext_idx];
 
+            var progress_pct: ?f64 = null;
+            for (progress_list) |item| {
+                if (std.mem.eql(u8, item.file_path, entry.path)) {
+                    if (item.duration > 0) {
+                        progress_pct = (item.position / item.duration) * 100.0;
+                    }
+                    break;
+                }
+            }
+
             // In /player, the file path parameter should be scoped. Wait! Let's pass the relative path
             // from the library. Or pass the file ID? For now, we will pass library_id and path to player/stream
             // e.g. /player?library=1&file=path/to/movie.mp4. This is much safer than absolute paths!
@@ -161,7 +179,22 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
             try cards_buf.appendSlice(allocator, "</h3>\n            </div>\n            <div class=\"card-bottom\">\n                <div class=\"metadata\">\n                    <span class=\"ext-badge\">");
             const ext_no_dot = if (ext.len > 0) ext[1..] else ext;
             try escapeHtml(&cards_buf, allocator, ext_no_dot);
-            try cards_buf.appendSlice(allocator, "</span>\n                </div>\n                <span class=\"watch-pill\">Watch</span>\n            </div>\n        </a>\n");
+            try cards_buf.appendSlice(allocator, "</span>\n                </div>\n                <span class=\"watch-pill\">Watch</span>\n            </div>\n");
+
+            if (progress_pct) |pct| {
+                if (pct >= 1.0 and pct < 95.0) {
+                    const progress_str = try std.fmt.allocPrint(allocator,
+                        \\            <div class="card-progress">
+                        \\                <div class="progress-fill" style="width: {d:.1}%;"></div>
+                        \\            </div>
+                        \\
+                    , .{pct});
+                    defer allocator.free(progress_str);
+                    try cards_buf.appendSlice(allocator, progress_str);
+                }
+            }
+
+            try cards_buf.appendSlice(allocator, "        </a>\n");
         }
     }
 

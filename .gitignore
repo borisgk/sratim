@@ -9,3 +9,5 @@ test_*.*
 test_*
 tmp/
 sratim.db*
+logs.db*
+
