@@ -1,6 +1,6 @@
 const std = @import("std");
 const db_mod = @import("db.zig");
-const c = @import("c.zig").c;
+const c = @import("../core/c.zig").c;
 
 pub const LibraryType = enum {
     Movies,

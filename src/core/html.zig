@@ -28,7 +28,7 @@ pub fn generatePlayerHtml(allocator: std.mem.Allocator, file_name: []const u8, d
     defer safe_file_name.deinit(allocator);
     try escapeForJs(&safe_file_name, allocator, file_name);
 
-    return template_engine.render(allocator, @embedFile("player.html"), .{
+    return template_engine.render(allocator, @embedFile("../web/templates/player.html"), .{
         .TIME_STR = time_str,
         .DURATION = duration,
         .FILE_NAME = safe_file_name.items,

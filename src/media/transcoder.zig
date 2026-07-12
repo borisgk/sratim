@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("c.zig").c;
+const c = @import("../core/c.zig").c;
 
 /// AudioTranscoder handles on-the-fly audio transcoding using FFmpeg's C API.
 /// It decodes incoming audio packets (e.g., AC3), resamples them (e.g., to 48kHz stereo),

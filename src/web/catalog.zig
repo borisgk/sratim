@@ -1,7 +1,7 @@
 const std = @import("std");
-const template_engine = @import("template.zig");
-const db_mod = @import("db.zig");
-const library_mod = @import("library.zig");
+const template_engine = @import("../core/template.zig");
+const db_mod = @import("../db/db.zig");
+const library_mod = @import("../db/library.zig");
 
 const video_extensions = [_][]const u8{ ".mkv", ".mp4", ".avi", ".ts", ".webm", ".mov" };
 
@@ -109,7 +109,7 @@ pub fn generateHtml(allocator: std.mem.Allocator, database: *db_mod.Database) ![
         }
     }
 
-    return template_engine.render(allocator, @embedFile("catalog.html"), .{
+    return template_engine.render(allocator, @embedFile("templates/catalog.html"), .{
         .LIBRARY_CARDS = cards_buf.items,
     });
 }
@@ -165,7 +165,7 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
         }
     }
 
-    return try template_engine.render(allocator, @embedFile("library_view.html"), .{
+    return try template_engine.render(allocator, @embedFile("templates/library_view.html"), .{
         .LIBRARY_NAME = lib.name,
         .LIBRARY_PATH = lib.path,
         .MOVIE_CARDS = cards_buf.items,

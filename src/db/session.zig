@@ -1,6 +1,6 @@
 const std = @import("std");
 const db_mod = @import("db.zig");
-const c = @import("c.zig").c;
+const c = @import("../core/c.zig").c;
 
 const TOKEN_BYTES = 32;
 const TOKEN_HEX_LEN = TOKEN_BYTES * 2;

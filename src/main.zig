@@ -1,9 +1,9 @@
 const std = @import("std");
-const server = @import("server.zig");
+const server = @import("web/server.zig");
 const config_mod = @import("config.zig");
-const db_mod = @import("db.zig");
-const users_mod = @import("users.zig");
-const c = @import("c.zig").c;
+const db_mod = @import("db/db.zig");
+const users_mod = @import("db/users.zig");
+const c = @import("core/c.zig").c;
 
 /// The application entry point.
 /// Initializes the asynchronous I/O backend and starts accepting incoming HTTP connections.

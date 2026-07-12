@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("c.zig").c;
+const c = @import("../core/c.zig").c;
 
 /// A thin Zig wrapper around an SQLite database connection.
 pub const Database = struct {

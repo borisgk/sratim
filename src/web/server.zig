@@ -1,14 +1,14 @@
 const std = @import("std");
-const html = @import("html.zig");
-const streamer = @import("streamer.zig");
+const html = @import("../core/html.zig");
+const streamer = @import("../media/streamer.zig");
 const catalog = @import("catalog.zig");
-const db_mod = @import("db.zig");
-const users_mod = @import("users.zig");
-const session_mod = @import("session.zig");
-const template_engine = @import("template.zig");
-const library_mod = @import("library.zig");
+const db_mod = @import("../db/db.zig");
+const users_mod = @import("../db/users.zig");
+const session_mod = @import("../db/session.zig");
+const template_engine = @import("../core/template.zig");
+const library_mod = @import("../db/library.zig");
 const global_css = @embedFile("style.css");
-const c = @import("c.zig").c;
+const c = @import("../core/c.zig").c;
 
 /// Handles an incoming HTTP connection from a client.
 /// This function runs inside an isolated OS thread spawned specifically for this connection.
@@ -343,7 +343,7 @@ fn serveLoginPage(request: *std.http.Server.Request, allocator: std.mem.Allocato
     const show_error = if (error_message.len > 0) "block" else "none";
     const msg = if (error_message.len > 0) error_message else "";
 
-    const html_content = try template_engine.render(allocator, @embedFile("login.html"), .{
+    const html_content = try template_engine.render(allocator, @embedFile("templates/login.html"), .{
         .ERROR_DISPLAY = show_error,
         .ERROR_MESSAGE = msg,
     });

@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("c.zig").c;
+const c = @import("../core/c.zig").c;
 
 const transcoder = @import("transcoder.zig");
 
