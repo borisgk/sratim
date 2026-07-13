@@ -1,4 +1,5 @@
 const std = @import("std");
+const httpx = @import("httpx");
 
 pub const TmdbMovie = struct {
     id: i64,
@@ -33,14 +34,10 @@ pub fn searchMovie(
     token: []const u8,
     proxy_url: ?[]const u8,
 ) !std.json.Parsed(TmdbSearchResponse) {
-    var client = std.http.Client{
-        .allocator = allocator,
-        .io = io,
-    };
-    defer client.deinit();
+    _ = io;
 
     // Configure proxy if provided
-    var proxy_storage: std.http.Client.Proxy = undefined;
+    var config = httpx.ClientConfig.defaults();
     if (proxy_url) |p_url| {
         if (p_url.len > 0) {
             const uri = try std.Uri.parse(p_url);
@@ -48,19 +45,32 @@ pub fn searchMovie(
                 .raw => |r| r,
                 .percent_encoded => |p| p,
             };
-            const host_name = try std.Io.net.HostName.init(host_bytes);
-            const protocol = std.http.Client.Protocol.fromScheme(uri.scheme) orelse return error.UnsupportedUriScheme;
-            proxy_storage = .{
-                .protocol = protocol,
-                .host = host_name,
-                .port = uri.port orelse (if (protocol == .tls) 443 else 80),
-                .authorization = null,
-                .supports_connect = true,
+
+            var kind: httpx.ProxyKind = .http;
+            if (std.mem.eql(u8, uri.scheme, "socks5") or
+                std.mem.eql(u8, uri.scheme, "socks5h") or
+                std.mem.eql(u8, uri.scheme, "socks"))
+            {
+                kind = .socks5h;
+            }
+
+            const port = uri.port orelse switch (kind) {
+                .socks5h => 1080,
+                .http => if (std.mem.eql(u8, uri.scheme, "https")) @as(u16, 443) else @as(u16, 80),
             };
-            client.http_proxy = &proxy_storage;
-            client.https_proxy = &proxy_storage;
+
+            config = config.withProxy(.{
+                .kind = kind,
+                .host = host_bytes,
+                .port = port,
+                .username = null,
+                .password = null,
+            });
         }
     }
+
+    var client = httpx.Client.initWithConfig(allocator, config);
+    defer client.deinit();
 
     // Build Search URL
     var query_encoded = std.ArrayList(u8).empty;
@@ -73,15 +83,6 @@ pub fn searchMovie(
         try std.fmt.allocPrint(allocator, "https://api.themoviedb.org/3/search/movie?query={s}", .{query_encoded.items});
     defer allocator.free(search_url);
 
-    // Build Auth Header
-    const auth_header_val = try std.fmt.allocPrint(allocator, "Bearer {s}", .{token});
-    defer allocator.free(auth_header_val);
-
-    const extra_headers = &[_]std.http.Header{
-        .{ .name = "Authorization", .value = auth_header_val },
-        .{ .name = "Accept", .value = "application/json" },
-    };
-
     // Perform Fetch
     std.debug.print("TMDB Request URL: {s}\n", .{search_url});
     if (proxy_url) |p| {
@@ -90,21 +91,19 @@ pub fn searchMovie(
         }
     }
 
-    var response_allocating = std.Io.Writer.Allocating.init(allocator);
-    defer response_allocating.deinit();
-
-    const fetch_res = try client.fetch(.{
-        .location = .{ .url = search_url },
-        .method = .GET,
-        .extra_headers = extra_headers,
-        .response_writer = &response_allocating.writer,
+    var response = try client.get(search_url, .{
+        .bearer_token = token,
+        .headers = &[_][2][]const u8{
+            .{ "Accept", "application/json" },
+        },
     });
+    defer response.deinit();
 
-    std.debug.print("TMDB Response Status: {}\n", .{fetch_res.status});
-    const response_body = response_allocating.written();
+    std.debug.print("TMDB Response Status: {d}\n", .{response.status.code});
+    const response_body = response.body orelse return error.EmptyResponseBody;
     std.debug.print("TMDB Response Body: {s}\n", .{response_body});
 
-    if (fetch_res.status != .ok) {
+    if (!response.status.isSuccess()) {
         return error.TmdbRequestFailed;
     }
 
@@ -115,3 +114,37 @@ pub fn searchMovie(
     
     return parsed;
 }
+
+test "searchMovie test" {
+    const allocator = std.testing.allocator;
+    
+    var file = std.fs.cwd().openFile("config.json", .{}) catch |err| {
+        std.debug.print("Skipping test, config.json not found: {}\n", .{err});
+        return;
+    };
+    defer file.close();
+    const content = try file.readToEndAlloc(allocator, 1024*1024);
+    defer allocator.free(content);
+    
+    const Config = struct {
+        tmdb_access_token: ?[]const u8 = null,
+        tmdb_proxy: ?[]const u8 = null,
+    };
+    const parsed = try std.json.parseFromSlice(Config, allocator, content, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+    
+    const token = parsed.value.tmdb_access_token orelse return;
+    if (token.len == 0) return;
+    
+    var t = std.Io.Threaded.init(allocator, .{});
+    const io = t.io();
+    
+    const results = try searchMovie(allocator, io, "Inception", "2010", token, parsed.value.tmdb_proxy);
+    defer results.deinit();
+    
+    try std.testing.expect(results.value.results.len > 0);
+    std.debug.print("Search result first movie: {s}\n", .{results.value.results[0].title});
+}
+

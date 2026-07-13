@@ -55,6 +55,12 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const httpx_dep = b.dependency("httpx", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("httpx", httpx_dep.module("httpx"));
+
     exe.root_module.link_libc = true;
     exe.root_module.linkSystemLibrary("libavformat", .{});
     exe.root_module.linkSystemLibrary("libavcodec", .{});
