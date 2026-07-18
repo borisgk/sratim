@@ -90,8 +90,8 @@
             document.querySelectorAll('.context-dropdown').forEach(d => d.classList.remove('active'));
         });
 
-        // Handle Dropdown Item clicks
-        document.querySelectorAll('.dropdown-item').forEach(item => {
+        // Handle Progress Update clicks
+        document.querySelectorAll('.reset-btn, .watch-btn').forEach(item => {
             item.addEventListener('click', async (e) => {
                 e.preventDefault();
                 e.stopPropagation();

@@ -6,6 +6,7 @@ pub const TmdbMovie = struct {
     title: []const u8,
     overview: ?[]const u8 = null,
     poster_path: ?[]const u8 = null,
+    backdrop_path: ?[]const u8 = null,
     release_date: ?[]const u8 = null,
 };
 
@@ -22,6 +23,103 @@ fn writePercentEncoded(list: *std.ArrayList(u8), allocator: std.mem.Allocator, i
             try list.append(allocator, '%');
             try list.append(allocator, hex_chars[ch >> 4]);
             try list.append(allocator, hex_chars[ch & 15]);
+        }
+    }
+}
+
+pub fn downloadImages(allocator: std.mem.Allocator, io: std.Io, poster_path: ?[]const u8, backdrop_path: ?[]const u8, proxy_url: ?[]const u8) !void {
+    std.Io.Dir.cwd().createDirPath(io, ".sratim") catch |err| std.debug.print("Dir create err: {}\n", .{err});
+    std.Io.Dir.cwd().createDirPath(io, ".sratim/tmdb_images") catch |err| std.debug.print("Dir create err: {}\n", .{err});
+    std.Io.Dir.cwd().createDirPath(io, ".sratim/tmdb_images/original") catch |err| std.debug.print("Dir create err: {}\n", .{err});
+    std.Io.Dir.cwd().createDirPath(io, ".sratim/tmdb_images/w500") catch |err| std.debug.print("Dir create err: {}\n", .{err});
+
+    var config = httpx.ClientConfig.defaults();
+    if (proxy_url) |p_url| {
+        if (p_url.len > 0) {
+            const uri = try std.Uri.parse(p_url);
+            const host_bytes = switch (uri.host.?) {
+                .raw => |r| r,
+                .percent_encoded => |p| p,
+            };
+
+            var kind: httpx.ProxyKind = .http;
+            if (std.mem.eql(u8, uri.scheme, "socks5") or
+                std.mem.eql(u8, uri.scheme, "socks5h") or
+                std.mem.eql(u8, uri.scheme, "socks"))
+            {
+                kind = .socks5h;
+            }
+
+            const port = uri.port orelse switch (kind) {
+                .socks5h => 1080,
+                .http => if (std.mem.eql(u8, uri.scheme, "https")) @as(u16, 443) else @as(u16, 80),
+            };
+
+            config = config.withProxy(.{
+                .kind = kind,
+                .host = host_bytes,
+                .port = port,
+                .username = null,
+                .password = null,
+            });
+        }
+    }
+
+    var client = httpx.Client.initWithConfig(allocator, config);
+    defer client.deinit();
+
+    if (poster_path) |poster| {
+        // Download w500 poster
+        const poster_w500_url = try std.fmt.allocPrint(allocator, "https://image.tmdb.org/t/p/w500{s}", .{poster});
+        defer allocator.free(poster_w500_url);
+        if (client.get(poster_w500_url, .{})) |response| {
+            var res = response;
+            defer res.deinit();
+            if (res.status.isSuccess() and res.body != null) {
+                const dest = try std.fmt.allocPrint(allocator, ".sratim/tmdb_images/w500{s}", .{poster});
+                defer allocator.free(dest);
+                std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dest, .data = res.body.? }) catch |err| std.debug.print("Failed to save poster_w500: {}\n", .{err});
+            } else {
+                std.debug.print("TMDB poster_w500 returned HTTP {d}\n", .{res.status.code});
+            }
+        } else |err| {
+            std.debug.print("Failed to download poster_w500: {}\n", .{err});
+        }
+
+        // Download original poster
+        const poster_original_url = try std.fmt.allocPrint(allocator, "https://image.tmdb.org/t/p/original{s}", .{poster});
+        defer allocator.free(poster_original_url);
+        if (client.get(poster_original_url, .{})) |response| {
+            var res = response;
+            defer res.deinit();
+            if (res.status.isSuccess() and res.body != null) {
+                const dest = try std.fmt.allocPrint(allocator, ".sratim/tmdb_images/original{s}", .{poster});
+                defer allocator.free(dest);
+                std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dest, .data = res.body.? }) catch |err| std.debug.print("Failed to save poster_original: {}\n", .{err});
+            } else {
+                std.debug.print("TMDB poster_original returned HTTP {d}\n", .{res.status.code});
+            }
+        } else |err| {
+            std.debug.print("Failed to download poster_original: {}\n", .{err});
+        }
+    }
+
+    if (backdrop_path) |backdrop| {
+        // Download original backdrop
+        const backdrop_original_url = try std.fmt.allocPrint(allocator, "https://image.tmdb.org/t/p/original{s}", .{backdrop});
+        defer allocator.free(backdrop_original_url);
+        if (client.get(backdrop_original_url, .{})) |response| {
+            var res = response;
+            defer res.deinit();
+            if (res.status.isSuccess() and res.body != null) {
+                const dest = try std.fmt.allocPrint(allocator, ".sratim/tmdb_images/original{s}", .{backdrop});
+                defer allocator.free(dest);
+                std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dest, .data = res.body.? }) catch |err| std.debug.print("Failed to save backdrop_original: {}\n", .{err});
+            } else {
+                std.debug.print("TMDB backdrop_original returned HTTP {d}\n", .{res.status.code});
+            }
+        } else |err| {
+            std.debug.print("Failed to download backdrop_original: {}\n", .{err});
         }
     }
 }
@@ -108,11 +206,11 @@ pub fn searchMovie(
     }
 
     // Parse Response
-    const parsed = try std.json.parseFromSlice(TmdbSearchResponse, allocator, response_body, .{
+    const response_parsed = try std.json.parseFromSlice(TmdbSearchResponse, allocator, response_body, .{
+        .allocate = .alloc_always,
         .ignore_unknown_fields = true,
     });
-    
-    return parsed;
+    return response_parsed;
 }
 
 test "searchMovie test" {

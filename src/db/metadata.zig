@@ -9,6 +9,7 @@ pub const MovieMetadata = struct {
     title: []const u8,
     overview: ?[]const u8,
     poster_path: ?[]const u8,
+    backdrop_path: ?[]const u8,
     release_date: ?[]const u8,
 };
 
@@ -20,11 +21,12 @@ pub fn saveMetadata(
     title: []const u8,
     overview: ?[]const u8,
     poster_path: ?[]const u8,
+    backdrop_path: ?[]const u8,
     release_date: ?[]const u8,
 ) !void {
     var stmt = try database.prepare(
-        \\INSERT OR REPLACE INTO movie_metadata (library_id, file_path, tmdb_id, title, overview, poster_path, release_date)
-        \\VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);
+        \\INSERT OR REPLACE INTO movie_metadata (library_id, file_path, tmdb_id, title, overview, poster_path, backdrop_path, release_date)
+        \\VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8);
     );
     defer stmt.finalize();
 
@@ -34,7 +36,8 @@ pub fn saveMetadata(
     try stmt.bindText(4, title);
     if (overview) |o| try stmt.bindText(5, o) else try stmt.bindNull(5);
     if (poster_path) |p| try stmt.bindText(6, p) else try stmt.bindNull(6);
-    if (release_date) |r| try stmt.bindText(7, r) else try stmt.bindNull(7);
+    if (backdrop_path) |b| try stmt.bindText(7, b) else try stmt.bindNull(7);
+    if (release_date) |r| try stmt.bindText(8, r) else try stmt.bindNull(8);
 
     _ = try stmt.step();
 }
@@ -46,7 +49,7 @@ pub fn getMetadata(
     file_path: []const u8,
 ) !?MovieMetadata {
     var stmt = try database.prepare(
-        \\SELECT tmdb_id, title, overview, poster_path, release_date FROM movie_metadata WHERE library_id = ?1 AND file_path = ?2;
+        \\SELECT tmdb_id, title, overview, poster_path, backdrop_path, release_date FROM movie_metadata WHERE library_id = ?1 AND file_path = ?2;
     );
     defer stmt.finalize();
 
@@ -77,9 +80,16 @@ pub fn getMetadata(
     }
     errdefer if (poster_path) |p| allocator.free(p);
 
+    var backdrop_path: ?[]const u8 = null;
+    if (c.sqlite3_column_text(stmt.stmt, 4)) |backdrop_val| {
+        const backdrop_len = c.sqlite3_column_bytes(stmt.stmt, 4);
+        backdrop_path = try allocator.dupe(u8, backdrop_val[0..@intCast(backdrop_len)]);
+    }
+    errdefer if (backdrop_path) |b| allocator.free(b);
+
     var release_date: ?[]const u8 = null;
-    if (c.sqlite3_column_text(stmt.stmt, 4)) |date_val| {
-        const date_len = c.sqlite3_column_bytes(stmt.stmt, 4);
+    if (c.sqlite3_column_text(stmt.stmt, 5)) |date_val| {
+        const date_len = c.sqlite3_column_bytes(stmt.stmt, 5);
         release_date = try allocator.dupe(u8, date_val[0..@intCast(date_len)]);
     }
 
@@ -90,6 +100,7 @@ pub fn getMetadata(
         .title = title,
         .overview = overview,
         .poster_path = poster_path,
+        .backdrop_path = backdrop_path,
         .release_date = release_date,
     };
 }
@@ -109,7 +120,7 @@ test "metadata: save, get and delete movie metadata" {
 
     try db_mod.initSchema(&db);
 
-    try saveMetadata(&db, 1, "test.mp4", 12345, "Test Movie", "Some overview", "/path.jpg", "2026-07-13");
+    try saveMetadata(&db, 1, "test.mp4", 12345, "Test Movie", "Some overview", "/path.jpg", "/bg.jpg", "2026-07-13");
     
     const meta = (try getMetadata(&db, allocator, 1, "test.mp4")).?;
     defer {
@@ -117,6 +128,7 @@ test "metadata: save, get and delete movie metadata" {
         allocator.free(meta.title);
         if (meta.overview) |o| allocator.free(o);
         if (meta.poster_path) |p| allocator.free(p);
+        if (meta.backdrop_path) |b| allocator.free(b);
         if (meta.release_date) |r| allocator.free(r);
     }
 
@@ -124,6 +136,7 @@ test "metadata: save, get and delete movie metadata" {
     try std.testing.expectEqualStrings("Test Movie", meta.title);
     try std.testing.expectEqualStrings("Some overview", meta.overview.?);
     try std.testing.expectEqualStrings("/path.jpg", meta.poster_path.?);
+    try std.testing.expectEqualStrings("/bg.jpg", meta.backdrop_path.?);
     try std.testing.expectEqualStrings("2026-07-13", meta.release_date.?);
 
     try deleteMetadata(&db, 1, "test.mp4");

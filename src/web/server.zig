@@ -103,6 +103,34 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             continue;
         }
 
+        // Route: TMDB Images
+        if (std.mem.startsWith(u8, target, "/images/tmdb/")) {
+            // target could be /images/tmdb/w500/abc.jpg?t=123
+            const query_idx = std.mem.indexOf(u8, target, "?");
+            const clean_target = if (query_idx) |idx| target[0..idx] else target;
+            const rel_path = clean_target["/images/tmdb/".len..];
+            
+            const file_path = std.fmt.allocPrint(allocator, ".sratim/tmdb_images/{s}", .{rel_path}) catch {
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                continue;
+            };
+            defer allocator.free(file_path);
+            
+            const file_contents = std.Io.Dir.cwd().readFileAlloc(io, file_path, allocator, std.Io.Limit.limited(10 * 1024 * 1024)) catch {
+                request.respond("Not Found", .{ .status = .not_found }) catch return;
+                continue;
+            };
+            defer allocator.free(file_contents);
+            
+            request.respond(file_contents, .{
+                .status = .ok,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "image/jpeg" },
+                },
+            }) catch return;
+            continue;
+        }
+
         // --- Auth middleware: all remaining routes require a valid session ---
         const session_token = extractCookieToken(&request);
         const session_info = if (session_token) |token|
@@ -188,7 +216,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
 
         // Route: API Metadata Link
         } else if (std.mem.startsWith(u8, target, "/api/metadata/link") and method == .POST) {
-            handleApiMetadataLink(&request, allocator, database, &resp_buf) catch |err| {
+            handleApiMetadataLink(&request, allocator, io, database, config, &resp_buf) catch |err| {
                 std.debug.print("API Metadata Link error: {}\n", .{err});
                 request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
                 return;
@@ -859,10 +887,11 @@ const MetadataLinkPayload = struct {
     title: []const u8,
     overview: ?[]const u8 = null,
     poster_path: ?[]const u8 = null,
+    backdrop_path: ?[]const u8 = null,
     release_date: ?[]const u8 = null,
 };
 
-fn handleApiMetadataLink(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database, body_buf: *[8192]u8) !void {
+fn handleApiMetadataLink(request: *std.http.Server.Request, allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, config: *const config_mod.Config, body_buf: *[8192]u8) !void {
     var reader = request.readerExpectNone(body_buf);
     var body_data = std.ArrayList(u8).empty;
     defer body_data.deinit(allocator);
@@ -885,6 +914,11 @@ fn handleApiMetadataLink(request: *std.http.Server.Request, allocator: std.mem.A
 
     const payload = parsed.value;
 
+    // Download images locally before saving metadata
+    tmdb.downloadImages(allocator, io, payload.poster_path, payload.backdrop_path, config.tmdb_proxy) catch |err| {
+        std.debug.print("Failed to download images: {}\n", .{err});
+    };
+
     try metadata_mod.saveMetadata(
         database,
         payload.library_id,
@@ -893,6 +927,7 @@ fn handleApiMetadataLink(request: *std.http.Server.Request, allocator: std.mem.A
         payload.title,
         payload.overview,
         payload.poster_path,
+        payload.backdrop_path,
         payload.release_date,
     );
 
@@ -1012,6 +1047,11 @@ fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: std.m
 
     const first_movie = response_parsed.value.results[0];
 
+    // Download images locally before saving metadata
+    tmdb.downloadImages(allocator, io, first_movie.poster_path, first_movie.backdrop_path, config.tmdb_proxy) catch |err| {
+        std.debug.print("Failed to download images: {}\n", .{err});
+    };
+
     try metadata_mod.saveMetadata(
         database,
         payload.library_id,
@@ -1020,6 +1060,7 @@ fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: std.m
         first_movie.title,
         first_movie.overview,
         first_movie.poster_path,
+        first_movie.backdrop_path,
         first_movie.release_date,
     );
 

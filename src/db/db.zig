@@ -174,8 +174,12 @@ pub fn initSchema(database: *Database) !void {
         \\    title TEXT NOT NULL,
         \\    overview TEXT,
         \\    poster_path TEXT,
+        \\    backdrop_path TEXT,
         \\    release_date TEXT,
         \\    PRIMARY KEY (library_id, file_path)
         \\);
     );
+
+    // Auto-migrate: ignore error if column already exists
+    database.exec("ALTER TABLE movie_metadata ADD COLUMN backdrop_path TEXT;") catch {};
 }
