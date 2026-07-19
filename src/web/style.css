@@ -509,6 +509,7 @@ p.subtitle {
 .modal-overlay.active {
     opacity: 1;
     pointer-events: auto;
+    display: flex;
 }
 
 .modal-card {

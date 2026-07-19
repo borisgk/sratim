@@ -90,7 +90,7 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
             const out_stream = c.avformat_new_stream(out_ctx, null);
             if (c.avcodec_parameters_copy(out_stream.*.codecpar, stream.*.codecpar) < 0) return error.CodecCopyFailed;
             if (out_stream.*.codecpar.*.codec_id == c.AV_CODEC_ID_HEVC) {
-                out_stream.*.codecpar.*.codec_tag = c.MKTAG('h', 'v', 'c', '1');
+                out_stream.*.codecpar.*.codec_tag = c.MKTAG('h', 'e', 'v', '1');
 
                 // Fix incorrect HEVC level metadata (e.g. hevc_videotoolbox writes wrong levels).
                 // Compute minimum valid level from actual resolution and override if too low.
@@ -118,8 +118,8 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
                 audio_in_idx = @intCast(i);
                 const out_stream = c.avformat_new_stream(out_ctx, null);
                 
-                if (stream.*.codecpar.*.codec_id != c.AV_CODEC_ID_AAC) {
-                    // Not AAC, spin up the transcoder
+                if (stream.*.codecpar.*.codec_id != c.AV_CODEC_ID_AAC or stream.*.codecpar.*.ch_layout.nb_channels > 2) {
+                    // Not AAC or > 2 channels, spin up the transcoder to downmix/encode to stereo AAC
                     audio_tr = try transcoder.AudioTranscoder.init(stream, out_stream, start_time);
                 } else {
                     // Directly copy AAC stream
@@ -139,7 +139,7 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
                 audio_in_idx = @intCast(i);
                 const out_stream = c.avformat_new_stream(out_ctx, null);
                 
-                if (stream.*.codecpar.*.codec_id != c.AV_CODEC_ID_AAC) {
+                if (stream.*.codecpar.*.codec_id != c.AV_CODEC_ID_AAC or stream.*.codecpar.*.ch_layout.nb_channels > 2) {
                     audio_tr = try transcoder.AudioTranscoder.init(stream, out_stream, start_time);
                 } else {
                     if (c.avcodec_parameters_copy(out_stream.*.codecpar, stream.*.codecpar) < 0) return error.CodecCopyFailed;
@@ -166,7 +166,7 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
 
     // movflags: fragmented mp4 configuration
     var dict: ?*c.AVDictionary = null;
-    _ = c.av_dict_set(&dict, "movflags", "frag_keyframe+empty_moov+delay_moov+default_base_moof+negative_cts_offsets", 0);
+    _ = c.av_dict_set(&dict, "movflags", "frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets", 0);
     _ = c.av_dict_set(&dict, "avoid_negative_ts", "make_non_negative", 0);
     defer c.av_dict_free(@ptrCast(&dict));
 
@@ -176,7 +176,7 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
     if (start_time > 0) {
         const start_ts = @as(i64, @intFromFloat(start_time * c.AV_TIME_BASE));
         if (c.av_seek_frame(in_ctx, -1, start_ts, c.AVSEEK_FLAG_BACKWARD) < 0) {
-            std.debug.print("Seek failed for {}s\n", .{start_time});
+            // Seek failed, but we can just start from beginning.
         }
     }
 
@@ -184,20 +184,38 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
     defer c.av_packet_free(@ptrCast(&packet));
 
     var last_video_dts: i64 = c.AV_NOPTS_VALUE;
+    var global_start_time: i64 = c.AV_NOPTS_VALUE;
+    const av_time_base_q = c.AVRational{ .num = 1, .den = c.AV_TIME_BASE };
 
     // Demux and remux loop
     while (c.av_read_frame(in_ctx, packet) >= 0) {
         defer c.av_packet_unref(packet);
         if (http_ctx.has_error) break;
 
+        const in_tb = in_ctx.*.streams[@intCast(packet.*.stream_index)].*.time_base;
+
+        // Fallback for missing DTS: use PTS
+        if (packet.*.dts == c.AV_NOPTS_VALUE) {
+            packet.*.dts = packet.*.pts;
+        }
+
+        // Establish the zero-base offset from the first packet read
+        if (global_start_time == c.AV_NOPTS_VALUE and packet.*.dts != c.AV_NOPTS_VALUE) {
+            global_start_time = c.av_rescale_q(packet.*.dts, in_tb, av_time_base_q);
+        }
+
+        // Zero-base the packet
+        if (global_start_time != c.AV_NOPTS_VALUE and packet.*.dts != c.AV_NOPTS_VALUE) {
+            const offset_in_tb = c.av_rescale_q(global_start_time, av_time_base_q, in_tb);
+            packet.*.dts -= offset_in_tb;
+            if (packet.*.pts != c.AV_NOPTS_VALUE) {
+                packet.*.pts -= offset_in_tb;
+            }
+        }
+
         if (packet.*.stream_index == video_in_idx) {
             packet.*.stream_index = video_out_idx;
             c.av_packet_rescale_ts(packet, in_ctx.*.streams[@intCast(video_in_idx)].*.time_base, out_ctx.*.streams[@intCast(video_out_idx)].*.time_base);
-            
-            // Fallback for missing DTS: use PTS
-            if (packet.*.dts == c.AV_NOPTS_VALUE) {
-                packet.*.dts = packet.*.pts;
-            }
             
             // Enforce strictly monotonic DTS
             if (last_video_dts != c.AV_NOPTS_VALUE and packet.*.dts <= last_video_dts) {
@@ -307,9 +325,17 @@ pub fn getMediaInfo(allocator: std.mem.Allocator, file_path: [:0]const u8) !Medi
                 const rl: u32 = if (reported_level > 0) @intCast(reported_level) else 0;
                 const level_idc: u32 = @max(rl, min_level);
 
+                var constraint_hex: u8 = 0xB0;
+                if (stream.*.codecpar.*.extradata_size >= 7 and stream.*.codecpar.*.extradata != null) {
+                    const ed = stream.*.codecpar.*.extradata;
+                    if (ed[0] == 1) { // configurationVersion == 1 means hvcC format
+                        constraint_hex = ed[6];
+                    }
+                }
+
                 dynamic_codec_str = try std.fmt.allocPrint(allocator,
-                    "video/mp4; codecs=\"hvc1.{d}.{d}.L{d}.B0, mp4a.40.2\"",
-                    .{ profile_idc, compat, level_idc });
+                    "video/mp4; codecs=\"hev1.{d}.{d}.L{d}.{X:0>2}, mp4a.40.2\"",
+                    .{ profile_idc, compat, level_idc, constraint_hex });
                 codec_str = dynamic_codec_str.?;
             } else if (codec_id == c.AV_CODEC_ID_AV1) {
                 codec_str = "video/mp4; codecs=\"av01.0.05M.08, mp4a.40.2\"";

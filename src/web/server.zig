@@ -547,17 +547,26 @@ fn handleLibraryAdd(request: *std.http.Server.Request, allocator: std.mem.Alloca
         if (std.mem.startsWith(u8, pair, "name=")) {
             const raw = pair[5..];
             const decoded = allocator.dupe(u8, raw) catch continue;
+            std.mem.replaceScalar(u8, decoded, '+', ' ');
             name = std.Uri.percentDecodeInPlace(decoded);
         } else if (std.mem.startsWith(u8, pair, "path=")) {
             const raw = pair[5..];
             const decoded = allocator.dupe(u8, raw) catch continue;
+            std.mem.replaceScalar(u8, decoded, '+', ' ');
             path = std.Uri.percentDecodeInPlace(decoded);
         } else if (std.mem.startsWith(u8, pair, "type=")) {
             const raw = pair[5..];
             const decoded = allocator.dupe(u8, raw) catch continue;
+            std.mem.replaceScalar(u8, decoded, '+', ' ');
             type_str = std.Uri.percentDecodeInPlace(decoded);
+            if (type_str) |t| {
+                type_str = std.mem.trim(u8, t, " \r\n");
+            }
         }
     }
+
+    std.debug.print("RAW BODY: {s}\n", .{body_data.items});
+    std.debug.print("PARSED: name={?s}, path={?s}, type={?s}\n", .{name, path, type_str});
 
     if (name != null and path != null and type_str != null) {
         const lib_type = library_mod.LibraryType.fromString(type_str.?) orelse .Other;

@@ -9,8 +9,8 @@ const c = @import("core/c.zig").c;
 /// The application entry point.
 /// Initializes the asynchronous I/O backend and starts accepting incoming HTTP connections.
 pub fn main() !void {
-    // Suppress FFmpeg informational logs (like Qavg) to keep the terminal clean
-    c.av_log_set_level(c.AV_LOG_WARNING);
+    // Suppress FFmpeg informational logs and warnings to keep the terminal clean
+    c.av_log_set_level(c.AV_LOG_ERROR);
 
     // Initialize the thread-based asynchronous I/O backend (uses epoll/kqueue under the hood)
     var t = std.Io.Threaded.init(std.heap.c_allocator, .{});

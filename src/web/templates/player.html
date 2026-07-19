@@ -232,7 +232,7 @@
 
             // Probe codec support before doing anything
             const supported = MediaSource.isTypeSupported(codecStr);
-            console.log('Codec probe:', codecStr, 'supported:', supported);
+            // console.log('Codec probe:', codecStr, 'supported:', supported);
             if (!supported) {
                 console.error('Browser does not support codec via MSE:', codecStr);
                 // Try fallback without specific level
@@ -244,7 +244,7 @@
                     'video/mp4; codecs="hev1.2.4.L120.B0, mp4a.40.2"',
                 ];
                 for (const fb of fallbacks) {
-                    console.log('  trying fallback:', fb, MediaSource.isTypeSupported(fb));
+                    // console.log('  trying fallback:', fb, MediaSource.isTypeSupported(fb));
                 }
                 return;
             }
@@ -258,7 +258,7 @@
             // Register sourceopen BEFORE setting video.src to avoid race
             ms.addEventListener('sourceopen', () => {
                 if (signal.aborted) return;
-                console.log('sourceopen fired, readyState:', ms.readyState);
+                // console.log('sourceopen fired, readyState:', ms.readyState);
                 if (ms.readyState !== 'open') {
                     console.error('MediaSource readyState is', ms.readyState, '- retrying');
                     if (retryCount < 3) {
@@ -272,7 +272,7 @@
             });
 
             ms.addEventListener('sourceclose', () => {
-                console.log('sourceclose fired');
+                // console.log('sourceclose fired');
             });
 
             video.src = currentObjectUrl;
