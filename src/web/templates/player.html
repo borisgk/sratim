@@ -53,7 +53,7 @@
         const playerWrapper = document.querySelector('.player-wrapper');
         
         const DURATION = __DURATION__; // Real duration
-        const fileName = "__FILE_NAME__";
+        const MOVIE_ID = __MOVIE_ID__;
         const codecStr = '__CODEC_STR__';
         const AUDIO_TRACKS = __AUDIO_TRACKS_JSON__;
         const START_POSITION = __START_POSITION__;
@@ -73,8 +73,7 @@
         async function sendWatchEvent(eventType, position) {
             try {
                 const body = JSON.stringify({
-                    library_id: parseInt(libraryId, 10),
-                    file: fileName,
+                    movie_id: MOVIE_ID,
                     event: eventType,
                     position: parseFloat(position),
                     duration: parseFloat(DURATION)
@@ -95,9 +94,6 @@
                 console.error('Error logging watch event:', e);
             }
         }
-
-        const urlParams = new URLSearchParams(window.location.search);
-        const libraryId = urlParams.get('library') || '';
 
         const svgPlay = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M8 5v14l11-7z"/></svg>';
         const svgPause = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
@@ -152,8 +148,7 @@
         async function fetchAndAppend(sourceBuffer, startTime, signal) {
             try {
                 const audioParam = currentAudioIdx >= 0 ? `&audio=${currentAudioIdx}` : '';
-                const libParam = libraryId ? `&library=${libraryId}` : '';
-                const response = await fetch(`/stream?file=${encodeURIComponent(fileName)}&start=${startTime}${audioParam}${libParam}`, { signal });
+                const response = await fetch(`/stream?id=${MOVIE_ID}&start=${startTime}${audioParam}`, { signal });
                 const reader = response.body.getReader();
 
                 let queue = [];

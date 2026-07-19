@@ -96,8 +96,7 @@
                 e.preventDefault();
                 e.stopPropagation();
                 
-                const file = item.getAttribute('data-file');
-                const libraryId = item.getAttribute('data-library');
+                const movieId = item.getAttribute('data-id');
                 const action = item.classList.contains('reset-btn') ? 'reset' : 'watched';
                 const card = item.closest('.movie-card');
                 
@@ -106,8 +105,7 @@
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            library_id: parseInt(libraryId, 10),
-                            file: file,
+                            movie_id: parseInt(movieId, 10),
                             action: action
                         })
                     });
@@ -136,8 +134,7 @@
                 e.preventDefault();
                 e.stopPropagation();
                 
-                const file = btn.getAttribute('data-file');
-                const libraryId = btn.getAttribute('data-library');
+                const movieId = btn.getAttribute('data-id');
                 
                 const originalText = btn.innerText;
                 btn.innerText = 'Looking up...';
@@ -148,8 +145,7 @@
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            library_id: parseInt(libraryId, 10),
-                            file: file
+                            movie_id: parseInt(movieId, 10)
                         })
                     });
                     

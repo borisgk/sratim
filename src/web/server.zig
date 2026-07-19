@@ -260,27 +260,26 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                 request.respond("Missing library id", .{ .status = .bad_request }) catch return;
             }
 
-        // Route: Web UI (Details)
         } else if (std.mem.startsWith(u8, target, "/details")) {
-            var file_path_opt: ?[]const u8 = null;
-            var lib_id: i64 = -1;
+            var movie_id: i64 = -1;
             if (std.mem.indexOf(u8, target, "?")) |q_idx| {
                 const query = target[q_idx + 1 ..];
                 var it = std.mem.splitScalar(u8, query, '&');
                 while (it.next()) |param| {
-                    if (std.mem.startsWith(u8, param, "file=")) {
-                        file_path_opt = param[5..];
-                    } else if (std.mem.startsWith(u8, param, "library=")) {
-                        lib_id = std.fmt.parseInt(i64, param[8..], 10) catch -1;
+                    if (std.mem.startsWith(u8, param, "id=")) {
+                        movie_id = std.fmt.parseInt(i64, param[3..], 10) catch -1;
                     }
                 }
             }
 
-            if (file_path_opt) |file_path| {
-                const decoded_path = allocator.dupe(u8, file_path) catch return;
-                const final_path = std.Uri.percentDecodeInPlace(decoded_path);
-
-                const html_content = catalog.generateDetailsHtml(allocator, database, logs_database, lib_id, final_path, session_info.?.username) catch return;
+            if (movie_id != -1) {
+                const html_content = catalog.generateDetailsHtml(allocator, database, logs_database, movie_id, session_info.?.username) catch |err| {
+                    if (err == error.MovieNotFound) {
+                        request.respond("Movie not found", .{ .status = .not_found }) catch return;
+                        return;
+                    }
+                    return;
+                };
 
                 request.respond(html_content, .{
                     .status = .ok,
@@ -289,43 +288,45 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                     },
                 }) catch return;
             } else {
-                request.respond("Missing file param", .{ .status = .bad_request }) catch return;
+                request.respond("Missing id param", .{ .status = .bad_request }) catch return;
             }
 
         // Route: Web UI (Player)
         } else if (std.mem.startsWith(u8, target, "/player")) {
-            var file_path_opt: ?[]const u8 = null;
-            var lib_id: i64 = -1;
+            var movie_id: i64 = -1;
             var start_opt: ?f64 = null;
             if (std.mem.indexOf(u8, target, "?")) |q_idx| {
                 const query = target[q_idx + 1 ..];
                 var it = std.mem.splitScalar(u8, query, '&');
                 while (it.next()) |param| {
-                    if (std.mem.startsWith(u8, param, "file=")) {
-                        file_path_opt = param[5..];
-                    } else if (std.mem.startsWith(u8, param, "library=")) {
-                        lib_id = std.fmt.parseInt(i64, param[8..], 10) catch -1;
+                    if (std.mem.startsWith(u8, param, "id=")) {
+                        movie_id = std.fmt.parseInt(i64, param[3..], 10) catch -1;
                     } else if (std.mem.startsWith(u8, param, "start=")) {
                         start_opt = std.fmt.parseFloat(f64, param[6..]) catch null;
                     }
                 }
             }
 
-            if (file_path_opt) |file_path| {
+            if (movie_id != -1) {
                 var resolved_wf = allocator.dupe(u8, working_folder) catch return;
-                if (lib_id != -1) {
-                    if (library_mod.getLibraryById(database, allocator, lib_id) catch null) |lib| {
-                        allocator.free(resolved_wf);
-                        resolved_wf = allocator.dupe(u8, lib.path) catch return;
-                        allocator.free(lib.name);
-                        allocator.free(lib.path);
-                        allocator.free(lib.metadata_language);
-                        if (lib.ignore_patterns) |pat| allocator.free(pat);
-                    }
+                const info_opt = metadata_mod.getMovieInfoById(database, allocator, movie_id) catch null;
+                if (info_opt == null) {
+                    request.respond("Movie not found", .{ .status = .not_found }) catch return;
+                    return;
+                }
+                const info = info_opt.?;
+                defer allocator.free(info.file_path);
+
+                if (library_mod.getLibraryById(database, allocator, info.library_id) catch null) |lib| {
+                    allocator.free(resolved_wf);
+                    resolved_wf = allocator.dupe(u8, lib.path) catch return;
+                    allocator.free(lib.name);
+                    allocator.free(lib.path);
+                    allocator.free(lib.metadata_language);
+                    if (lib.ignore_patterns) |pat| allocator.free(pat);
                 }
 
-                const decoded_path = allocator.dupe(u8, file_path) catch return;
-                const final_path = std.Uri.percentDecodeInPlace(decoded_path);
+                const final_path = info.file_path;
 
                 const full_path = std.fs.path.join(allocator, &[_][]const u8{ resolved_wf, final_path }) catch return;
                 const resolved_path = std.fs.path.resolve(allocator, &[_][]const u8{ full_path }) catch return;
@@ -369,8 +370,8 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                 json_out.appendSlice(allocator, "]") catch return;
                 const audio_tracks_json = json_out.items;
 
-                const resume_pos = if (start_opt) |s| s else logging_mod.getPlaybackProgress(logs_database, session_info.?.username, lib_id, final_path) catch 0.0;
-                const html_content = html.generatePlayerHtml(allocator, final_path, media_info.duration, media_info.codec_str, audio_tracks_json, resume_pos) catch return;
+                const resume_pos = if (start_opt) |s| s else logging_mod.getPlaybackProgress(logs_database, session_info.?.username, movie_id) catch 0.0;
+                const html_content = html.generatePlayerHtml(allocator, movie_id, media_info.duration, media_info.codec_str, audio_tracks_json, resume_pos) catch return;
 
                 request.respond(html_content, .{
                     .status = .ok,
@@ -379,14 +380,13 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                     },
                 }) catch return;
             } else {
-                request.respond("Missing file parameter", .{ .status = .bad_request }) catch return;
+                request.respond("Missing movie id parameter", .{ .status = .bad_request }) catch return;
             }
             
         // Route: Media Streamer
         } else if (std.mem.startsWith(u8, target, "/stream")) {
             // Parse query parameters
-            var file_path_opt: ?[]const u8 = null;
-            var lib_id: i64 = -1;
+            var movie_id: i64 = -1;
             var start_time: f64 = 0;
             var audio_idx: c_int = -1;
 
@@ -394,10 +394,8 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                 const query = target[q_idx + 1 ..];
                 var it = std.mem.splitScalar(u8, query, '&');
                 while (it.next()) |param| {
-                    if (std.mem.startsWith(u8, param, "file=")) {
-                        file_path_opt = param[5..];
-                    } else if (std.mem.startsWith(u8, param, "library=")) {
-                        lib_id = std.fmt.parseInt(i64, param[8..], 10) catch -1;
+                    if (std.mem.startsWith(u8, param, "id=")) {
+                        movie_id = std.fmt.parseInt(i64, param[3..], 10) catch -1;
                     } else if (std.mem.startsWith(u8, param, "start=")) {
                         start_time = std.fmt.parseFloat(f64, param[6..]) catch 0;
                     } else if (std.mem.startsWith(u8, param, "audio=")) {
@@ -406,21 +404,26 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                 }
             }
 
-            if (file_path_opt) |file_path| {
+            if (movie_id != -1) {
                 var resolved_wf = allocator.dupe(u8, working_folder) catch return;
-                if (lib_id != -1) {
-                    if (library_mod.getLibraryById(database, allocator, lib_id) catch null) |lib| {
-                        allocator.free(resolved_wf);
-                        resolved_wf = allocator.dupe(u8, lib.path) catch return;
-                        allocator.free(lib.name);
-                        allocator.free(lib.path);
-                        allocator.free(lib.metadata_language);
-                        if (lib.ignore_patterns) |pat| allocator.free(pat);
-                    }
+                const info_opt = metadata_mod.getMovieInfoById(database, allocator, movie_id) catch null;
+                if (info_opt == null) {
+                    request.respond("Movie not found", .{ .status = .not_found }) catch return;
+                    return;
+                }
+                const info = info_opt.?;
+                defer allocator.free(info.file_path);
+
+                if (library_mod.getLibraryById(database, allocator, info.library_id) catch null) |lib| {
+                    allocator.free(resolved_wf);
+                    resolved_wf = allocator.dupe(u8, lib.path) catch return;
+                    allocator.free(lib.name);
+                    allocator.free(lib.path);
+                    allocator.free(lib.metadata_language);
+                    if (lib.ignore_patterns) |pat| allocator.free(pat);
                 }
 
-                const decoded_path = allocator.dupe(u8, file_path) catch return;
-                const final_path = std.Uri.percentDecodeInPlace(decoded_path);
+                const final_path = info.file_path;
 
                 // Ensure the path is prefixed with working_folder to avoid reading absolute OS paths securely
                 const full_path = std.fs.path.join(allocator, &[_][]const u8{ resolved_wf, final_path }) catch return;
@@ -774,8 +777,7 @@ fn escapeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, input
 }
 
 const WatchEventPayload = struct {
-    library_id: i64,
-    file: []const u8,
+    movie_id: i64,
     event: []const u8,
     position: f64,
     duration: f64,
@@ -802,15 +804,14 @@ fn handleApiWatchEvent(request: *std.http.Server.Request, allocator: std.mem.All
 
     const payload = parsed.value;
 
-    try logging_mod.logPlaybackEvent(logs_database, username, payload.library_id, payload.file, payload.event, payload.position);
-    try logging_mod.savePlaybackProgress(logs_database, username, payload.library_id, payload.file, payload.position, payload.duration);
+    try logging_mod.logPlaybackEvent(logs_database, username, payload.movie_id, payload.event, payload.position);
+    try logging_mod.savePlaybackProgress(logs_database, username, payload.movie_id, payload.position, payload.duration);
 
     request.respond("OK", .{ .status = .ok }) catch return;
 }
 
 const WatchProgressUpdatePayload = struct {
-    library_id: i64,
-    file: []const u8,
+    movie_id: i64,
     action: []const u8,
 };
 
@@ -836,21 +837,28 @@ fn handleApiWatchProgressUpdate(request: *std.http.Server.Request, allocator: st
     const payload = parsed.value;
 
     if (std.mem.eql(u8, payload.action, "reset")) {
-        try logging_mod.deletePlaybackProgress(logs_database, username, payload.library_id, payload.file);
+        try logging_mod.resetPlaybackProgress(logs_database, username, payload.movie_id);
     } else if (std.mem.eql(u8, payload.action, "watched")) {
         var resolved_wf = try allocator.dupe(u8, working_folder);
-        if (payload.library_id != -1) {
-            if (library_mod.getLibraryById(database, allocator, payload.library_id) catch null) |lib| {
-                allocator.free(resolved_wf);
-                resolved_wf = try allocator.dupe(u8, lib.path);
-                allocator.free(lib.name);
-                allocator.free(lib.path);
-                allocator.free(lib.metadata_language);
-                if (lib.ignore_patterns) |pat| allocator.free(pat);
-            }
+        
+        const info_opt = metadata_mod.getMovieInfoById(database, allocator, payload.movie_id) catch null;
+        if (info_opt == null) {
+            request.respond("Movie not found", .{ .status = .not_found }) catch return;
+            return;
+        }
+        const info = info_opt.?;
+        defer allocator.free(info.file_path);
+
+        if (library_mod.getLibraryById(database, allocator, info.library_id) catch null) |lib| {
+            allocator.free(resolved_wf);
+            resolved_wf = try allocator.dupe(u8, lib.path);
+            allocator.free(lib.name);
+            allocator.free(lib.path);
+            allocator.free(lib.metadata_language);
+            if (lib.ignore_patterns) |pat| allocator.free(pat);
         }
         
-        const full_path = try std.fs.path.join(allocator, &[_][]const u8{ resolved_wf, payload.file });
+        const full_path = try std.fs.path.join(allocator, &[_][]const u8{ resolved_wf, info.file_path });
         const resolved_path = try std.fs.path.resolve(allocator, &[_][]const u8{ full_path });
         const abs_wf_path = try std.fs.path.resolve(allocator, &[_][]const u8{ resolved_wf });
         allocator.free(resolved_wf);
@@ -867,7 +875,7 @@ fn handleApiWatchProgressUpdate(request: *std.http.Server.Request, allocator: st
             .audio_tracks = &[_]streamer.AudioTrack{},
         };
 
-        try logging_mod.savePlaybackProgress(logs_database, username, payload.library_id, payload.file, media_info.duration, media_info.duration);
+        try logging_mod.savePlaybackProgress(logs_database, username, payload.movie_id, media_info.duration, media_info.duration);
     }
 
     request.respond("OK", .{ .status = .ok }) catch return;
@@ -925,8 +933,7 @@ fn handleApiMetadataSearch(request: *std.http.Server.Request, allocator: std.mem
 }
 
 const MetadataLinkPayload = struct {
-    library_id: i64,
-    file: []const u8,
+    movie_id: i64,
     tmdb_id: i64,
     title: []const u8,
     overview: ?[]const u8 = null,
@@ -963,10 +970,9 @@ fn handleApiMetadataLink(request: *std.http.Server.Request, allocator: std.mem.A
         std.debug.print("Failed to download images: {}\n", .{err});
     };
 
-    try metadata_mod.saveMetadata(
+    try metadata_mod.saveMetadataById(
         database,
-        payload.library_id,
-        payload.file,
+        payload.movie_id,
         payload.tmdb_id,
         payload.title,
         payload.overview,
@@ -1031,8 +1037,7 @@ fn parseYearAndCleanName(allocator: std.mem.Allocator, raw_name: []const u8) !st
 }
 
 const MetadataAutoLinkPayload = struct {
-    library_id: i64,
-    file: []const u8,
+    movie_id: i64,
 };
 
 fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, config: *const config_mod.Config, body_buf: *[8192]u8) !void {
@@ -1067,8 +1072,16 @@ fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: std.m
 
     const payload = parsed.value;
 
+    const info_opt = try metadata_mod.getMovieInfoById(database, allocator, payload.movie_id);
+    if (info_opt == null) {
+        request.respond("Movie not found", .{ .status = .not_found }) catch return;
+        return;
+    }
+    const info = info_opt.?;
+    defer allocator.free(info.file_path);
+
     // Get clean name from file path
-    const basename = std.fs.path.basename(payload.file);
+    const basename = std.fs.path.basename(info.file_path);
     const ext = std.fs.path.extension(basename);
     const clean_name = basename[0 .. basename.len - ext.len];
 
@@ -1096,10 +1109,9 @@ fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: std.m
         std.debug.print("Failed to download images: {}\n", .{err});
     };
 
-    try metadata_mod.saveMetadata(
+    try metadata_mod.saveMetadataById(
         database,
-        payload.library_id,
-        payload.file,
+        payload.movie_id,
         first_movie.id,
         first_movie.title,
         first_movie.overview,

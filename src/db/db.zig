@@ -166,21 +166,67 @@ pub fn initSchema(database: *Database) !void {
         \\    last_scanned_at INTEGER
         \\);
     );
-    try database.exec(
-        \\CREATE TABLE IF NOT EXISTS movies (
-        \\    library_id INTEGER NOT NULL,
-        \\    file_path TEXT NOT NULL,
-        \\    clean_name TEXT NOT NULL,
-        \\    is_present INTEGER NOT NULL DEFAULT 1,
-        \\    tmdb_id INTEGER,
-        \\    title TEXT,
-        \\    overview TEXT,
-        \\    poster_path TEXT,
-        \\    backdrop_path TEXT,
-        \\    release_date TEXT,
-        \\    PRIMARY KEY (library_id, file_path)
-        \\);
-    );
+    var table_exists = false;
+    var stmt_check = try database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='movies';");
+    if ((try stmt_check.step()) == .row) {
+        table_exists = true;
+    }
+    stmt_check.finalize();
+
+    if (table_exists) {
+        var has_id_col = false;
+        var stmt_info = try database.prepare("PRAGMA table_info(movies);");
+        while (try stmt_info.step() == .row) {
+            const col_name = stmt_info.columnText(1);
+            if (col_name != null and std.mem.eql(u8, col_name.?, "id")) {
+                has_id_col = true;
+                break;
+            }
+        }
+        stmt_info.finalize();
+
+        if (!has_id_col) {
+            _ = database.exec(
+                \\BEGIN TRANSACTION;
+                \\ALTER TABLE movies RENAME TO movies_old;
+                \\CREATE TABLE movies (
+                \\    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                \\    library_id INTEGER NOT NULL,
+                \\    file_path TEXT NOT NULL,
+                \\    clean_name TEXT NOT NULL,
+                \\    is_present INTEGER NOT NULL DEFAULT 1,
+                \\    tmdb_id INTEGER,
+                \\    title TEXT,
+                \\    overview TEXT,
+                \\    poster_path TEXT,
+                \\    backdrop_path TEXT,
+                \\    release_date TEXT,
+                \\    UNIQUE(library_id, file_path)
+                \\);
+                \\INSERT INTO movies (library_id, file_path, clean_name, is_present, tmdb_id, title, overview, poster_path, backdrop_path, release_date)
+                \\SELECT library_id, file_path, clean_name, is_present, tmdb_id, title, overview, poster_path, backdrop_path, release_date FROM movies_old;
+                \\DROP TABLE movies_old;
+                \\COMMIT;
+            ) catch {};
+        }
+    } else {
+        try database.exec(
+            \\CREATE TABLE movies (
+            \\    id INTEGER PRIMARY KEY AUTOINCREMENT,
+            \\    library_id INTEGER NOT NULL,
+            \\    file_path TEXT NOT NULL,
+            \\    clean_name TEXT NOT NULL,
+            \\    is_present INTEGER NOT NULL DEFAULT 1,
+            \\    tmdb_id INTEGER,
+            \\    title TEXT,
+            \\    overview TEXT,
+            \\    poster_path TEXT,
+            \\    backdrop_path TEXT,
+            \\    release_date TEXT,
+            \\    UNIQUE(library_id, file_path)
+            \\);
+        );
+    }
 
     // Migration logic from old tables
     // We ignore errors since this is just for safe transition, and old tables might not exist
