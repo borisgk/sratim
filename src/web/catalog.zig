@@ -187,7 +187,7 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
             try cards_buf.appendSlice(allocator, "\">\n");
             
             if (meta != null and meta.?.poster_path != null and meta.?.poster_path.?.len > 0) {
-                try cards_buf.appendSlice(allocator, "                <div class=\"poster-background\" style=\"background-image: url('/images/tmdb/w500");
+                try cards_buf.appendSlice(allocator, "                <div class=\"poster-background\" style=\"background-image: url('/images/posters/w185");
                 try cards_buf.appendSlice(allocator, meta.?.poster_path.?);
                 try cards_buf.appendSlice(allocator, "')\"></div>\n");
             }

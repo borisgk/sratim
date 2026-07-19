@@ -28,10 +28,13 @@ fn writePercentEncoded(list: *std.ArrayList(u8), allocator: std.mem.Allocator, i
 }
 
 pub fn downloadImages(allocator: std.mem.Allocator, io: std.Io, poster_path: ?[]const u8, backdrop_path: ?[]const u8, proxy_url: ?[]const u8) !void {
-    std.Io.Dir.cwd().createDirPath(io, ".sratim") catch |err| std.debug.print("Dir create err: {}\n", .{err});
-    std.Io.Dir.cwd().createDirPath(io, ".sratim/tmdb_images") catch |err| std.debug.print("Dir create err: {}\n", .{err});
-    std.Io.Dir.cwd().createDirPath(io, ".sratim/tmdb_images/original") catch |err| std.debug.print("Dir create err: {}\n", .{err});
-    std.Io.Dir.cwd().createDirPath(io, ".sratim/tmdb_images/w500") catch |err| std.debug.print("Dir create err: {}\n", .{err});
+    std.Io.Dir.cwd().createDirPath(io, "images") catch |err| std.debug.print("Dir create err: {}\n", .{err});
+    std.Io.Dir.cwd().createDirPath(io, "images/posters") catch |err| std.debug.print("Dir create err: {}\n", .{err});
+    std.Io.Dir.cwd().createDirPath(io, "images/posters/original") catch |err| std.debug.print("Dir create err: {}\n", .{err});
+    std.Io.Dir.cwd().createDirPath(io, "images/posters/w500") catch |err| std.debug.print("Dir create err: {}\n", .{err});
+    std.Io.Dir.cwd().createDirPath(io, "images/posters/w185") catch |err| std.debug.print("Dir create err: {}\n", .{err});
+    std.Io.Dir.cwd().createDirPath(io, "images/backdrops") catch |err| std.debug.print("Dir create err: {}\n", .{err});
+    std.Io.Dir.cwd().createDirPath(io, "images/backdrops/original") catch |err| std.debug.print("Dir create err: {}\n", .{err});
 
     var config = httpx.ClientConfig.defaults();
     if (proxy_url) |p_url| {
@@ -69,6 +72,23 @@ pub fn downloadImages(allocator: std.mem.Allocator, io: std.Io, poster_path: ?[]
     defer client.deinit();
 
     if (poster_path) |poster| {
+        // Download w185 poster
+        const poster_w185_url = try std.fmt.allocPrint(allocator, "https://image.tmdb.org/t/p/w185{s}", .{poster});
+        defer allocator.free(poster_w185_url);
+        if (client.get(poster_w185_url, .{})) |response| {
+            var res = response;
+            defer res.deinit();
+            if (res.status.isSuccess() and res.body != null) {
+                const dest = try std.fmt.allocPrint(allocator, "images/posters/w185{s}", .{poster});
+                defer allocator.free(dest);
+                std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dest, .data = res.body.? }) catch |err| std.debug.print("Failed to save poster_w185: {}\n", .{err});
+            } else {
+                std.debug.print("TMDB poster_w185 returned HTTP {d}\n", .{res.status.code});
+            }
+        } else |err| {
+            std.debug.print("Failed to download poster_w185: {}\n", .{err});
+        }
+
         // Download w500 poster
         const poster_w500_url = try std.fmt.allocPrint(allocator, "https://image.tmdb.org/t/p/w500{s}", .{poster});
         defer allocator.free(poster_w500_url);
@@ -76,7 +96,7 @@ pub fn downloadImages(allocator: std.mem.Allocator, io: std.Io, poster_path: ?[]
             var res = response;
             defer res.deinit();
             if (res.status.isSuccess() and res.body != null) {
-                const dest = try std.fmt.allocPrint(allocator, ".sratim/tmdb_images/w500{s}", .{poster});
+                const dest = try std.fmt.allocPrint(allocator, "images/posters/w500{s}", .{poster});
                 defer allocator.free(dest);
                 std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dest, .data = res.body.? }) catch |err| std.debug.print("Failed to save poster_w500: {}\n", .{err});
             } else {
@@ -93,7 +113,7 @@ pub fn downloadImages(allocator: std.mem.Allocator, io: std.Io, poster_path: ?[]
             var res = response;
             defer res.deinit();
             if (res.status.isSuccess() and res.body != null) {
-                const dest = try std.fmt.allocPrint(allocator, ".sratim/tmdb_images/original{s}", .{poster});
+                const dest = try std.fmt.allocPrint(allocator, "images/posters/original{s}", .{poster});
                 defer allocator.free(dest);
                 std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dest, .data = res.body.? }) catch |err| std.debug.print("Failed to save poster_original: {}\n", .{err});
             } else {
@@ -112,7 +132,7 @@ pub fn downloadImages(allocator: std.mem.Allocator, io: std.Io, poster_path: ?[]
             var res = response;
             defer res.deinit();
             if (res.status.isSuccess() and res.body != null) {
-                const dest = try std.fmt.allocPrint(allocator, ".sratim/tmdb_images/original{s}", .{backdrop});
+                const dest = try std.fmt.allocPrint(allocator, "images/backdrops/original{s}", .{backdrop});
                 defer allocator.free(dest);
                 std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dest, .data = res.body.? }) catch |err| std.debug.print("Failed to save backdrop_original: {}\n", .{err});
             } else {

@@ -104,13 +104,13 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
         }
 
         // Route: TMDB Images
-        if (std.mem.startsWith(u8, target, "/images/tmdb/")) {
-            // target could be /images/tmdb/w500/abc.jpg?t=123
+        if (std.mem.startsWith(u8, target, "/images/")) {
+            // target could be /images/posters/w500/abc.jpg?t=123
             const query_idx = std.mem.indexOf(u8, target, "?");
             const clean_target = if (query_idx) |idx| target[0..idx] else target;
-            const rel_path = clean_target["/images/tmdb/".len..];
+            const rel_path = clean_target["/images/".len..];
             
-            const file_path = std.fmt.allocPrint(allocator, ".sratim/tmdb_images/{s}", .{rel_path}) catch {
+            const file_path = std.fmt.allocPrint(allocator, "images/{s}", .{rel_path}) catch {
                 request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
                 continue;
             };
