@@ -151,7 +151,7 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
 
     // movflags: fragmented mp4 configuration
     var dict: ?*c.AVDictionary = null;
-    _ = c.av_dict_set(&dict, "movflags", "frag_keyframe+empty_moov+delay_moov+default_base_moof+negative_cts_offsets", 0);
+    _ = c.av_dict_set(&dict, "movflags", "frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets", 0);
     _ = c.av_dict_set(&dict, "avoid_negative_ts", "make_non_negative", 0);
     defer c.av_dict_free(@ptrCast(&dict));
 
@@ -259,7 +259,7 @@ pub fn getMediaInfo(allocator: std.mem.Allocator, file_path: [:0]const u8) !Medi
             if (codec_id == c.AV_CODEC_ID_H264) {
                 codec_str = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\"";
             } else if (codec_id == c.AV_CODEC_ID_HEVC) {
-                codec_str = "video/mp4; codecs=\"hvc1.2.4.L153.B0, mp4a.40.2\"";
+                codec_str = "video/mp4; codecs=\"hvc1, mp4a.40.2\"";
             } else if (codec_id == c.AV_CODEC_ID_AV1) {
                 codec_str = "video/mp4; codecs=\"av01.0.05M.08, mp4a.40.2\"";
             } else if (codec_id == c.AV_CODEC_ID_VP9) {
