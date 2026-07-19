@@ -167,11 +167,13 @@ pub fn initSchema(database: *Database) !void {
         \\);
     );
     try database.exec(
-        \\CREATE TABLE IF NOT EXISTS movie_metadata (
+        \\CREATE TABLE IF NOT EXISTS movies (
         \\    library_id INTEGER NOT NULL,
         \\    file_path TEXT NOT NULL,
-        \\    tmdb_id INTEGER NOT NULL,
-        \\    title TEXT NOT NULL,
+        \\    clean_name TEXT NOT NULL,
+        \\    is_present INTEGER NOT NULL DEFAULT 1,
+        \\    tmdb_id INTEGER,
+        \\    title TEXT,
         \\    overview TEXT,
         \\    poster_path TEXT,
         \\    backdrop_path TEXT,
@@ -180,6 +182,14 @@ pub fn initSchema(database: *Database) !void {
         \\);
     );
 
-    // Auto-migrate: ignore error if column already exists
-    database.exec("ALTER TABLE movie_metadata ADD COLUMN backdrop_path TEXT;") catch {};
+    // Migration logic from old tables
+    // We ignore errors since this is just for safe transition, and old tables might not exist
+    _ = database.exec(
+        \\INSERT OR IGNORE INTO movies (library_id, file_path, clean_name, is_present, tmdb_id, title, overview, poster_path, backdrop_path, release_date)
+        \\SELECT library_id, file_path, '', 1, tmdb_id, title, overview, poster_path, backdrop_path, release_date 
+        \\FROM movie_metadata;
+    ) catch {};
+    
+    _ = database.exec("DROP TABLE IF EXISTS movie_metadata;") catch {};
+    _ = database.exec("DROP TABLE IF EXISTS library_files;") catch {};
 }

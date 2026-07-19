@@ -117,6 +117,7 @@ pub fn generateHtml(allocator: std.mem.Allocator, database: *db_mod.Database) ![
 }
 
 pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, logs_database: *db_mod.Database, library_id: i64, username: []const u8) !?[]u8 {
+    _ = io;
     const lib_opt = try library_mod.getLibraryById(database, allocator, library_id);
     if (lib_opt == null) return null;
 
@@ -136,100 +137,94 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
         allocator.free(progress_list);
     }
 
-    var dir = std.Io.Dir.cwd().openDir(io, lib.path, .{ .iterate = true }) catch |err| {
-        std.debug.print("Failed to open library path {s}: {}\n", .{lib.path, err});
-        return error.LibraryPathNotFound;
-    };
-    defer dir.close(io);
-
-    var walker = try dir.walk(allocator);
-    defer walker.deinit();
+    var stmt = try database.prepare(
+        \\SELECT file_path, clean_name, title, poster_path 
+        \\FROM movies
+        \\WHERE library_id = ?1 AND is_present = 1
+        \\ORDER BY 
+        \\    CASE 
+        \\        WHEN COALESCE(title, clean_name) LIKE 'The %' THEN SUBSTR(COALESCE(title, clean_name), 5)
+        \\        WHEN COALESCE(title, clean_name) LIKE 'A %' THEN SUBSTR(COALESCE(title, clean_name), 3)
+        \\        WHEN COALESCE(title, clean_name) LIKE 'An %' THEN SUBSTR(COALESCE(title, clean_name), 4)
+        \\        ELSE COALESCE(title, clean_name)
+        \\    END COLLATE NOCASE ASC;
+    );
+    defer stmt.finalize();
+    try stmt.bindInt64(1, lib.id);
 
     var cards_buf = std.ArrayList(u8).empty;
     defer cards_buf.deinit(allocator);
 
-    while (try walker.next(io)) |entry| {
-        if (entry.kind == .file and isVideoFile(entry.basename)) {
-            const ext = std.fs.path.extension(entry.basename);
-            const ext_idx = entry.basename.len - ext.len;
-            const clean_name = entry.basename[0..ext_idx];
+    while ((try stmt.step()) == .row) {
+        const file_path = stmt.columnText(0).?;
+        const clean_name = stmt.columnText(1).?;
+        const title_opt = stmt.columnText(2);
+        const poster_path_opt = stmt.columnText(3);
 
-            const meta = try metadata_mod.getMetadata(database, allocator, lib.id, entry.path);
+        const display_title = if (title_opt) |t| t else clean_name;
 
-            var title_buf = std.ArrayList(u8).empty;
-            defer title_buf.deinit(allocator);
-            if (meta) |m| {
-                try title_buf.appendSlice(allocator, m.title);
-            } else {
-                try title_buf.appendSlice(allocator, clean_name);
-            }
-
-            var progress_pct: ?f64 = null;
-            for (progress_list) |item| {
-                if (std.mem.eql(u8, item.file_path, entry.path)) {
-                    if (item.duration > 0) {
-                        progress_pct = (item.position / item.duration) * 100.0;
-                    }
-                    break;
+        var progress_pct: ?f64 = null;
+        for (progress_list) |item| {
+            if (std.mem.eql(u8, item.file_path, file_path)) {
+                if (item.duration > 0) {
+                    progress_pct = (item.position / item.duration) * 100.0;
                 }
+                break;
             }
-
-            // In /player, the file path parameter should be scoped. Wait! Let's pass the relative path
-            // from the library. Or pass the file ID? For now, we will pass library_id and path to player/stream
-            // e.g. /player?library=1&file=path/to/movie.mp4. This is much safer than absolute paths!
-            try cards_buf.appendSlice(allocator, "        <div class=\"movie-item\">\n");
-            if (meta != null and meta.?.poster_path != null and meta.?.poster_path.?.len > 0) {
-                try cards_buf.appendSlice(allocator, "            <div class=\"movie-card has-poster\" data-name=\"");
-            } else {
-                try cards_buf.appendSlice(allocator, "            <div class=\"movie-card\" data-name=\"");
-            }
-            try escapeHtml(&cards_buf, allocator, entry.path);
-            try cards_buf.appendSlice(allocator, "\">\n");
-            
-            if (meta != null and meta.?.poster_path != null and meta.?.poster_path.?.len > 0) {
-                try cards_buf.appendSlice(allocator, "                <div class=\"poster-background\" style=\"background-image: url('/images/posters/w185");
-                try cards_buf.appendSlice(allocator, meta.?.poster_path.?);
-                try cards_buf.appendSlice(allocator, "')\"></div>\n");
-            }
-            try cards_buf.appendSlice(allocator, "            <button class=\"context-menu-btn\" title=\"Actions\">\n                <svg viewBox=\"0 0 24 24\" fill=\"currentColor\" width=\"20\" height=\"20\">\n                    <circle cx=\"12\" cy=\"5\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"12\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"19\" r=\"2\"/>\n                </svg>\n            </button>\n            <div class=\"context-dropdown\">\n                <button class=\"dropdown-item lookup-btn\" data-file=\"");
-            try escapeHtml(&cards_buf, allocator, entry.path);
-            const lookup_mid = try std.fmt.allocPrint(allocator, "\" data-library=\"{d}\">Lookup Metadata</button>\n                <button class=\"dropdown-item reset-btn\" data-file=\"", .{lib.id});
-            defer allocator.free(lookup_mid);
-            try cards_buf.appendSlice(allocator, lookup_mid);
-            try escapeHtml(&cards_buf, allocator, entry.path);
-            const dropdown_middle = try std.fmt.allocPrint(allocator, "\" data-library=\"{d}\">Reset Progress</button>\n                <button class=\"dropdown-item watch-btn\" data-file=\"", .{lib.id});
-            defer allocator.free(dropdown_middle);
-            try cards_buf.appendSlice(allocator, dropdown_middle);
-            try escapeHtml(&cards_buf, allocator, entry.path);
-            const dropdown_end = try std.fmt.allocPrint(allocator, "\" data-library=\"{d}\">Mark as Watched</button>\n                <a class=\"dropdown-item\" style=\"text-decoration: none;\" href=\"/player?library={d}&file=", .{ lib.id, lib.id });
-            defer allocator.free(dropdown_end);
-            try cards_buf.appendSlice(allocator, dropdown_end);
-            try writePercentEncoded(&cards_buf, allocator, entry.path);
-            try cards_buf.appendSlice(allocator, "\">Quick Play</a>\n            </div>\n\n            <a href=\"/details?library=");
-            const lib_id_str = try std.fmt.allocPrint(allocator, "{d}", .{lib.id});
-            defer allocator.free(lib_id_str);
-            try cards_buf.appendSlice(allocator, lib_id_str);
-            try cards_buf.appendSlice(allocator, "&file=");
-            try writePercentEncoded(&cards_buf, allocator, entry.path);
-            try cards_buf.appendSlice(allocator, "\" class=\"play-link\"></a>\n\n            <div class=\"card-content\">\n                <div class=\"card-top\">\n                    <div class=\"icon-wrapper\">\n                        <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" width=\"24\" height=\"24\">\n                            <path d=\"M15 10l5-3.07v10.14L15 14v-4z\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n                            <rect x=\"4\" y=\"6\" width=\"11\" height=\"12\" rx=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n                        </svg>\n                    </div>\n                </div>\n            </div>\n");
-
-            if (progress_pct) |pct| {
-                if (pct >= 1.0 and pct < 95.0) {
-                    const progress_str = try std.fmt.allocPrint(allocator,
-                        \\            <div class="card-progress">
-                        \\                <div class="progress-fill" style="width: {d:.1}%;"></div>
-                        \\            </div>
-                        \\
-                    , .{pct});
-                    defer allocator.free(progress_str);
-                    try cards_buf.appendSlice(allocator, progress_str);
-                }
-            }
-
-            try cards_buf.appendSlice(allocator, "        </div>\n        <h3 class=\"movie-title\">");
-            try escapeHtml(&cards_buf, allocator, title_buf.items);
-            try cards_buf.appendSlice(allocator, "</h3>\n    </div>\n");
         }
+
+        try cards_buf.appendSlice(allocator, "        <div class=\"movie-item\">\n");
+        if (poster_path_opt != null and poster_path_opt.?.len > 0) {
+            try cards_buf.appendSlice(allocator, "            <div class=\"movie-card has-poster\" data-name=\"");
+        } else {
+            try cards_buf.appendSlice(allocator, "            <div class=\"movie-card\" data-name=\"");
+        }
+        try escapeHtml(&cards_buf, allocator, file_path);
+        try cards_buf.appendSlice(allocator, "\">\n");
+        
+        if (poster_path_opt != null and poster_path_opt.?.len > 0) {
+            try cards_buf.appendSlice(allocator, "                <div class=\"poster-background\" style=\"background-image: url('/images/posters/w185");
+            try cards_buf.appendSlice(allocator, poster_path_opt.?);
+            try cards_buf.appendSlice(allocator, "')\"></div>\n");
+        }
+        try cards_buf.appendSlice(allocator, "            <button class=\"context-menu-btn\" title=\"Actions\">\n                <svg viewBox=\"0 0 24 24\" fill=\"currentColor\" width=\"20\" height=\"20\">\n                    <circle cx=\"12\" cy=\"5\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"12\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"19\" r=\"2\"/>\n                </svg>\n            </button>\n            <div class=\"context-dropdown\">\n                <button class=\"dropdown-item lookup-btn\" data-file=\"");
+        try escapeHtml(&cards_buf, allocator, file_path);
+        const lookup_mid = try std.fmt.allocPrint(allocator, "\" data-library=\"{d}\">Lookup Metadata</button>\n                <button class=\"dropdown-item reset-btn\" data-file=\"", .{lib.id});
+        defer allocator.free(lookup_mid);
+        try cards_buf.appendSlice(allocator, lookup_mid);
+        try escapeHtml(&cards_buf, allocator, file_path);
+        const dropdown_middle = try std.fmt.allocPrint(allocator, "\" data-library=\"{d}\">Reset Progress</button>\n                <button class=\"dropdown-item watch-btn\" data-file=\"", .{lib.id});
+        defer allocator.free(dropdown_middle);
+        try cards_buf.appendSlice(allocator, dropdown_middle);
+        try escapeHtml(&cards_buf, allocator, file_path);
+        const dropdown_end = try std.fmt.allocPrint(allocator, "\" data-library=\"{d}\">Mark as Watched</button>\n                <a class=\"dropdown-item\" style=\"text-decoration: none;\" href=\"/player?library={d}&file=", .{ lib.id, lib.id });
+        defer allocator.free(dropdown_end);
+        try cards_buf.appendSlice(allocator, dropdown_end);
+        try writePercentEncoded(&cards_buf, allocator, file_path);
+        try cards_buf.appendSlice(allocator, "\">Quick Play</a>\n            </div>\n\n            <a href=\"/details?library=");
+        const lib_id_str = try std.fmt.allocPrint(allocator, "{d}", .{lib.id});
+        defer allocator.free(lib_id_str);
+        try cards_buf.appendSlice(allocator, lib_id_str);
+        try cards_buf.appendSlice(allocator, "&file=");
+        try writePercentEncoded(&cards_buf, allocator, file_path);
+        try cards_buf.appendSlice(allocator, "\" class=\"play-link\"></a>\n\n            <div class=\"card-content\">\n                <div class=\"card-top\">\n                    <div class=\"icon-wrapper\">\n                        <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" width=\"24\" height=\"24\">\n                            <path d=\"M15 10l5-3.07v10.14L15 14v-4z\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n                            <rect x=\"4\" y=\"6\" width=\"11\" height=\"12\" rx=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n                        </svg>\n                    </div>\n                </div>\n            </div>\n");
+
+        if (progress_pct) |pct| {
+            if (pct >= 1.0 and pct < 95.0) {
+                const progress_str = try std.fmt.allocPrint(allocator,
+                    \\            <div class="card-progress">
+                    \\                <div class="progress-fill" style="width: {d:.1}%;"></div>
+                    \\            </div>
+                    \\
+                , .{pct});
+                defer allocator.free(progress_str);
+                try cards_buf.appendSlice(allocator, progress_str);
+            }
+        }
+
+        try cards_buf.appendSlice(allocator, "        </div>\n        <h3 class=\"movie-title\">");
+        try escapeHtml(&cards_buf, allocator, display_title);
+        try cards_buf.appendSlice(allocator, "</h3>\n    </div>\n");
     }
 
     return try template_engine.render(allocator, @embedFile("templates/library_view.html"), .{

@@ -25,8 +25,7 @@ pub fn saveMetadata(
     release_date: ?[]const u8,
 ) !void {
     var stmt = try database.prepare(
-        \\INSERT OR REPLACE INTO movie_metadata (library_id, file_path, tmdb_id, title, overview, poster_path, backdrop_path, release_date)
-        \\VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8);
+        \\UPDATE movies SET tmdb_id = ?3, title = ?4, overview = ?5, poster_path = ?6, backdrop_path = ?7, release_date = ?8 WHERE library_id = ?1 AND file_path = ?2;
     );
     defer stmt.finalize();
 
@@ -49,7 +48,7 @@ pub fn getMetadata(
     file_path: []const u8,
 ) !?MovieMetadata {
     var stmt = try database.prepare(
-        \\SELECT tmdb_id, title, overview, poster_path, backdrop_path, release_date FROM movie_metadata WHERE library_id = ?1 AND file_path = ?2;
+        \\SELECT tmdb_id, title, overview, poster_path, backdrop_path, release_date FROM movies WHERE library_id = ?1 AND file_path = ?2 AND tmdb_id IS NOT NULL;
     );
     defer stmt.finalize();
 
@@ -106,7 +105,7 @@ pub fn getMetadata(
 }
 
 pub fn deleteMetadata(database: *db_mod.Database, library_id: i64, file_path: []const u8) !void {
-    var stmt = try database.prepare("DELETE FROM movie_metadata WHERE library_id = ?1 AND file_path = ?2;");
+    var stmt = try database.prepare("UPDATE movies SET tmdb_id = NULL, title = NULL, overview = NULL, poster_path = NULL, backdrop_path = NULL, release_date = NULL WHERE library_id = ?1 AND file_path = ?2;");
     defer stmt.finalize();
     try stmt.bindInt64(1, library_id);
     try stmt.bindText(2, file_path);

@@ -151,3 +151,90 @@ pub fn getLibraryById(database: *db_mod.Database, allocator: std.mem.Allocator, 
         .last_scanned_at = scanned,
     };
 }
+
+const video_extensions = [_][]const u8{ ".mkv", ".mp4", ".avi", ".ts", ".webm", ".mov" };
+
+fn isVideoFile(basename: []const u8) bool {
+    for (video_extensions) |ext| {
+        if (std.mem.endsWith(u8, basename, ext)) return true;
+    }
+    return false;
+}
+
+/// Scans all enabled libraries and populates the library_files table.
+pub fn scanLibraryFiles(database: *db_mod.Database, allocator: std.mem.Allocator, io: std.Io) !void {
+    const libraries = try getLibraries(database, allocator);
+    defer {
+        for (libraries) |lib| {
+            allocator.free(lib.name);
+            allocator.free(lib.path);
+            allocator.free(lib.metadata_language);
+            if (lib.ignore_patterns) |pat| allocator.free(pat);
+        }
+        allocator.free(libraries);
+    }
+
+    // Mark all existing files as not present temporarily
+    _ = database.exec("UPDATE movies SET is_present = 0;") catch {};
+
+    // Prepare insert statement
+    var insert_stmt = try database.prepare(
+        \\INSERT INTO movies (library_id, file_path, clean_name, is_present)
+        \\VALUES (?1, ?2, ?3, 1)
+        \\ON CONFLICT(library_id, file_path) DO UPDATE SET 
+        \\    clean_name = excluded.clean_name,
+        \\    is_present = 1;
+    );
+    defer insert_stmt.finalize();
+
+    for (libraries) |lib| {
+        if (!lib.is_enabled) continue;
+
+        var dir = std.Io.Dir.cwd().openDir(io, lib.path, .{ .iterate = true }) catch |err| {
+            std.debug.print("Failed to open library path {s}: {}\n", .{lib.path, err});
+            continue;
+        };
+        defer dir.close(io);
+
+        var walker = dir.walk(allocator) catch |err| {
+            std.debug.print("Failed to walk library path {s}: {}\n", .{lib.path, err});
+            continue;
+        };
+        defer walker.deinit();
+
+        // Wrap insertions in a transaction for speed
+        try database.exec("BEGIN TRANSACTION;");
+        var success = false;
+        defer {
+            if (!success) {
+                database.exec("ROLLBACK;") catch {};
+            }
+        }
+
+        while (walker.next(io) catch null) |entry| {
+            if (entry.kind == .file and isVideoFile(entry.basename)) {
+                const ext = std.fs.path.extension(entry.basename);
+                const ext_idx = entry.basename.len - ext.len;
+                const clean_name = entry.basename[0..ext_idx];
+
+                insert_stmt.reset() catch continue;
+                insert_stmt.bindInt64(1, lib.id) catch continue;
+                insert_stmt.bindText(2, entry.path) catch continue;
+                insert_stmt.bindText(3, clean_name) catch continue;
+                _ = insert_stmt.step() catch |err| {
+                    std.debug.print("Failed to insert library file {s}: {}\n", .{entry.path, err});
+                };
+            }
+        }
+
+        try database.exec("COMMIT;");
+        success = true;
+        
+        // Update last_scanned_at
+        var update_stmt = try database.prepare("UPDATE libraries SET last_scanned_at = ?1 WHERE id = ?2;");
+        defer update_stmt.finalize();
+        try update_stmt.bindInt64(1, c.time(null));
+        try update_stmt.bindInt64(2, lib.id);
+        _ = try update_stmt.step();
+    }
+}
