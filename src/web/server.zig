@@ -280,7 +280,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                 const decoded_path = allocator.dupe(u8, file_path) catch return;
                 const final_path = std.Uri.percentDecodeInPlace(decoded_path);
 
-                const html_content = catalog.generateDetailsHtml(allocator, database, lib_id, final_path) catch return;
+                const html_content = catalog.generateDetailsHtml(allocator, database, logs_database, lib_id, final_path, session_info.?.username) catch return;
 
                 request.respond(html_content, .{
                     .status = .ok,
@@ -296,6 +296,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
         } else if (std.mem.startsWith(u8, target, "/player")) {
             var file_path_opt: ?[]const u8 = null;
             var lib_id: i64 = -1;
+            var start_opt: ?f64 = null;
             if (std.mem.indexOf(u8, target, "?")) |q_idx| {
                 const query = target[q_idx + 1 ..];
                 var it = std.mem.splitScalar(u8, query, '&');
@@ -304,6 +305,8 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                         file_path_opt = param[5..];
                     } else if (std.mem.startsWith(u8, param, "library=")) {
                         lib_id = std.fmt.parseInt(i64, param[8..], 10) catch -1;
+                    } else if (std.mem.startsWith(u8, param, "start=")) {
+                        start_opt = std.fmt.parseFloat(f64, param[6..]) catch null;
                     }
                 }
             }
@@ -366,7 +369,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                 json_out.appendSlice(allocator, "]") catch return;
                 const audio_tracks_json = json_out.items;
 
-                const resume_pos = logging_mod.getPlaybackProgress(logs_database, session_info.?.username, lib_id, final_path) catch 0.0;
+                const resume_pos = if (start_opt) |s| s else logging_mod.getPlaybackProgress(logs_database, session_info.?.username, lib_id, final_path) catch 0.0;
                 const html_content = html.generatePlayerHtml(allocator, final_path, media_info.duration, media_info.codec_str, audio_tracks_json, resume_pos) catch return;
 
                 request.respond(html_content, .{

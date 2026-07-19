@@ -1136,6 +1136,8 @@ p.subtitle {
 
 .details-actions {
     margin-top: 20px;
+    display: flex;
+    gap: 15px;
 }
 
 .play-btn-large {
@@ -1157,6 +1159,18 @@ p.subtitle {
     background-color: #8b5cf6;
     transform: translateY(-2px) scale(1.02);
     box-shadow: 0 6px 20px rgba(167, 139, 250, 0.6);
+}
+
+.resume-btn {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    backdrop-filter: blur(10px);
+}
+
+.resume-btn:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
 }
 
 @media (max-width: 768px) {

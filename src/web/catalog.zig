@@ -237,8 +237,10 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
 pub fn generateDetailsHtml(
     allocator: std.mem.Allocator,
     database: *db_mod.Database,
+    logs_database: *db_mod.Database,
     library_id: i64,
     file_path: []const u8,
+    username: []const u8,
 ) ![]u8 {
     const template = @embedFile("templates/details.html");
     const meta = try metadata_mod.getMetadata(database, allocator, library_id, file_path);
@@ -287,6 +289,25 @@ pub fn generateDetailsHtml(
     try play_url.appendSlice(allocator, "&file=");
     try writePercentEncoded(&play_url, allocator, file_path);
 
+    var resume_btn_buf = std.ArrayList(u8).empty;
+    defer resume_btn_buf.deinit(allocator);
+
+    const resume_pos = logging_mod.getPlaybackProgress(logs_database, username, library_id, file_path) catch 0.0;
+    if (resume_pos > 0.0) {
+        const resume_btn = try std.fmt.allocPrint(allocator, 
+            \\                    <a href="{s}" class="play-btn-large resume-btn">
+            \\                        <svg viewBox="0 0 24 24" fill="currentColor" width="28" height="28">
+            \\                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
+            \\                        </svg>
+            \\                        Resume
+            \\                    </a>
+        , .{ play_url.items });
+        defer allocator.free(resume_btn);
+        try resume_btn_buf.appendSlice(allocator, resume_btn);
+    }
+
+    try play_url.appendSlice(allocator, "&start=0");
+
     var html = std.ArrayList(u8).empty;
     defer html.deinit(allocator);
     try html.appendSlice(allocator, template);
@@ -299,6 +320,7 @@ pub fn generateDetailsHtml(
         .{ "__POSTER_STYLE__", poster_style_buf.items },
         .{ "__BACKDROP_STYLE__", backdrop_style_buf.items },
         .{ "__PLAY_URL__", play_url.items },
+        .{ "__RESUME_BTN__", resume_btn_buf.items },
         .{ "__LIB_ID__", lib_id_str },
     };
 
