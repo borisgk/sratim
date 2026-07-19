@@ -87,7 +87,15 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
             video_in_idx = @intCast(i);
             const out_stream = c.avformat_new_stream(out_ctx, null);
             if (c.avcodec_parameters_copy(out_stream.*.codecpar, stream.*.codecpar) < 0) return error.CodecCopyFailed;
-            out_stream.*.codecpar.*.codec_tag = 0; // Let the muxer choose the tag based on codec
+            if (out_stream.*.codecpar.*.codec_id == c.AV_CODEC_ID_HEVC) {
+                out_stream.*.codecpar.*.codec_tag = c.MKTAG('h', 'v', 'c', '1');
+            } else if (out_stream.*.codecpar.*.codec_id == c.AV_CODEC_ID_AV1) {
+                out_stream.*.codecpar.*.codec_tag = c.MKTAG('a', 'v', '0', '1');
+            } else if (out_stream.*.codecpar.*.codec_id == c.AV_CODEC_ID_VP9) {
+                out_stream.*.codecpar.*.codec_tag = c.MKTAG('v', 'p', '0', '9');
+            } else {
+                out_stream.*.codecpar.*.codec_tag = 0; // Let the muxer choose the tag based on codec
+            }
             video_out_idx = @intCast(out_ctx.*.nb_streams - 1);
         } else if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_AUDIO and audio_in_idx < 0) {
             // Pick this track if it matches the requested one, or if no specific track was requested (fallback to first)
@@ -251,7 +259,11 @@ pub fn getMediaInfo(allocator: std.mem.Allocator, file_path: [:0]const u8) !Medi
             if (codec_id == c.AV_CODEC_ID_H264) {
                 codec_str = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\"";
             } else if (codec_id == c.AV_CODEC_ID_HEVC) {
-                codec_str = "video/mp4; codecs=\"hev1.2.4.L153.B0, mp4a.40.2\"";
+                codec_str = "video/mp4; codecs=\"hvc1.2.4.L153.B0, mp4a.40.2\"";
+            } else if (codec_id == c.AV_CODEC_ID_AV1) {
+                codec_str = "video/mp4; codecs=\"av01.0.05M.08, mp4a.40.2\"";
+            } else if (codec_id == c.AV_CODEC_ID_VP9) {
+                codec_str = "video/mp4; codecs=\"vp09.00.10.08, mp4a.40.2\"";
             }
         } else if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_AUDIO) {
             var label: []const u8 = "Unknown";
