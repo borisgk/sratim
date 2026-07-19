@@ -302,18 +302,26 @@ pub fn parseYearAndCleanName(allocator: std.mem.Allocator, raw_name: []const u8)
         }
         
         const clean = std.mem.trim(u8, raw_name[0..name_end], " \t\r\n.-_");
+        const clean_dupe = try allocator.dupe(u8, clean);
+        std.mem.replaceScalar(u8, clean_dupe, '.', ' ');
+        std.mem.replaceScalar(u8, clean_dupe, '_', ' ');
+
         const year = raw_name[idx .. idx + 4];
         
         return .{
-            .clean = try allocator.dupe(u8, clean),
+            .clean = clean_dupe,
             .year = try allocator.dupe(u8, year),
         };
     }
 
     // No year found, just clean the raw name
     const clean = std.mem.trim(u8, raw_name, " \t\r\n.-_");
+    const clean_dupe = try allocator.dupe(u8, clean);
+    std.mem.replaceScalar(u8, clean_dupe, '.', ' ');
+    std.mem.replaceScalar(u8, clean_dupe, '_', ' ');
+
     return .{
-        .clean = try allocator.dupe(u8, clean),
+        .clean = clean_dupe,
         .year = null,
     };
 }

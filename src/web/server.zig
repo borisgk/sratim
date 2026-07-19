@@ -912,7 +912,11 @@ fn handleApiMetadataSearch(request: *std.http.Server.Request, allocator: std.mem
     defer allocator.free(decoded_query);
     const clean_query = std.Uri.percentDecodeInPlace(decoded_query);
 
-    var response_parsed = tmdb.searchMovie(allocator, io, clean_query, null, token, config.tmdb_proxy) catch |err| {
+    const parsed_name = try tmdb.parseYearAndCleanName(allocator, clean_query);
+    defer allocator.free(parsed_name.clean);
+    defer if (parsed_name.year) |y| allocator.free(y);
+
+    var response_parsed = tmdb.searchMovie(allocator, io, parsed_name.clean, parsed_name.year, token, config.tmdb_proxy) catch |err| {
         std.debug.print("TMDB Search error: {}\n", .{err});
         request.respond("TMDB API request failed", .{ .status = .internal_server_error }) catch return;
         return;
