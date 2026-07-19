@@ -201,11 +201,11 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
             defer allocator.free(dropdown_middle);
             try cards_buf.appendSlice(allocator, dropdown_middle);
             try escapeHtml(&cards_buf, allocator, entry.path);
-            const dropdown_end = try std.fmt.allocPrint(allocator, "\" data-library=\"{d}\">Mark as Watched</button>\n            </div>\n\n", .{lib.id});
+            const dropdown_end = try std.fmt.allocPrint(allocator, "\" data-library=\"{d}\">Mark as Watched</button>\n                <a class=\"dropdown-item\" style=\"text-decoration: none;\" href=\"/player?library={d}&file=", .{ lib.id, lib.id });
             defer allocator.free(dropdown_end);
             try cards_buf.appendSlice(allocator, dropdown_end);
-
-            try cards_buf.appendSlice(allocator, "            <a href=\"/player?library=");
+            try writePercentEncoded(&cards_buf, allocator, entry.path);
+            try cards_buf.appendSlice(allocator, "\">Quick Play</a>\n            </div>\n\n            <a href=\"/details?library=");
             const lib_id_str = try std.fmt.allocPrint(allocator, "{d}", .{lib.id});
             defer allocator.free(lib_id_str);
             try cards_buf.appendSlice(allocator, lib_id_str);
@@ -237,4 +237,93 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
         .LIBRARY_PATH = lib.path,
         .MOVIE_CARDS = cards_buf.items,
     });
+}
+
+pub fn generateDetailsHtml(
+    allocator: std.mem.Allocator,
+    database: *db_mod.Database,
+    library_id: i64,
+    file_path: []const u8,
+) ![]u8 {
+    const template = @embedFile("templates/details.html");
+    const meta = try metadata_mod.getMetadata(database, allocator, library_id, file_path);
+    defer if (meta) |m| {
+        allocator.free(m.file_path);
+        allocator.free(m.title);
+        if (m.overview) |ov| allocator.free(ov);
+        if (m.poster_path) |pp| allocator.free(pp);
+        if (m.backdrop_path) |bp| allocator.free(bp);
+        if (m.release_date) |rd| allocator.free(rd);
+    };
+
+    var title: []const u8 = std.fs.path.basename(file_path);
+    var overview: []const u8 = "No description available.";
+    var release_date: []const u8 = "";
+    var poster_style_buf = std.ArrayList(u8).empty;
+    defer poster_style_buf.deinit(allocator);
+    var backdrop_style_buf = std.ArrayList(u8).empty;
+    defer backdrop_style_buf.deinit(allocator);
+
+    try backdrop_style_buf.appendSlice(allocator, "background-color: #0b0f19;");
+
+    if (meta) |m| {
+        if (m.title.len > 0) title = m.title;
+        if (m.overview) |ov| overview = ov;
+        if (m.release_date) |rd| release_date = rd;
+        if (m.poster_path) |pp| {
+            try poster_style_buf.appendSlice(allocator, "background-image: url('/images/posters/original");
+            try poster_style_buf.appendSlice(allocator, pp);
+            try poster_style_buf.appendSlice(allocator, "');");
+        }
+        if (m.backdrop_path) |bp| {
+            backdrop_style_buf.clearRetainingCapacity();
+            try backdrop_style_buf.appendSlice(allocator, "background-image: url('/images/backdrops/original");
+            try backdrop_style_buf.appendSlice(allocator, bp);
+            try backdrop_style_buf.appendSlice(allocator, "');");
+        }
+    }
+
+    var play_url = std.ArrayList(u8).empty;
+    defer play_url.deinit(allocator);
+    try play_url.appendSlice(allocator, "/player?library=");
+    const lib_id_str = try std.fmt.allocPrint(allocator, "{d}", .{library_id});
+    defer allocator.free(lib_id_str);
+    try play_url.appendSlice(allocator, lib_id_str);
+    try play_url.appendSlice(allocator, "&file=");
+    try writePercentEncoded(&play_url, allocator, file_path);
+
+    var html = std.ArrayList(u8).empty;
+    defer html.deinit(allocator);
+    try html.appendSlice(allocator, template);
+
+    // Replace placeholders
+    const replacements = &[_][2][]const u8{
+        .{ "__TITLE__", title },
+        .{ "__OVERVIEW__", overview },
+        .{ "__RELEASE_DATE__", release_date },
+        .{ "__POSTER_STYLE__", poster_style_buf.items },
+        .{ "__BACKDROP_STYLE__", backdrop_style_buf.items },
+        .{ "__PLAY_URL__", play_url.items },
+        .{ "__LIB_ID__", lib_id_str },
+    };
+
+    var current_html = html.items;
+    for (replacements) |rep| {
+        const placeholder = rep[0];
+        const value = rep[1];
+        if (std.mem.indexOf(u8, current_html, placeholder)) |_| {
+            const replaced = try std.mem.replaceOwned(u8, allocator, current_html, placeholder, value);
+            // If it's not the first pass, free the old one
+            if (current_html.ptr != html.items.ptr) {
+                allocator.free(current_html);
+            }
+            current_html = replaced;
+        }
+    }
+
+    if (current_html.ptr == html.items.ptr) {
+        return html.toOwnedSlice(allocator);
+    } else {
+        return current_html;
+    }
 }

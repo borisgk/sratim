@@ -1052,3 +1052,133 @@ p.subtitle {
 .modal-error {
     color: #fca5a5;
 }
+/* Movie Details Page */
+.details-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    background-size: cover;
+    background-position: center 20%;
+    background-repeat: no-repeat;
+    opacity: 0.4;
+    mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 80%);
+    -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 80%);
+}
+
+.details-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(to bottom, transparent 0%, #0b0f19 100%);
+}
+
+.details-container {
+    padding-top: 40px;
+}
+
+.details-content {
+    display: flex;
+    gap: 40px;
+    margin-top: 40px;
+    align-items: flex-start;
+}
+
+.details-poster-wrapper {
+    flex-shrink: 0;
+    width: 300px;
+}
+
+.details-poster {
+    width: 100%;
+    aspect-ratio: 2/3;
+    background-size: cover;
+    background-position: center;
+    border-radius: 12px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.1);
+}
+
+.details-info {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.details-title {
+    font-size: 3rem;
+    font-weight: 700;
+    margin: 0;
+    line-height: 1.1;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+}
+
+.details-meta {
+    display: flex;
+    gap: 15px;
+    color: #9ca3af;
+    font-size: 1rem;
+    align-items: center;
+}
+
+.details-overview {
+    font-size: 1.1rem;
+    line-height: 1.6;
+    color: #e5e7eb;
+    max-width: 800px;
+    margin: 0;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+
+.details-actions {
+    margin-top: 20px;
+}
+
+.play-btn-large {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    background-color: #a78bfa;
+    color: #111827;
+    padding: 16px 32px;
+    border-radius: 50px;
+    font-size: 1.25rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: all 0.2s;
+    box-shadow: 0 4px 15px rgba(167, 139, 250, 0.4);
+}
+
+.play-btn-large:hover {
+    background-color: #8b5cf6;
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 6px 20px rgba(167, 139, 250, 0.6);
+}
+
+@media (max-width: 768px) {
+    .details-content {
+        flex-direction: column;
+        align-items: center;
+    }
+    .details-poster-wrapper {
+        width: 200px;
+    }
+    .details-title {
+        font-size: 2rem;
+        text-align: center;
+    }
+    .details-meta {
+        justify-content: center;
+    }
+    .details-overview {
+        text-align: center;
+    }
+    .details-actions {
+        display: flex;
+        justify-content: center;
+    }
+}

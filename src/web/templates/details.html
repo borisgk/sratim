@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sratim — __TITLE__</title>
+    <link rel="stylesheet" href="/style.css?v=4">
+</head>
+<body>
+    <div class="details-backdrop" style="__BACKDROP_STYLE__">
+        <div class="details-overlay"></div>
+    </div>
+
+    <div class="container details-container">
+        <a href="/library?id=__LIB_ID__" class="back-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="18" height="18">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            Back to Library
+        </a>
+
+        <div class="details-content">
+            <div class="details-poster-wrapper">
+                <div class="details-poster" style="__POSTER_STYLE__"></div>
+            </div>
+            
+            <div class="details-info">
+                <h1 class="details-title">__TITLE__</h1>
+                <div class="details-meta">
+                    <span class="details-date">__RELEASE_DATE__</span>
+                </div>
+                
+                <p class="details-overview">__OVERVIEW__</p>
+                
+                <div class="details-actions">
+                    <a href="__PLAY_URL__" class="play-btn-large">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="28" height="28">
+                            <path d="M8 5v14l11-7z" />
+                        </svg>
+                        Play
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

@@ -11,4 +11,5 @@ test_*
 tmp/
 sratim.db*
 logs.db*
-
+images/
+public/

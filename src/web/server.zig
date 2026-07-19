@@ -260,6 +260,38 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                 request.respond("Missing library id", .{ .status = .bad_request }) catch return;
             }
 
+        // Route: Web UI (Details)
+        } else if (std.mem.startsWith(u8, target, "/details")) {
+            var file_path_opt: ?[]const u8 = null;
+            var lib_id: i64 = -1;
+            if (std.mem.indexOf(u8, target, "?")) |q_idx| {
+                const query = target[q_idx + 1 ..];
+                var it = std.mem.splitScalar(u8, query, '&');
+                while (it.next()) |param| {
+                    if (std.mem.startsWith(u8, param, "file=")) {
+                        file_path_opt = param[5..];
+                    } else if (std.mem.startsWith(u8, param, "library=")) {
+                        lib_id = std.fmt.parseInt(i64, param[8..], 10) catch -1;
+                    }
+                }
+            }
+
+            if (file_path_opt) |file_path| {
+                const decoded_path = allocator.dupe(u8, file_path) catch return;
+                const final_path = std.Uri.percentDecodeInPlace(decoded_path);
+
+                const html_content = catalog.generateDetailsHtml(allocator, database, lib_id, final_path) catch return;
+
+                request.respond(html_content, .{
+                    .status = .ok,
+                    .extra_headers = &.{
+                        .{ .name = "content-type", .value = "text/html" },
+                    },
+                }) catch return;
+            } else {
+                request.respond("Missing file param", .{ .status = .bad_request }) catch return;
+            }
+
         // Route: Web UI (Player)
         } else if (std.mem.startsWith(u8, target, "/player")) {
             var file_path_opt: ?[]const u8 = null;
