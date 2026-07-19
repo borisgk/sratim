@@ -19,6 +19,11 @@ pub const MovieInfo = struct {
     file_path: []const u8,
 };
 
+pub const MovieMissingMetadata = struct {
+    id: i64,
+    clean_name: []const u8,
+};
+
 pub fn getMovieInfoById(database: *db_mod.Database, allocator: std.mem.Allocator, movie_id: i64) !?MovieInfo {
     var stmt = try database.prepare("SELECT library_id, file_path FROM movies WHERE id = ?1;");
     defer stmt.finalize();
@@ -31,6 +36,29 @@ pub fn getMovieInfoById(database: *db_mod.Database, allocator: std.mem.Allocator
         file_path_dup = try allocator.dupe(u8, fp);
     }
     return MovieInfo{ .library_id = library_id, .file_path = file_path_dup };
+}
+
+pub fn getMoviesMissingMetadata(database: *db_mod.Database, allocator: std.mem.Allocator) ![]MovieMissingMetadata {
+    var stmt = try database.prepare("SELECT id, clean_name FROM movies WHERE tmdb_id IS NULL AND is_present = 1;");
+    defer stmt.finalize();
+
+    var list = std.ArrayList(MovieMissingMetadata).empty;
+    defer list.deinit(allocator);
+
+    while (try stmt.step() == .row) {
+        const id = stmt.columnInt64(0);
+        const clean_name_val = stmt.columnText(1);
+        var clean_name: []const u8 = "";
+        if (clean_name_val) |cn| {
+            clean_name = try allocator.dupe(u8, cn);
+        }
+        try list.append(allocator, MovieMissingMetadata{
+            .id = id,
+            .clean_name = clean_name,
+        });
+    }
+
+    return list.toOwnedSlice(allocator);
 }
 
 pub fn saveMetadataById(
@@ -65,7 +93,7 @@ pub fn getMetadataById(
     movie_id: i64,
 ) !?MovieMetadata {
     var stmt = try database.prepare(
-        \\SELECT library_id, file_path, tmdb_id, title, overview, poster_path, backdrop_path, release_date FROM movies WHERE id = ?1 AND tmdb_id IS NOT NULL;
+        \\SELECT library_id, file_path, tmdb_id, title, overview, poster_path, backdrop_path, release_date FROM movies WHERE id = ?1 AND tmdb_id IS NOT NULL AND tmdb_id > 0;
     );
     defer stmt.finalize();
 
@@ -131,6 +159,13 @@ pub fn getMetadataById(
 
 pub fn deleteMetadataById(database: *db_mod.Database, movie_id: i64) !void {
     var stmt = try database.prepare("UPDATE movies SET tmdb_id = NULL, title = NULL, overview = NULL, poster_path = NULL, backdrop_path = NULL, release_date = NULL WHERE id = ?1;");
+    defer stmt.finalize();
+    try stmt.bindInt64(1, movie_id);
+    _ = try stmt.step();
+}
+
+pub fn markMetadataNotFound(database: *db_mod.Database, movie_id: i64) !void {
+    var stmt = try database.prepare("UPDATE movies SET tmdb_id = 0 WHERE id = ?1;");
     defer stmt.finalize();
     try stmt.bindInt64(1, movie_id);
     _ = try stmt.step();

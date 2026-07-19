@@ -5,6 +5,7 @@ const db_mod = @import("db/db.zig");
 const users_mod = @import("db/users.zig");
 const logging_mod = @import("db/logging.zig");
 const library_mod = @import("db/library.zig");
+const fetcher = @import("media/fetcher.zig");
 const c = @import("core/c.zig").c;
 
 /// The application entry point.
@@ -37,6 +38,10 @@ pub fn main() !void {
         std.debug.print("Error scanning libraries: {}\n", .{err});
     };
     std.debug.print("Library scan complete.\n", .{});
+    
+    fetcher.startFetcherThread(std.heap.c_allocator, io, &database, config.tmdb_access_token, config.tmdb_proxy) catch |err| {
+        std.debug.print("Failed to start TMDB fetcher: {}\n", .{err});
+    };
     
     // Parse the loopback IP and start listening on port from config
     const addr = try std.Io.net.IpAddress.parseIp4("0.0.0.0", config.port);

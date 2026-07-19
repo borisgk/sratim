@@ -1,0 +1,88 @@
+const std = @import("std");
+const tmdb = @import("tmdb.zig");
+const metadata_mod = @import("../db/metadata.zig");
+const db_mod = @import("../db/db.zig");
+
+pub fn startFetcherThread(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, token: ?[]const u8, proxy_url: ?[]const u8) !void {
+    if (token == null or token.?.len == 0) {
+        std.debug.print("TMDB background fetcher disabled (no token configured)\n", .{});
+        return;
+    }
+
+    // Spawn the thread
+    const thread = try std.Thread.spawn(.{}, fetcherLoop, .{ allocator, io, database, token.?, proxy_url });
+    thread.detach();
+}
+
+fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, token: []const u8, proxy_url: ?[]const u8) void {
+    std.debug.print("TMDB background fetcher started.\n", .{});
+
+    while (true) {
+        // Query missing metadata
+        const missing = metadata_mod.getMoviesMissingMetadata(database, allocator) catch |err| {
+            std.debug.print("TMDB fetcher error querying missing metadata: {}\n", .{err});
+            io.sleep(std.Io.Duration.fromSeconds(30), .awake) catch {};
+            continue;
+        };
+
+        if (missing.len > 0) {
+            std.debug.print("TMDB fetcher found {d} movies missing metadata.\n", .{missing.len});
+        }
+
+        for (missing) |movie| {
+            // Process each movie
+            std.debug.print("TMDB fetcher processing: {s}\n", .{movie.clean_name});
+            
+            // Parse year and clean name
+            const parsed_name = tmdb.parseYearAndCleanName(allocator, movie.clean_name) catch |err| {
+                std.debug.print("Error parsing name for {s}: {}\n", .{movie.clean_name, err});
+                continue;
+            };
+            defer {
+                if (parsed_name.clean.ptr != movie.clean_name.ptr) allocator.free(parsed_name.clean);
+                if (parsed_name.year) |y| allocator.free(y);
+            }
+
+            const results = tmdb.searchMovie(allocator, io, parsed_name.clean, parsed_name.year, token, proxy_url) catch |err| {
+                std.debug.print("TMDB fetcher error searching for {s}: {}\n", .{movie.clean_name, err});
+                io.sleep(std.Io.Duration.fromSeconds(1), .awake) catch {};
+                continue;
+            };
+            defer results.deinit();
+
+            if (results.value.results.len > 0) {
+                const first = results.value.results[0];
+                std.debug.print("TMDB fetcher found match: {s}\n", .{first.title});
+                
+                metadata_mod.saveMetadataById(
+                    database,
+                    movie.id,
+                    first.id,
+                    first.title,
+                    first.overview,
+                    first.poster_path,
+                    first.backdrop_path,
+                    first.release_date
+                ) catch |err| {
+                    std.debug.print("TMDB fetcher error saving metadata for {s}: {}\n", .{movie.clean_name, err});
+                };
+            } else {
+                std.debug.print("TMDB fetcher found NO MATCH for: {s}\n", .{movie.clean_name});
+                metadata_mod.markMetadataNotFound(database, movie.id) catch |err| {
+                    std.debug.print("TMDB fetcher error marking not found for {s}: {}\n", .{movie.clean_name, err});
+                };
+            }
+
+            // Sleep 500ms between requests to avoid rate limits
+            io.sleep(std.Io.Duration.fromMilliseconds(500), .awake) catch {};
+        }
+
+        for (missing) |movie| {
+            allocator.free(movie.clean_name);
+        }
+        allocator.free(missing);
+
+        // Sleep 30 seconds before polling again
+        io.sleep(std.Io.Duration.fromSeconds(30), .awake) catch {};
+    }
+}

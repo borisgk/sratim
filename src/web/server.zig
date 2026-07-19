@@ -984,57 +984,7 @@ fn handleApiMetadataLink(request: *std.http.Server.Request, allocator: std.mem.A
     request.respond("OK", .{ .status = .ok }) catch return;
 }
 
-fn parseYearAndCleanName(allocator: std.mem.Allocator, raw_name: []const u8) !struct { clean: []const u8, year: ?[]const u8 } {
-    // Look for a 4-digit number (1800-2100) in the string
-    var year_idx: ?usize = null;
-    var i: usize = 0;
-    while (i + 4 <= raw_name.len) : (i += 1) {
-        const slice = raw_name[i .. i + 4];
-        var is_digit = true;
-        for (slice) |c_val| {
-            if (!std.ascii.isDigit(c_val)) {
-                is_digit = false;
-                break;
-            }
-        }
-        if (is_digit) {
-            const year_val = try std.fmt.parseInt(u32, slice, 10);
-            if (year_val >= 1800 and year_val <= 2100) {
-                year_idx = i;
-                break; // Found the first year-like digits
-            }
-        }
-    }
 
-    if (year_idx) |idx| {
-        // Year found! Let's extract the clean name by taking everything before the year
-        // and trimming any trailing spaces, dots, parentheses, or brackets.
-        var name_end = idx;
-        while (name_end > 0) {
-            const last_char = raw_name[name_end - 1];
-            if (last_char == ' ' or last_char == '.' or last_char == '(' or last_char == '[' or last_char == '-') {
-                name_end -= 1;
-            } else {
-                break;
-            }
-        }
-        
-        const clean = std.mem.trim(u8, raw_name[0..name_end], " \t\r\n.-_");
-        const year = raw_name[idx .. idx + 4];
-        
-        return .{
-            .clean = try allocator.dupe(u8, clean),
-            .year = try allocator.dupe(u8, year),
-        };
-    }
-
-    // No year found, just clean the raw name
-    const clean = std.mem.trim(u8, raw_name, " \t\r\n.-_");
-    return .{
-        .clean = try allocator.dupe(u8, clean),
-        .year = null,
-    };
-}
 
 const MetadataAutoLinkPayload = struct {
     movie_id: i64,
@@ -1085,7 +1035,7 @@ fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: std.m
     const ext = std.fs.path.extension(basename);
     const clean_name = basename[0 .. basename.len - ext.len];
 
-    const parsed_name = try parseYearAndCleanName(allocator, clean_name);
+    const parsed_name = try tmdb.parseYearAndCleanName(allocator, clean_name);
     defer allocator.free(parsed_name.clean);
     defer if (parsed_name.year) |y| allocator.free(y);
 
@@ -1123,30 +1073,4 @@ fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: std.m
     request.respond("OK", .{ .status = .ok }) catch return;
 }
 
-test "parseYearAndCleanName tests" {
-    const allocator = std.testing.allocator;
 
-    {
-        const res = try parseYearAndCleanName(allocator, "Inception (2010)");
-        defer allocator.free(res.clean);
-        defer if (res.year) |y| allocator.free(y);
-        try std.testing.expectEqualStrings("Inception", res.clean);
-        try std.testing.expectEqualStrings("2010", res.year.?);
-    }
-
-    {
-        const res = try parseYearAndCleanName(allocator, "Inception.2010.1080p");
-        defer allocator.free(res.clean);
-        defer if (res.year) |y| allocator.free(y);
-        try std.testing.expectEqualStrings("Inception", res.clean);
-        try std.testing.expectEqualStrings("2010", res.year.?);
-    }
-
-    {
-        const res = try parseYearAndCleanName(allocator, "Inception");
-        defer allocator.free(res.clean);
-        defer if (res.year) |y| allocator.free(y);
-        try std.testing.expectEqualStrings("Inception", res.clean);
-        try std.testing.expect(res.year == null);
-    }
-}
