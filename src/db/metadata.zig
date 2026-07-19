@@ -39,7 +39,14 @@ pub fn getMovieInfoById(database: *db_mod.Database, allocator: std.mem.Allocator
 }
 
 pub fn getMoviesMissingMetadata(database: *db_mod.Database, allocator: std.mem.Allocator) ![]MovieMissingMetadata {
-    var stmt = try database.prepare("SELECT id, clean_name FROM movies WHERE tmdb_id IS NULL AND is_present = 1;");
+    var stmt = try database.prepare(
+        \\SELECT m.id, m.clean_name 
+        \\FROM movies m
+        \\JOIN libraries l ON m.library_id = l.id
+        \\WHERE m.tmdb_id IS NULL 
+        \\  AND m.is_present = 1 
+        \\  AND l.type = 'Movies';
+    );
     defer stmt.finalize();
 
     var list = std.ArrayList(MovieMissingMetadata).empty;
