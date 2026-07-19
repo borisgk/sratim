@@ -54,6 +54,10 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
                 const first = results.value.results[0];
                 std.debug.print("TMDB fetcher found match: {s}\n", .{first.title});
                 
+                tmdb.downloadImages(allocator, io, first.poster_path, first.backdrop_path, proxy_url) catch |err| {
+                    std.debug.print("TMDB fetcher error downloading images for {s}: {}\n", .{movie.clean_name, err});
+                };
+
                 metadata_mod.saveMetadataById(
                     database,
                     movie.id,
