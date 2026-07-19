@@ -84,11 +84,26 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
     for (0..@intCast(in_ctx.*.nb_streams)) |i| {
         const stream = in_ctx.*.streams[i];
         if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_VIDEO and video_in_idx < 0) {
+            // Skip attached pictures (cover art) — only use the real video stream
+            if (stream.*.disposition & c.AV_DISPOSITION_ATTACHED_PIC != 0) continue;
             video_in_idx = @intCast(i);
             const out_stream = c.avformat_new_stream(out_ctx, null);
             if (c.avcodec_parameters_copy(out_stream.*.codecpar, stream.*.codecpar) < 0) return error.CodecCopyFailed;
             if (out_stream.*.codecpar.*.codec_id == c.AV_CODEC_ID_HEVC) {
                 out_stream.*.codecpar.*.codec_tag = c.MKTAG('h', 'v', 'c', '1');
+
+                // Fix incorrect HEVC level metadata (e.g. hevc_videotoolbox writes wrong levels).
+                // Compute minimum valid level from actual resolution and override if too low.
+                const w: u32 = @intCast(out_stream.*.codecpar.*.width);
+                const h: u32 = @intCast(out_stream.*.codecpar.*.height);
+                const luma = w * h;
+                const min_level: c_int = if (luma > 8_912_896) 156
+                    else if (luma > 2_228_224) 150
+                    else if (luma > 983_040) 120
+                    else 93;
+                if (out_stream.*.codecpar.*.level < min_level) {
+                    out_stream.*.codecpar.*.level = min_level;
+                }
             } else if (out_stream.*.codecpar.*.codec_id == c.AV_CODEC_ID_AV1) {
                 out_stream.*.codecpar.*.codec_tag = c.MKTAG('a', 'v', '0', '1');
             } else if (out_stream.*.codecpar.*.codec_id == c.AV_CODEC_ID_VP9) {
@@ -151,7 +166,7 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
 
     // movflags: fragmented mp4 configuration
     var dict: ?*c.AVDictionary = null;
-    _ = c.av_dict_set(&dict, "movflags", "frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets", 0);
+    _ = c.av_dict_set(&dict, "movflags", "frag_keyframe+empty_moov+delay_moov+default_base_moof+negative_cts_offsets", 0);
     _ = c.av_dict_set(&dict, "avoid_negative_ts", "make_non_negative", 0);
     defer c.av_dict_free(@ptrCast(&dict));
 
@@ -179,12 +194,9 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
             packet.*.stream_index = video_out_idx;
             c.av_packet_rescale_ts(packet, in_ctx.*.streams[@intCast(video_in_idx)].*.time_base, out_ctx.*.streams[@intCast(video_out_idx)].*.time_base);
             
-            // Fix missing timestamps and enforce strict monotonicity for MP4 muxer
+            // Fallback for missing DTS: use PTS
             if (packet.*.dts == c.AV_NOPTS_VALUE) {
-                packet.*.dts = if (last_video_dts != c.AV_NOPTS_VALUE) last_video_dts + 1 else 0;
-            }
-            if (packet.*.pts == c.AV_NOPTS_VALUE) {
-                packet.*.pts = packet.*.dts;
+                packet.*.dts = packet.*.pts;
             }
             
             // Enforce strictly monotonic DTS
@@ -245,21 +257,60 @@ pub fn getMediaInfo(allocator: std.mem.Allocator, file_path: [:0]const u8) !Medi
 
     const duration = @as(f64, @floatFromInt(fmt_ctx.?.duration)) / @as(f64, @floatFromInt(c.AV_TIME_BASE));
     var codec_str: []const u8 = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\""; // Default
+    var dynamic_codec_str: ?[]const u8 = null;
 
     var audio_tracks: std.ArrayList(AudioTrack) = .empty;
     errdefer {
         for (audio_tracks.items) |track| allocator.free(track.label);
         audio_tracks.deinit(allocator);
+        if (dynamic_codec_str) |s| allocator.free(s);
     }
 
     for (0..fmt_ctx.?.nb_streams) |i| {
         const stream = fmt_ctx.?.streams[i];
         if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_VIDEO) {
+            // Skip attached pictures (cover art) — only use the real video stream
+            if (stream.*.disposition & c.AV_DISPOSITION_ATTACHED_PIC != 0) continue;
+
             const codec_id = stream.*.codecpar.*.codec_id;
             if (codec_id == c.AV_CODEC_ID_H264) {
                 codec_str = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\"";
             } else if (codec_id == c.AV_CODEC_ID_HEVC) {
-                codec_str = "video/mp4; codecs=\"hvc1, mp4a.40.2\"";
+                // Build dynamic codec string from actual profile and level
+                const profile = stream.*.codecpar.*.profile;
+                const reported_level = stream.*.codecpar.*.level;
+                const width: u32 = @intCast(stream.*.codecpar.*.width);
+                const height: u32 = @intCast(stream.*.codecpar.*.height);
+
+                // HEVC codec string: hvc1.<profile_idc>.<profile_compat>.<tier><level_idc>.B0
+                // Profile Main=1, Main10=2, MainSP=3
+                // Standard browser-compatible profile_compatibility values:
+                //   Main=6, Main10=4, MainSP=1 (as used by Apple/Chrome/FFmpeg)
+                const profile_idc: u32 = if (profile >= 1 and profile <= 3) @intCast(profile) else 2;
+                const compat: u32 = switch (profile_idc) {
+                    1 => 6, // Main: compatible with Main
+                    2 => 4, // Main 10: compatible with Main 10
+                    3 => 1, // Main Still Picture
+                    else => 4,
+                };
+
+                // Compute minimum HEVC level from resolution, since some encoders
+                // (e.g. hevc_videotoolbox) write incorrect level metadata.
+                // HEVC level maxLumaSamples: L3.1=983040, L4.0=2228224, L5.0=8912896, L5.1=8912896
+                const luma_samples = width * height;
+                const min_level: u32 = if (luma_samples > 8_912_896) 156    // > 4K → Level 5.2
+                    else if (luma_samples > 2_228_224) 150                   // > 1080p → Level 5.0
+                    else if (luma_samples > 983_040) 120                     // > 720p → Level 4.0
+                    else 93;                                                  // ≤ 720p → Level 3.1
+
+                // Use whichever is higher: reported level or minimum for this resolution
+                const rl: u32 = if (reported_level > 0) @intCast(reported_level) else 0;
+                const level_idc: u32 = @max(rl, min_level);
+
+                dynamic_codec_str = try std.fmt.allocPrint(allocator,
+                    "video/mp4; codecs=\"hvc1.{d}.{d}.L{d}.B0, mp4a.40.2\"",
+                    .{ profile_idc, compat, level_idc });
+                codec_str = dynamic_codec_str.?;
             } else if (codec_id == c.AV_CODEC_ID_AV1) {
                 codec_str = "video/mp4; codecs=\"av01.0.05M.08, mp4a.40.2\"";
             } else if (codec_id == c.AV_CODEC_ID_VP9) {

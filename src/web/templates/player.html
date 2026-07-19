@@ -23,7 +23,7 @@
 </head>
 <body>
     <div class="player-wrapper">
-        <video id="video" autoplay playsinline></video>
+        <video id="video" playsinline></video>
         <div class="controls">
             <button id="playpause">
                 <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
@@ -222,27 +222,60 @@
             }
         }
 
-        function loadVideo(startTime) {
+        function loadVideo(startTime, retryCount) {
             currentSeekTime = startTime;
+            retryCount = retryCount || 0;
             
             if (abortController) abortController.abort();
             abortController = new AbortController();
             const signal = abortController.signal;
+
+            // Probe codec support before doing anything
+            const supported = MediaSource.isTypeSupported(codecStr);
+            console.log('Codec probe:', codecStr, 'supported:', supported);
+            if (!supported) {
+                console.error('Browser does not support codec via MSE:', codecStr);
+                // Try fallback without specific level
+                const fallbacks = [
+                    'video/mp4; codecs="hvc1.2.4.L120.B0, mp4a.40.2"',
+                    'video/mp4; codecs="hvc1.2.4.L150.B0, mp4a.40.2"',
+                    'video/mp4; codecs="hvc1.2.4.L153.B0, mp4a.40.2"',
+                    'video/mp4; codecs="hvc1.1.6.L120.B0, mp4a.40.2"',
+                    'video/mp4; codecs="hev1.2.4.L120.B0, mp4a.40.2"',
+                ];
+                for (const fb of fallbacks) {
+                    console.log('  trying fallback:', fb, MediaSource.isTypeSupported(fb));
+                }
+                return;
+            }
 
             // Revoke old Blob URL to prevent memory leak
             if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
 
             const ms = new MediaSource();
             currentObjectUrl = URL.createObjectURL(ms);
-            video.src = currentObjectUrl;
 
+            // Register sourceopen BEFORE setting video.src to avoid race
             ms.addEventListener('sourceopen', () => {
                 if (signal.aborted) return;
+                console.log('sourceopen fired, readyState:', ms.readyState);
+                if (ms.readyState !== 'open') {
+                    console.error('MediaSource readyState is', ms.readyState, '- retrying');
+                    if (retryCount < 3) {
+                        setTimeout(() => loadVideo(startTime, retryCount + 1), 100);
+                    }
+                    return;
+                }
                 const sourceBuffer = ms.addSourceBuffer(codecStr);
                 fetchAndAppend(sourceBuffer, startTime, signal);
+                video.play().catch(e => console.error("Play failed:", e));
             });
-            
-            video.play().catch(e => console.error("Play failed:", e));
+
+            ms.addEventListener('sourceclose', () => {
+                console.log('sourceclose fired');
+            });
+
+            video.src = currentObjectUrl;
             playpause.innerHTML = svgPause;
         }
 
