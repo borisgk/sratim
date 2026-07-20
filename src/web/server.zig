@@ -20,6 +20,77 @@ const global_css = @embedFile("style.css");
 const favicon_ico = @embedFile("favicon.ico");
 const c = @import("../core/c.zig").c;
 
+/// Parse an integer query parameter by name from a URL target string.
+/// Returns null if the parameter is not found or cannot be parsed.
+fn parseQueryInt(comptime T: type, target: []const u8, name: []const u8) ?T {
+    const q_idx = std.mem.indexOf(u8, target, "?") orelse return null;
+    var it = std.mem.splitScalar(u8, target[q_idx + 1 ..], '&');
+    while (it.next()) |param| {
+        if (std.mem.startsWith(u8, param, name) and param.len > name.len and param[name.len] == '=') {
+            return std.fmt.parseInt(T, param[name.len + 1 ..], 10) catch null;
+        }
+    }
+    return null;
+}
+
+/// Parse a float query parameter by name from a URL target string.
+fn parseQueryFloat(target: []const u8, name: []const u8) ?f64 {
+    const q_idx = std.mem.indexOf(u8, target, "?") orelse return null;
+    var it = std.mem.splitScalar(u8, target[q_idx + 1 ..], '&');
+    while (it.next()) |param| {
+        if (std.mem.startsWith(u8, param, name) and param.len > name.len and param[name.len] == '=') {
+            return std.fmt.parseFloat(f64, param[name.len + 1 ..]) catch null;
+        }
+    }
+    return null;
+}
+
+const ResolvedMovie = struct {
+    resolved_path: []const u8,
+    file_path: []const u8,
+};
+
+/// Resolves a movie's absolute file path from its database ID.
+/// Looks up the movie, resolves the library base path, joins them,
+/// and performs a path traversal check. Returns null if the movie
+/// is not found; returns error on path resolution failures.
+fn resolveMoviePath(
+    database: *db_mod.Database,
+    allocator: std.mem.Allocator,
+    movie_id: i64,
+    working_folder: []const u8,
+) !?ResolvedMovie {
+    const info = metadata_mod.getMovieInfoById(database, allocator, movie_id) catch return null;
+    if (info == null) return null;
+    const movie_info = info.?;
+
+    // Determine the base path: use the library path if available, otherwise fall back to working_folder
+    var base_path = try allocator.dupe(u8, working_folder);
+    if (library_mod.getLibraryById(database, allocator, movie_info.library_id) catch null) |lib| {
+        allocator.free(base_path);
+        base_path = try allocator.dupe(u8, lib.path);
+        allocator.free(lib.name);
+        allocator.free(lib.path);
+        allocator.free(lib.metadata_language);
+        if (lib.ignore_patterns) |pat| allocator.free(pat);
+    }
+
+    const full_path = try std.fs.path.join(allocator, &[_][]const u8{ base_path, movie_info.file_path });
+    const resolved_path = try std.fs.path.resolve(allocator, &[_][]const u8{full_path});
+    const abs_base = try std.fs.path.resolve(allocator, &[_][]const u8{base_path});
+    allocator.free(base_path);
+
+    // Path traversal guard
+    if (!std.mem.startsWith(u8, resolved_path, abs_base)) {
+        return error.PathTraversal;
+    }
+
+    return ResolvedMovie{
+        .resolved_path = resolved_path,
+        .file_path = movie_info.file_path,
+    };
+}
+
 /// Handles an incoming HTTP connection from a client.
 /// This function runs inside an isolated OS thread spawned specifically for this connection.
 /// It parses headers, routes endpoints, and serves content synchronously.
@@ -231,242 +302,161 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
 
         // Route: Browse Specific Library
         } else if (std.mem.startsWith(u8, target, "/library")) {
-            var lib_id: i64 = -1;
-            if (std.mem.indexOf(u8, target, "?")) |q_idx| {
-                const query = target[q_idx + 1 ..];
-                var it = std.mem.splitScalar(u8, query, '&');
-                while (it.next()) |param| {
-                    if (std.mem.startsWith(u8, param, "id=")) {
-                        lib_id = std.fmt.parseInt(i64, param[3..], 10) catch -1;
-                    }
-                }
-            }
-            if (lib_id != -1) {
-                const html_content = catalog.generateLibraryContentHtml(allocator, io, database, logs_database, lib_id, session_info.?.username) catch |err| {
-                    std.debug.print("Browse Library content error: {}\n", .{err});
-                    if (err == error.LibraryPathNotFound) {
-                        request.respond("Library path not found or inaccessible.", .{ .status = .not_found }) catch return;
-                    } else {
-                        request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-                    }
-                    return;
-                };
-
-                if (html_content) |content| {
-                    request.respond(content, .{
-                        .status = .ok,
-                        .extra_headers = &.{
-                            .{ .name = "content-type", .value = "text/html" },
-                        },
-                    }) catch return;
-                } else {
-                    request.respond("Library not found", .{ .status = .not_found }) catch return;
-                }
-            } else {
+            const lib_id = parseQueryInt(i64, target, "id") orelse {
                 request.respond("Missing library id", .{ .status = .bad_request }) catch return;
+                continue;
+            };
+
+            const html_content = catalog.generateLibraryContentHtml(allocator, io, database, logs_database, lib_id, session_info.?.username) catch |err| {
+                std.debug.print("Browse Library content error: {}\n", .{err});
+                if (err == error.LibraryPathNotFound) {
+                    request.respond("Library path not found or inaccessible.", .{ .status = .not_found }) catch return;
+                } else {
+                    request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                }
+                continue;
+            };
+
+            if (html_content) |content| {
+                request.respond(content, .{
+                    .status = .ok,
+                    .extra_headers = &.{
+                        .{ .name = "content-type", .value = "text/html" },
+                    },
+                }) catch return;
+            } else {
+                request.respond("Library not found", .{ .status = .not_found }) catch return;
             }
 
         } else if (std.mem.startsWith(u8, target, "/details")) {
-            var movie_id: i64 = -1;
-            if (std.mem.indexOf(u8, target, "?")) |q_idx| {
-                const query = target[q_idx + 1 ..];
-                var it = std.mem.splitScalar(u8, query, '&');
-                while (it.next()) |param| {
-                    if (std.mem.startsWith(u8, param, "id=")) {
-                        movie_id = std.fmt.parseInt(i64, param[3..], 10) catch -1;
-                    }
-                }
-            }
-
-            if (movie_id != -1) {
-                const html_content = catalog.generateDetailsHtml(allocator, database, logs_database, movie_id, session_info.?.username) catch |err| {
-                    if (err == error.MovieNotFound) {
-                        request.respond("Movie not found", .{ .status = .not_found }) catch return;
-                        return;
-                    }
-                    return;
-                };
-
-                request.respond(html_content, .{
-                    .status = .ok,
-                    .extra_headers = &.{
-                        .{ .name = "content-type", .value = "text/html" },
-                    },
-                }) catch return;
-            } else {
+            const movie_id = parseQueryInt(i64, target, "id") orelse {
                 request.respond("Missing id param", .{ .status = .bad_request }) catch return;
-            }
+                continue;
+            };
+
+            const html_content = catalog.generateDetailsHtml(allocator, database, logs_database, movie_id, session_info.?.username) catch |err| {
+                std.debug.print("Details page error: {}\n", .{err});
+                if (err == error.MovieNotFound) {
+                    request.respond("Movie not found", .{ .status = .not_found }) catch return;
+                } else {
+                    request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                }
+                continue;
+            };
+
+            request.respond(html_content, .{
+                .status = .ok,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "text/html" },
+                },
+            }) catch return;
 
         // Route: Web UI (Player)
         } else if (std.mem.startsWith(u8, target, "/player")) {
-            var movie_id: i64 = -1;
-            var start_opt: ?f64 = null;
-            if (std.mem.indexOf(u8, target, "?")) |q_idx| {
-                const query = target[q_idx + 1 ..];
-                var it = std.mem.splitScalar(u8, query, '&');
-                while (it.next()) |param| {
-                    if (std.mem.startsWith(u8, param, "id=")) {
-                        movie_id = std.fmt.parseInt(i64, param[3..], 10) catch -1;
-                    } else if (std.mem.startsWith(u8, param, "start=")) {
-                        start_opt = std.fmt.parseFloat(f64, param[6..]) catch null;
-                    }
-                }
-            }
-
-            if (movie_id != -1) {
-                var resolved_wf = allocator.dupe(u8, working_folder) catch return;
-                const info_opt = metadata_mod.getMovieInfoById(database, allocator, movie_id) catch null;
-                if (info_opt == null) {
-                    request.respond("Movie not found", .{ .status = .not_found }) catch return;
-                    return;
-                }
-                const info = info_opt.?;
-                defer allocator.free(info.file_path);
-
-                if (library_mod.getLibraryById(database, allocator, info.library_id) catch null) |lib| {
-                    allocator.free(resolved_wf);
-                    resolved_wf = allocator.dupe(u8, lib.path) catch return;
-                    allocator.free(lib.name);
-                    allocator.free(lib.path);
-                    allocator.free(lib.metadata_language);
-                    if (lib.ignore_patterns) |pat| allocator.free(pat);
-                }
-
-                const final_path = info.file_path;
-
-                const full_path = std.fs.path.join(allocator, &[_][]const u8{ resolved_wf, final_path }) catch return;
-                const resolved_path = std.fs.path.resolve(allocator, &[_][]const u8{ full_path }) catch return;
-                const abs_wf_path = std.fs.path.resolve(allocator, &[_][]const u8{ resolved_wf }) catch return;
-                
-                allocator.free(resolved_wf);
-
-                if (!std.mem.startsWith(u8, resolved_path, abs_wf_path)) {
-                    request.respond("Forbidden", .{ .status = .forbidden }) catch return;
-                    return;
-                }
-
-                // Ensure null-terminated string for C API
-                const c_full_path = allocator.dupeZ(u8, resolved_path) catch return;
-
-                const media_info = streamer.getMediaInfo(allocator, c_full_path) catch streamer.MediaInfo{
-                    .duration = 2799.0,
-                    .codec_str = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\"",
-                    .audio_tracks = &[_]streamer.AudioTrack{},
-                };
-
-                var json_out: std.ArrayList(u8) = .empty;
-                defer json_out.deinit(allocator);
-                json_out.appendSlice(allocator, "[") catch return;
-                for (media_info.audio_tracks, 0..) |track, i| {
-                    if (i > 0) json_out.appendSlice(allocator, ",") catch return;
-                    
-                    // Escape quotes just in case
-                    var safe_label: std.ArrayList(u8) = .empty;
-                    defer safe_label.deinit(allocator);
-                    for (track.label) |ch| {
-                        if (ch == '"' or ch == '\\') {
-                            safe_label.append(allocator, '\\') catch return;
-                        }
-                        safe_label.append(allocator, ch) catch return;
-                    }
-                    
-                    const track_str = std.fmt.allocPrint(allocator, "{{\"id\":{},\"label\":\"{s}\"}}", .{ track.id, safe_label.items }) catch return;
-                    json_out.appendSlice(allocator, track_str) catch return;
-                }
-                json_out.appendSlice(allocator, "]") catch return;
-                const audio_tracks_json = json_out.items;
-
-                const resume_pos = if (start_opt) |s| s else logging_mod.getPlaybackProgress(logs_database, session_info.?.username, movie_id) catch 0.0;
-                const html_content = html.generatePlayerHtml(allocator, movie_id, media_info.duration, media_info.codec_str, audio_tracks_json, resume_pos) catch return;
-
-                request.respond(html_content, .{
-                    .status = .ok,
-                    .extra_headers = &.{
-                        .{ .name = "content-type", .value = "text/html" },
-                    },
-                }) catch return;
-            } else {
+            const movie_id = parseQueryInt(i64, target, "id") orelse {
                 request.respond("Missing movie id parameter", .{ .status = .bad_request }) catch return;
+                continue;
+            };
+
+            const resolved = resolveMoviePath(database, allocator, movie_id, working_folder) catch |err| {
+                if (err == error.PathTraversal) {
+                    request.respond("Forbidden", .{ .status = .forbidden }) catch return;
+                } else {
+                    request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                }
+                continue;
+            };
+            if (resolved == null) {
+                request.respond("Movie not found", .{ .status = .not_found }) catch return;
+                continue;
             }
+
+            // Ensure null-terminated string for C API
+            const c_full_path = allocator.dupeZ(u8, resolved.?.resolved_path) catch return;
+
+            const media_info = streamer.getMediaInfo(allocator, c_full_path) catch streamer.MediaInfo{
+                .duration = 2799.0,
+                .codec_str = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\"",
+                .audio_tracks = &[_]streamer.AudioTrack{},
+            };
+
+            var json_out: std.ArrayList(u8) = .empty;
+            defer json_out.deinit(allocator);
+            json_out.appendSlice(allocator, "[") catch return;
+            for (media_info.audio_tracks, 0..) |track, i| {
+                if (i > 0) json_out.appendSlice(allocator, ",") catch return;
+                
+                // Escape quotes just in case
+                var safe_label: std.ArrayList(u8) = .empty;
+                defer safe_label.deinit(allocator);
+                for (track.label) |ch| {
+                    if (ch == '"' or ch == '\\') {
+                        safe_label.append(allocator, '\\') catch return;
+                    }
+                    safe_label.append(allocator, ch) catch return;
+                }
+                
+                const track_str = std.fmt.allocPrint(allocator, "{{\"id\":{},\"label\":\"{s}\"}}", .{ track.id, safe_label.items }) catch return;
+                json_out.appendSlice(allocator, track_str) catch return;
+            }
+            json_out.appendSlice(allocator, "]") catch return;
+            const audio_tracks_json = json_out.items;
+
+            const start_opt = parseQueryFloat(target, "start");
+            const resume_pos = if (start_opt) |s| s else logging_mod.getPlaybackProgress(logs_database, session_info.?.username, movie_id) catch 0.0;
+            const html_content = html.generatePlayerHtml(allocator, movie_id, media_info.duration, media_info.codec_str, audio_tracks_json, resume_pos) catch return;
+
+            request.respond(html_content, .{
+                .status = .ok,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "text/html" },
+                },
+            }) catch return;
             
         // Route: Media Streamer
         } else if (std.mem.startsWith(u8, target, "/stream")) {
-            // Parse query parameters
-            var movie_id: i64 = -1;
-            var start_time: f64 = 0;
-            var audio_idx: c_int = -1;
-
-            if (std.mem.indexOf(u8, target, "?")) |q_idx| {
-                const query = target[q_idx + 1 ..];
-                var it = std.mem.splitScalar(u8, query, '&');
-                while (it.next()) |param| {
-                    if (std.mem.startsWith(u8, param, "id=")) {
-                        movie_id = std.fmt.parseInt(i64, param[3..], 10) catch -1;
-                    } else if (std.mem.startsWith(u8, param, "start=")) {
-                        start_time = std.fmt.parseFloat(f64, param[6..]) catch 0;
-                    } else if (std.mem.startsWith(u8, param, "audio=")) {
-                        audio_idx = std.fmt.parseInt(c_int, param[6..], 10) catch -1;
-                    }
-                }
-            }
-
-            if (movie_id != -1) {
-                var resolved_wf = allocator.dupe(u8, working_folder) catch return;
-                const info_opt = metadata_mod.getMovieInfoById(database, allocator, movie_id) catch null;
-                if (info_opt == null) {
-                    request.respond("Movie not found", .{ .status = .not_found }) catch return;
-                    return;
-                }
-                const info = info_opt.?;
-                defer allocator.free(info.file_path);
-
-                if (library_mod.getLibraryById(database, allocator, info.library_id) catch null) |lib| {
-                    allocator.free(resolved_wf);
-                    resolved_wf = allocator.dupe(u8, lib.path) catch return;
-                    allocator.free(lib.name);
-                    allocator.free(lib.path);
-                    allocator.free(lib.metadata_language);
-                    if (lib.ignore_patterns) |pat| allocator.free(pat);
-                }
-
-                const final_path = info.file_path;
-
-                // Ensure the path is prefixed with working_folder to avoid reading absolute OS paths securely
-                const full_path = std.fs.path.join(allocator, &[_][]const u8{ resolved_wf, final_path }) catch return;
-                const resolved_path = std.fs.path.resolve(allocator, &[_][]const u8{ full_path }) catch return;
-                const abs_wf_path = std.fs.path.resolve(allocator, &[_][]const u8{ resolved_wf }) catch return;
-                
-                allocator.free(resolved_wf);
-
-                if (!std.mem.startsWith(u8, resolved_path, abs_wf_path)) {
-                    request.respond("Forbidden", .{ .status = .forbidden }) catch return;
-                    return;
-                }
-
-                // Initialize chunked response for MP4 stream
-                var resp = request.respondStreaming(&resp_buf, .{
-                    .respond_options = .{
-                        .status = .ok,
-                        .extra_headers = &.{
-                            .{ .name = "content-type", .value = "video/mp4" },
-                            .{ .name = "access-control-allow-origin", .value = "*" },
-                        },
-                    },
-                }) catch return;
-
-                // Fire up FFmpeg pipeline
-                var stream_ctx = streamer.HttpStreamContext{ .writer = &resp };
-                streamer.streamMedia(resolved_path, start_time, audio_idx, &stream_ctx) catch |e| {
-                    if (e != error.ConnectionDropped) {
-                        std.debug.print("Stream error: {}\n", .{e});
-                    }
-                    return; // Drop the connection silently if it was just dropped by the client
-                };
-                
-                resp.end() catch return;
-            } else {
+            const movie_id = parseQueryInt(i64, target, "id") orelse {
                 request.respond("Missing file parameter", .{ .status = .bad_request }) catch return;
+                continue;
+            };
+
+            const resolved = resolveMoviePath(database, allocator, movie_id, working_folder) catch |err| {
+                if (err == error.PathTraversal) {
+                    request.respond("Forbidden", .{ .status = .forbidden }) catch return;
+                } else {
+                    request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                }
+                continue;
+            };
+            if (resolved == null) {
+                request.respond("Movie not found", .{ .status = .not_found }) catch return;
+                continue;
             }
+
+            const start_time = parseQueryFloat(target, "start") orelse 0;
+            const audio_idx = parseQueryInt(c_int, target, "audio") orelse -1;
+
+            // Initialize chunked response for MP4 stream
+            var resp = request.respondStreaming(&resp_buf, .{
+                .respond_options = .{
+                    .status = .ok,
+                    .extra_headers = &.{
+                        .{ .name = "content-type", .value = "video/mp4" },
+                        .{ .name = "access-control-allow-origin", .value = "*" },
+                    },
+                },
+            }) catch return;
+
+            // Fire up FFmpeg pipeline
+            var stream_ctx = streamer.HttpStreamContext{ .writer = &resp };
+            streamer.streamMedia(resolved.?.resolved_path, start_time, audio_idx, &stream_ctx) catch |e| {
+                if (e != error.ConnectionDropped) {
+                    std.debug.print("Stream error: {}\n", .{e});
+                }
+                return; // Drop the connection — stream is corrupted
+            };
+            
+            resp.end() catch return;
         } else {
             request.respond("Not found", .{ .status = .not_found }) catch return;
         }
