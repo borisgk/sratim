@@ -4,6 +4,7 @@ const db_mod = @import("../db/db.zig");
 const library_mod = @import("../db/library.zig");
 const logging_mod = @import("../db/logging.zig");
 const metadata_mod = @import("../db/metadata.zig");
+const global_css: []const u8 = @embedFile("style.css");
 
 const video_extensions = [_][]const u8{ ".mkv", ".mp4", ".avi", ".ts", ".webm", ".mov" };
 
@@ -112,6 +113,7 @@ pub fn generateHtml(allocator: std.mem.Allocator, database: *db_mod.Database) ![
     }
 
     return template_engine.render(allocator, @embedFile("templates/catalog.html"), .{
+        .INLINE_CSS = global_css,
         .LIBRARY_CARDS = cards_buf.items,
     });
 }
@@ -229,6 +231,7 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
     }
 
     return try template_engine.render(allocator, @embedFile("templates/library_view.html"), .{
+        .INLINE_CSS = global_css,
         .LIBRARY_NAME = lib.name,
         .LIBRARY_PATH = lib.path,
         .MOVIE_CARDS = cards_buf.items,
@@ -318,6 +321,7 @@ pub fn generateDetailsHtml(
 
     // Replace placeholders
     const replacements = &[_][2][]const u8{
+        .{ "__INLINE_CSS__", global_css },
         .{ "__TITLE__", title },
         .{ "__OVERVIEW__", overview },
         .{ "__RELEASE_DATE__", release_date },

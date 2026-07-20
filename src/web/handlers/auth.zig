@@ -4,12 +4,14 @@ const users_mod = @import("../../db/users.zig");
 const logging_mod = @import("../../db/logging.zig");
 const session_mod = @import("../../db/session.zig");
 const template_engine = @import("../../core/template.zig");
+const global_css: []const u8 = @embedFile("../style.css");
 
 pub fn serveLoginPage(request: *std.http.Server.Request, allocator: std.mem.Allocator, error_message: []const u8) !void {
     const show_error = if (error_message.len > 0) "block" else "none";
     const msg = if (error_message.len > 0) error_message else "";
 
     const html_content = try template_engine.render(allocator, @embedFile("../templates/login.html"), .{
+        .INLINE_CSS = global_css,
         .ERROR_DISPLAY = show_error,
         .ERROR_MESSAGE = msg,
     });

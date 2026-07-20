@@ -157,12 +157,13 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             continue;
         }
 
-        // Route: Stylesheet
+        // Route: Stylesheet (fallback — CSS is now inlined into HTML)
         if (std.mem.startsWith(u8, target, "/style.css")) {
             request.respond(global_css, .{
                 .status = .ok,
                 .extra_headers = &.{
-                    .{ .name = "content-type", .value = "text/css" },
+                    .{ .name = "content-type", .value = "text/css; charset=utf-8" },
+                    .{ .name = "Cache-Control", .value = "public, max-age=31536000, immutable" },
                 },
             }) catch return;
             continue;
@@ -174,6 +175,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                 .status = .ok,
                 .extra_headers = &.{
                     .{ .name = "content-type", .value = "image/x-icon" },
+                    .{ .name = "Cache-Control", .value = "public, max-age=31536000, immutable" },
                 },
             }) catch return;
             continue;
@@ -237,7 +239,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             request.respond(html_content, .{
                 .status = .ok,
                 .extra_headers = &.{
-                    .{ .name = "content-type", .value = "text/html" },
+                    .{ .name = "content-type", .value = "text/html; charset=utf-8" },
                 },
             }) catch return;
 
@@ -321,7 +323,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                 request.respond(content, .{
                     .status = .ok,
                     .extra_headers = &.{
-                        .{ .name = "content-type", .value = "text/html" },
+                        .{ .name = "content-type", .value = "text/html; charset=utf-8" },
                     },
                 }) catch return;
             } else {
@@ -347,7 +349,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             request.respond(html_content, .{
                 .status = .ok,
                 .extra_headers = &.{
-                    .{ .name = "content-type", .value = "text/html" },
+                    .{ .name = "content-type", .value = "text/html; charset=utf-8" },
                 },
             }) catch return;
 
@@ -409,7 +411,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             request.respond(html_content, .{
                 .status = .ok,
                 .extra_headers = &.{
-                    .{ .name = "content-type", .value = "text/html" },
+                    .{ .name = "content-type", .value = "text/html; charset=utf-8" },
                 },
             }) catch return;
             
