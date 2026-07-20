@@ -181,9 +181,9 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
         try cards_buf.appendSlice(allocator, "\">\n");
         
         if (poster_path_opt != null and poster_path_opt.?.len > 0) {
-            try cards_buf.appendSlice(allocator, "                <div class=\"poster-background\" style=\"background-image: url('/images/posters/w185");
+            try cards_buf.appendSlice(allocator, "                <img class=\"poster-img\" loading=\"lazy\" alt=\"poster\" src=\"/images/posters/w185");
             try cards_buf.appendSlice(allocator, poster_path_opt.?);
-            try cards_buf.appendSlice(allocator, "')\"></div>\n");
+            try cards_buf.appendSlice(allocator, "\">\n");
         }
         try cards_buf.appendSlice(allocator, "            <button class=\"context-menu-btn\" title=\"Actions\">\n                <svg viewBox=\"0 0 24 24\" fill=\"currentColor\" width=\"20\" height=\"20\">\n                    <circle cx=\"12\" cy=\"5\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"12\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"19\" r=\"2\"/>\n                </svg>\n            </button>\n            <div class=\"context-dropdown\">\n");
         const dropdown_content = try std.fmt.allocPrint(allocator,
