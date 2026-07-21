@@ -46,7 +46,6 @@ pub fn handleShow(
     
     _ = overview;
     _ = poster_path;
-    _ = backdrop_path;
 
     var ep_stmt = try database.prepare(
         \\SELECT id, file_path, season, episode, is_present, title, overview, still_path
@@ -73,12 +72,13 @@ pub fn handleShow(
                 try seasons_buf.appendSlice(allocator, "</div>\n");
             }
             current_season = season;
-            const season_header = try std.fmt.allocPrint(allocator, "<h2 style=\"margin-bottom: 20px; margin-top: 40px;\">Season {d}</h2>\n<div class=\"grid\" id=\"movie-grid\">\n", .{season});
+            const season_header = try std.fmt.allocPrint(allocator, "<h2 style=\"margin-bottom: 20px; margin-top: 40px;\">Season {d}</h2>\n<div class=\"episode-list\" id=\"movie-grid\">\n", .{season});
             defer allocator.free(season_header);
             try seasons_buf.appendSlice(allocator, season_header);
         }
 
         const ep_title_opt = ep_stmt.columnText(5);
+        const ep_overview_opt = ep_stmt.columnText(6);
         const ep_still_path_opt = ep_stmt.columnText(7);
         const basename = std.fs.path.basename(file_path);
         
@@ -86,16 +86,17 @@ pub fn handleShow(
         const ep_num = try std.fmt.bufPrint(&buf, "Episode {d}", .{episode});
 
         const display_title = if (ep_title_opt) |t| t else basename;
+        const display_overview = if (ep_overview_opt) |o| o else "No description available.";
 
-        try seasons_buf.appendSlice(allocator, "    <div class=\"movie-item\">\n");
-        
-        if (ep_still_path_opt != null and ep_still_path_opt.?.len > 0) {
-            try seasons_buf.appendSlice(allocator, "        <div class=\"movie-card has-poster\" data-name=\"");
-        } else {
-            try seasons_buf.appendSlice(allocator, "        <div class=\"movie-card\" data-name=\"");
-        }
+        try seasons_buf.appendSlice(allocator, "    <div class=\"episode-row\" data-name=\"");
         try escapeHtml(&seasons_buf, allocator, display_title);
         try seasons_buf.appendSlice(allocator, "\">\n");
+        
+        if (ep_still_path_opt != null and ep_still_path_opt.?.len > 0) {
+            try seasons_buf.appendSlice(allocator, "        <div class=\"episode-card has-poster\">\n");
+        } else {
+            try seasons_buf.appendSlice(allocator, "        <div class=\"episode-card\">\n");
+        }
         
         if (ep_still_path_opt != null and ep_still_path_opt.?.len > 0) {
             try seasons_buf.appendSlice(allocator, "            <img class=\"poster-img\" loading=\"lazy\" alt=\"still\" src=\"/images/backdrops/original");
@@ -104,16 +105,6 @@ pub fn handleShow(
         }
 
         const dropdown_content = try std.fmt.allocPrint(allocator,
-            \\            <button class="context-menu-btn" title="Actions">
-            \\                <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-            \\                    <circle cx="12" cy="5" r="2"/>
-            \\                    <circle cx="12" cy="12" r="2"/>
-            \\                    <circle cx="12" cy="19" r="2"/>
-            \\                </svg>
-            \\            </button>
-            \\            <div class="context-dropdown">
-            \\                <a class="dropdown-item" style="text-decoration: none;" href="/player?episode_id={d}">Quick Play</a>
-            \\            </div>
             \\            <a href="/player?episode_id={d}" class="play-link"></a>
             \\            <div class="card-content">
             \\                <div class="card-top">
@@ -126,8 +117,9 @@ pub fn handleShow(
             \\                </div>
             \\            </div>
             \\        </div>
-            \\        <h3 class="movie-title" title="
-        , .{ ep_id, ep_id });
+            \\        <div class="episode-info">
+            \\            <h3 class="episode-title" title="
+        , .{ ep_id });
         defer allocator.free(dropdown_content);
         try seasons_buf.appendSlice(allocator, dropdown_content);
 
@@ -136,7 +128,11 @@ pub fn handleShow(
         try seasons_buf.appendSlice(allocator, ep_num);
         try seasons_buf.appendSlice(allocator, " - ");
         try escapeHtml(&seasons_buf, allocator, display_title);
-        try seasons_buf.appendSlice(allocator, "</h3>\n    </div>\n");
+        try seasons_buf.appendSlice(allocator, "</h3>\n");
+        
+        try seasons_buf.appendSlice(allocator, "            <p class=\"episode-overview\">");
+        try escapeHtml(&seasons_buf, allocator, display_overview);
+        try seasons_buf.appendSlice(allocator, "</p>\n        </div>\n    </div>\n");
     }
     
     if (current_season != -1) {
@@ -153,12 +149,22 @@ pub fn handleShow(
     try lib_stmt.bindInt64(1, library_id);
     const lib_name = if (try lib_stmt.step() == .row) lib_stmt.columnText(0).? else "Library";
 
+    var backdrop_html = std.ArrayList(u8).empty;
+    defer backdrop_html.deinit(allocator);
+
+    if (backdrop_path != null and backdrop_path.?.len > 0) {
+        try backdrop_html.appendSlice(allocator, "<div class=\"show-backdrop\" style=\"background-image: url('/images/backdrops/original");
+        try backdrop_html.appendSlice(allocator, backdrop_path.?);
+        try backdrop_html.appendSlice(allocator, "')\"></div>");
+    }
+
     const html = try template_engine.render(allocator, @embedFile("../templates/show_view.html"), .{
         .INLINE_CSS = global_css,
         .SHOW_TITLE = title,
         .LIBRARY_ID = lib_id_str,
         .LIBRARY_NAME = lib_name,
         .SEASONS_HTML = seasons_buf.items,
+        .SHOW_BACKDROP_HTML = backdrop_html.items,
     });
     defer allocator.free(html);
 
