@@ -176,7 +176,7 @@ pub fn initSchema(database: *Database) !void {
     if (table_exists) {
         var has_id_col = false;
         var stmt_info = try database.prepare("PRAGMA table_info(movies);");
-        while (try stmt_info.step() == .row) {
+        while ((try stmt_info.step()) == .row) {
             const col_name = stmt_info.columnText(1);
             if (col_name != null and std.mem.eql(u8, col_name.?, "id")) {
                 has_id_col = true;

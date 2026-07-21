@@ -78,7 +78,7 @@ pub fn getMoviesMissingMetadata(database: *db_mod.Database, allocator: std.mem.A
     var list = std.ArrayList(MovieMissingMetadata).empty;
     defer list.deinit(allocator);
 
-    while (try stmt.step() == .row) {
+    while ((try stmt.step()) == .row) {
         const id = stmt.columnInt64(0);
         const clean_name_val = stmt.columnText(1);
         var clean_name: []const u8 = "";
@@ -108,7 +108,7 @@ pub fn getShowsMissingMetadata(database: *db_mod.Database, allocator: std.mem.Al
     var list = std.ArrayList(MovieMissingMetadata).empty;
     defer list.deinit(allocator);
 
-    while (try stmt.step() == .row) {
+    while ((try stmt.step()) == .row) {
         const id = stmt.columnInt64(0);
         const title_val = stmt.columnText(1);
         var clean_name: []const u8 = "";
@@ -139,7 +139,7 @@ pub fn getEpisodesMissingMetadata(database: *db_mod.Database, allocator: std.mem
     var list = std.ArrayList(EpisodeMissingMetadata).empty;
     defer list.deinit(allocator);
 
-    while (try stmt.step() == .row) {
+    while ((try stmt.step()) == .row) {
         try list.append(allocator, EpisodeMissingMetadata{
             .id = stmt.columnInt64(0),
             .show_tmdb_id = stmt.columnInt64(1),

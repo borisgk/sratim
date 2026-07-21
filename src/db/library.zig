@@ -74,7 +74,7 @@ pub fn getLibraries(database: *db_mod.Database, allocator: std.mem.Allocator) ![
     var stmt = try database.prepare("SELECT id, name, path, type, is_enabled, depth_limit, scan_interval, metadata_language, ignore_patterns, include_in_dashboard, created_at, updated_at, last_scanned_at FROM libraries ORDER BY name ASC;");
     defer stmt.finalize();
 
-    while (try stmt.step() == .row) {
+    while ((try stmt.step()) == .row) {
         const id = stmt.columnInt64(0);
         const name = stmt.columnText(1) orelse "";
         const path = stmt.columnText(2) orelse "";

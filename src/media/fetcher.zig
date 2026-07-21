@@ -14,8 +14,16 @@ pub fn startFetcherThread(allocator: std.mem.Allocator, io: std.Io, database: *d
     thread.detach();
 }
 
-fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, token: []const u8, proxy_url: ?[]const u8) void {
+fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database_shared: *db_mod.Database, token: []const u8, proxy_url: ?[]const u8) void {
+    _ = database_shared;
     std.debug.print("TMDB background fetcher started.\n", .{});
+
+    var database_val = db_mod.Database.open("sratim.db") catch |err| {
+        std.debug.print("Failed to open database in fetcher thread: {}\n", .{err});
+        return;
+    };
+    defer database_val.close();
+    const database = &database_val;
 
     while (true) {
         // Query missing metadata

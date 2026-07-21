@@ -52,23 +52,15 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
 
     var avio_buf: ?*anyopaque = null;
     defer {
-        // Retrieve pb pointer before context gets freed
-        const pb_ptr = if (out_fmt_ctx) |ctx| ctx.*.pb else null;
-        
-        // 1. Free the output format context first
         if (out_fmt_ctx) |ctx| {
+            if (ctx.*.pb) |pb| {
+                var temp_pb: ?*c.AVIOContext = pb;
+                c.avio_context_free(@ptrCast(&temp_pb));
+                ctx.*.pb = null;
+            }
             c.avformat_free_context(ctx);
-        }
-        
-        // 2. Free the avio buffer second
-        if (avio_buf) |buf| {
+        } else if (avio_buf) |buf| {
             c.av_free(buf);
-        }
-        
-        // 3. Free the AVIOContext last
-        if (pb_ptr) |pb| {
-            var temp_pb = pb;
-            c.avio_context_free(@ptrCast(&temp_pb));
         }
     }
 

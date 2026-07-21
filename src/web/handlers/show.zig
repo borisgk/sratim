@@ -61,7 +61,7 @@ pub fn handleShow(
 
     var current_season: i32 = -1;
 
-    while (try ep_stmt.step() == .row) {
+    while ((try ep_stmt.step()) == .row) {
         const ep_id = ep_stmt.columnInt64(0);
         const file_path = ep_stmt.columnText(1).?;
         const season = ep_stmt.columnInt(2);

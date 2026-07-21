@@ -75,7 +75,8 @@ pub const AudioTranscoder = struct {
         self.frame_out.*.sample_rate = self.encode_ctx.*.sample_rate;
         if (c.av_frame_get_buffer(self.frame_out, 0) < 0) return error.OutOfMemory;
 
-        self.pts_counter = @as(i64, @intFromFloat(start_time * @as(f64, @floatFromInt(self.encode_ctx.*.sample_rate))));
+        _ = start_time;
+        self.pts_counter = 0;
         return self;
     }
 

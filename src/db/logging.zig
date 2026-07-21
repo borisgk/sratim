@@ -36,7 +36,7 @@ pub fn initLogsSchema(database: *db_mod.Database) !void {
     if (table_exists) {
         var has_movie_id = false;
         var stmt = try database.prepare("PRAGMA table_info(playback_logs);");
-        while (try stmt.step() == .row) {
+        while ((try stmt.step()) == .row) {
             const col_name = stmt.columnText(1);
             if (col_name != null and std.mem.eql(u8, col_name.?, "movie_id")) {
                 has_movie_id = true;
@@ -180,7 +180,7 @@ pub fn getProgressForUser(database: *db_mod.Database, allocator: std.mem.Allocat
 
     try stmt.bindText(1, username);
 
-    while (try stmt.step() == .row) {
+    while ((try stmt.step()) == .row) {
         const movie_id = stmt.columnInt64(0);
         const position = c.sqlite3_column_double(stmt.stmt, 1);
         const duration = c.sqlite3_column_double(stmt.stmt, 2);
@@ -277,7 +277,7 @@ pub fn getEpisodeProgressForUser(database: *db_mod.Database, allocator: std.mem.
 
     try stmt.bindText(1, username);
 
-    while (try stmt.step() == .row) {
+    while ((try stmt.step()) == .row) {
         const episode_id = stmt.columnInt64(0);
         const position = c.sqlite3_column_double(stmt.stmt, 1);
         const duration = c.sqlite3_column_double(stmt.stmt, 2);
