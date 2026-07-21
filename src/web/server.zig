@@ -156,6 +156,15 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             };
             continue;
 
+        // Route: API Metadata Manual Link
+        } else if (std.mem.startsWith(u8, target, "/api/metadata/manual-link") and method == .POST) {
+            metadata_handler.handleApiMetadataManualLink(&request, allocator, io, database, config, &resp_buf) catch |err| {
+                std.debug.print("API Metadata Manual Link error: {}\n", .{err});
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                return;
+            };
+            continue;
+
         // Route: Browse Specific Library
         } else if (std.mem.startsWith(u8, target, "/library")) {
             const lib_id = player_handler.parseQueryInt(i64, target, "id") orelse {
@@ -183,6 +192,30 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             } else {
                 request.respond("Library not found", .{ .status = .not_found }) catch return;
             }
+
+        // Route: Movie Details View
+        } else if (std.mem.startsWith(u8, target, "/details")) {
+            const movie_id = player_handler.parseQueryInt(i64, target, "id") orelse {
+                request.respond("Missing movie id", .{ .status = .bad_request }) catch return;
+                continue;
+            };
+
+            const html_content = catalog.generateDetailsHtml(allocator, database, logs_database, movie_id, session_info.?.username) catch |err| {
+                std.debug.print("Details view error: {}\n", .{err});
+                if (err == error.MovieNotFound) {
+                    request.respond("Movie not found", .{ .status = .not_found }) catch return;
+                } else {
+                    request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                }
+                continue;
+            };
+
+            request.respond(html_content, .{
+                .status = .ok,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "text/html; charset=utf-8" },
+                },
+            }) catch return;
 
         // Route: Show Details View
         } else if (std.mem.startsWith(u8, target, "/show")) {

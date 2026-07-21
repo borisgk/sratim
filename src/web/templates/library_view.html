@@ -39,7 +39,24 @@
         </div>
     </div>
 
-
+    <!-- Manual TMDB ID Modal -->
+    <div id="manual-id-modal" class="modal-overlay">
+        <div class="modal-card" style="max-width: 440px; width: 100%; padding: 28px; background: rgba(18, 18, 26, 0.95); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 24px; backdrop-filter: blur(16px); color: #fff;">
+            <h2 style="font-family: 'Outfit', sans-serif; font-size: 1.5rem; margin-bottom: 8px;">Set TMDB ID</h2>
+            <p id="current-tmdb-id-text" style="color: #9ca3af; font-size: 0.9rem; margin-bottom: 20px;">Current TMDB ID: None</p>
+            <form id="manual-id-form">
+                <input type="hidden" id="manual-id-movie-id">
+                <div style="margin-bottom: 20px;">
+                    <label for="manual-tmdb-id-input" style="display: block; font-size: 0.85rem; color: #d1d5db; margin-bottom: 8px;">TMDB Movie ID</label>
+                    <input type="number" id="manual-tmdb-id-input" placeholder="e.g. 550" required style="width: 100%; padding: 12px 16px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff; font-size: 1rem;">
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 12px;">
+                    <button type="button" id="manual-id-cancel-btn" style="padding: 10px 20px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #d1d5db; cursor: pointer;">Cancel</button>
+                    <button type="submit" id="manual-id-submit-btn" style="padding: 10px 20px; background: linear-gradient(135deg, #a855f7 0%, #6366f1 100%); border: none; border-radius: 12px; color: #fff; font-weight: 500; cursor: pointer;">Fetch & Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <script>
         const searchInput = document.getElementById('search-input');
@@ -111,7 +128,6 @@
                     });
                     
                     if (res.ok) {
-                        // Remove the progress bar if present since both "reset" and "watched" hide it
                         const progressEl = card.querySelector('.card-progress');
                         if (progressEl) {
                             progressEl.remove();
@@ -123,7 +139,6 @@
                     console.error('Error updating progress:', err);
                 }
                 
-                // Close dropdown
                 item.parentElement.classList.remove('active');
             });
         });
@@ -164,9 +179,85 @@
                     btn.disabled = false;
                 }
                 
-                // Close dropdown
                 btn.parentElement.classList.remove('active');
             });
+        });
+
+        // Manual TMDB ID Modal Logic
+        const manualModal = document.getElementById('manual-id-modal');
+        const manualForm = document.getElementById('manual-id-form');
+        const manualMovieIdInput = document.getElementById('manual-id-movie-id');
+        const manualTmdbInput = document.getElementById('manual-tmdb-id-input');
+        const currentTmdbText = document.getElementById('current-tmdb-id-text');
+        const manualCancelBtn = document.getElementById('manual-id-cancel-btn');
+
+        document.querySelectorAll('.manual-id-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const movieId = btn.getAttribute('data-id');
+                const currentTmdbId = btn.getAttribute('data-tmdb-id');
+
+                manualMovieIdInput.value = movieId;
+                if (currentTmdbId && currentTmdbId.trim() !== '') {
+                    currentTmdbText.innerText = `Current TMDB ID: ${currentTmdbId}`;
+                    manualTmdbInput.value = currentTmdbId;
+                } else {
+                    currentTmdbText.innerText = `Current TMDB ID: None`;
+                    manualTmdbInput.value = '';
+                }
+
+                manualModal.classList.add('active');
+                manualTmdbInput.focus();
+                btn.parentElement.classList.remove('active');
+            });
+        });
+
+        manualCancelBtn.addEventListener('click', () => {
+            manualModal.classList.remove('active');
+        });
+
+        manualModal.addEventListener('click', (e) => {
+            if (e.target === manualModal) {
+                manualModal.classList.remove('active');
+            }
+        });
+
+        manualForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const movieId = parseInt(manualMovieIdInput.value, 10);
+            const tmdbId = parseInt(manualTmdbInput.value, 10);
+
+            const submitBtn = document.getElementById('manual-id-submit-btn');
+            const originalText = submitBtn.innerText;
+            submitBtn.innerText = 'Fetching...';
+            submitBtn.disabled = true;
+
+            try {
+                const res = await fetch('/api/metadata/manual-link', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        movie_id: movieId,
+                        tmdb_id: tmdbId
+                    })
+                });
+
+                if (res.ok) {
+                    window.location.reload();
+                } else {
+                    const text = await res.text();
+                    alert('Failed to set TMDB ID: ' + text);
+                    submitBtn.innerText = originalText;
+                    submitBtn.disabled = false;
+                }
+            } catch (err) {
+                console.error('Error linking manual TMDB ID:', err);
+                alert('Error connecting to server');
+                submitBtn.innerText = originalText;
+                submitBtn.disabled = false;
+            }
         });
     </script>
 </body>

@@ -200,7 +200,7 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
         }
     } else {
         var stmt = try database.prepare(
-            \\SELECT id, file_path, clean_name, title, poster_path 
+            \\SELECT id, file_path, clean_name, title, poster_path, tmdb_id 
             \\FROM movies
             \\WHERE library_id = ?1 AND is_present = 1
             \\ORDER BY 
@@ -220,6 +220,11 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
         const clean_name = stmt.columnText(2).?;
         const title_opt = stmt.columnText(3);
         const poster_path_opt = stmt.columnText(4);
+        const tmdb_id_val = stmt.columnText(5);
+        const tmdb_id = if (tmdb_id_val != null) stmt.columnInt64(5) else null;
+
+        var tmdb_id_buf: [32]u8 = undefined;
+        const tmdb_id_str = if (tmdb_id) |tid| (std.fmt.bufPrint(&tmdb_id_buf, "{d}", .{tid}) catch "") else "";
 
         const display_title = if (title_opt) |t| t else clean_name;
 
@@ -250,6 +255,7 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
         try cards_buf.appendSlice(allocator, "            <button class=\"context-menu-btn\" title=\"Actions\">\n                <svg viewBox=\"0 0 24 24\" fill=\"currentColor\" width=\"20\" height=\"20\">\n                    <circle cx=\"12\" cy=\"5\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"12\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"19\" r=\"2\"/>\n                </svg>\n            </button>\n            <div class=\"context-dropdown\">\n");
         const dropdown_content = try std.fmt.allocPrint(allocator,
             \\                <button class="dropdown-item lookup-btn" data-id="{d}">Lookup Metadata</button>
+            \\                <button class="dropdown-item manual-id-btn" data-id="{d}" data-tmdb-id="{s}">Manual TMDB ID</button>
             \\                <button class="dropdown-item reset-btn" data-id="{d}">Reset Progress</button>
             \\                <button class="dropdown-item watch-btn" data-id="{d}">Mark as Watched</button>
             \\                <a class="dropdown-item" style="text-decoration: none;" href="/player?id={d}">Quick Play</a>
@@ -268,7 +274,7 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
             \\                </div>
             \\            </div>
             \\
-        , .{ movie_id, movie_id, movie_id, movie_id, movie_id });
+        , .{ movie_id, movie_id, tmdb_id_str, movie_id, movie_id, movie_id, movie_id });
         defer allocator.free(dropdown_content);
         try cards_buf.appendSlice(allocator, dropdown_content);
 

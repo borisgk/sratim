@@ -14,6 +14,7 @@ pub const episodes = @import("tmdb/episodes.zig");
 pub const images = @import("tmdb/images.zig");
 
 pub const searchMovie = movies.searchMovie;
+pub const fetchMovieDetails = movies.fetchMovieDetails;
 pub const searchShow = shows.searchShow;
 pub const fetchEpisode = episodes.fetchEpisode;
 pub const downloadImages = images.downloadImages;

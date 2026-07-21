@@ -197,3 +197,77 @@ pub fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: s
 
     request.respond("OK", .{ .status = .ok }) catch return;
 }
+
+const MetadataManualLinkPayload = struct {
+    movie_id: i64,
+    tmdb_id: i64,
+};
+
+pub fn handleApiMetadataManualLink(request: *std.http.Server.Request, allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, config: *const config_mod.Config, body_buf: *[8192]u8) !void {
+    const token = config.tmdb_access_token orelse {
+        request.respond("TMDB Access Token not configured in config.json", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    if (token.len == 0) {
+        request.respond("TMDB Access Token is empty in config.json", .{ .status = .bad_request }) catch return;
+        return;
+    }
+
+    var reader = request.readerExpectNone(body_buf);
+    var body_data = std.ArrayList(u8).empty;
+    defer body_data.deinit(allocator);
+
+    var chunk_buf: [4096]u8 = undefined;
+    while (true) {
+        const n = reader.readSliceShort(&chunk_buf) catch break;
+        if (n == 0) break;
+        try body_data.appendSlice(allocator, chunk_buf[0..n]);
+    }
+
+    const parsed = std.json.parseFromSlice(MetadataManualLinkPayload, allocator, body_data.items, .{
+        .ignore_unknown_fields = true,
+    }) catch |err| {
+        std.debug.print("Failed to parse metadata manual link JSON: {any}\n", .{err});
+        request.respond("Bad Request", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    defer parsed.deinit();
+
+    const payload = parsed.value;
+
+    if (payload.tmdb_id <= 0) {
+        request.respond("Invalid TMDB ID", .{ .status = .bad_request }) catch return;
+        return;
+    }
+
+    var parsed_movie = tmdb.fetchMovieDetails(allocator, io, payload.tmdb_id, token, config.tmdb_proxy) catch |err| {
+        std.debug.print("TMDB Fetch Movie Details error: {}\n", .{err});
+        if (err == error.NotFound) {
+            request.respond("TMDB Movie ID not found", .{ .status = .not_found }) catch return;
+        } else {
+            request.respond("TMDB API request failed", .{ .status = .internal_server_error }) catch return;
+        }
+        return;
+    };
+    defer parsed_movie.deinit();
+
+    const movie = parsed_movie.value;
+
+    tmdb.downloadImages(allocator, io, movie.poster_path, movie.backdrop_path, config.tmdb_proxy) catch |err| {
+        std.debug.print("Failed to download images: {}\n", .{err});
+    };
+
+    try metadata_mod.saveMetadataById(
+        database,
+        payload.movie_id,
+        movie.id,
+        movie.title,
+        movie.overview,
+        movie.poster_path,
+        movie.backdrop_path,
+        movie.release_date,
+    );
+
+    request.respond("OK", .{ .status = .ok }) catch return;
+}
+
