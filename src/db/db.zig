@@ -251,9 +251,19 @@ pub fn initSchema(database: *Database) !void {
         \\    season INTEGER NOT NULL DEFAULT 0,
         \\    episode INTEGER NOT NULL DEFAULT 0,
         \\    is_present INTEGER NOT NULL DEFAULT 1,
+        \\    tmdb_id INTEGER,
+        \\    title TEXT,
+        \\    overview TEXT,
+        \\    still_path TEXT,
         \\    UNIQUE(show_id, file_path)
         \\);
     );
+
+    // Migrations to add missing columns to existing episodes table
+    _ = database.exec("ALTER TABLE episodes ADD COLUMN tmdb_id INTEGER;") catch {};
+    _ = database.exec("ALTER TABLE episodes ADD COLUMN title TEXT;") catch {};
+    _ = database.exec("ALTER TABLE episodes ADD COLUMN overview TEXT;") catch {};
+    _ = database.exec("ALTER TABLE episodes ADD COLUMN still_path TEXT;") catch {};
 
     // Migration logic from old tables
     // We ignore errors since this is just for safe transition, and old tables might not exist

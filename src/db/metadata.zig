@@ -24,6 +24,13 @@ pub const MovieMissingMetadata = struct {
     clean_name: []const u8,
 };
 
+pub const EpisodeMissingMetadata = struct {
+    id: i64,
+    show_tmdb_id: i64,
+    season: i64,
+    episode: i64,
+};
+
 pub fn getMovieInfoById(database: *db_mod.Database, allocator: std.mem.Allocator, movie_id: i64) !?MovieInfo {
     var stmt = try database.prepare("SELECT library_id, file_path FROM movies WHERE id = ?1;");
     defer stmt.finalize();
@@ -117,6 +124,33 @@ pub fn getShowsMissingMetadata(database: *db_mod.Database, allocator: std.mem.Al
     return list.toOwnedSlice(allocator);
 }
 
+pub fn getEpisodesMissingMetadata(database: *db_mod.Database, allocator: std.mem.Allocator) ![]EpisodeMissingMetadata {
+    var stmt = try database.prepare(
+        \\SELECT e.id, s.tmdb_id, e.season, e.episode 
+        \\FROM episodes e
+        \\JOIN shows s ON e.show_id = s.id
+        \\WHERE e.tmdb_id IS NULL 
+        \\  AND e.is_present = 1 
+        \\  AND s.tmdb_id IS NOT NULL 
+        \\  AND s.tmdb_id > 0;
+    );
+    defer stmt.finalize();
+
+    var list = std.ArrayList(EpisodeMissingMetadata).empty;
+    defer list.deinit(allocator);
+
+    while (try stmt.step() == .row) {
+        try list.append(allocator, EpisodeMissingMetadata{
+            .id = stmt.columnInt64(0),
+            .show_tmdb_id = stmt.columnInt64(1),
+            .season = stmt.columnInt64(2),
+            .episode = stmt.columnInt64(3),
+        });
+    }
+
+    return list.toOwnedSlice(allocator);
+}
+
 pub fn saveMetadataById(
     database: *db_mod.Database,
     movie_id: i64,
@@ -165,6 +199,28 @@ pub fn saveShowMetadataById(
     if (overview) |o| try stmt.bindText(4, o) else try stmt.bindNull(4);
     if (poster_path) |p| try stmt.bindText(5, p) else try stmt.bindNull(5);
     if (backdrop_path) |b| try stmt.bindText(6, b) else try stmt.bindNull(6);
+
+    _ = try stmt.step();
+}
+
+pub fn saveEpisodeMetadataById(
+    database: *db_mod.Database,
+    episode_id: i64,
+    tmdb_id: i64,
+    title: []const u8,
+    overview: ?[]const u8,
+    still_path: ?[]const u8,
+) !void {
+    var stmt = try database.prepare(
+        \\UPDATE episodes SET tmdb_id = ?2, title = ?3, overview = ?4, still_path = ?5 WHERE id = ?1;
+    );
+    defer stmt.finalize();
+
+    try stmt.bindInt64(1, episode_id);
+    try stmt.bindInt64(2, tmdb_id);
+    try stmt.bindText(3, title);
+    if (overview) |o| try stmt.bindText(4, o) else try stmt.bindNull(4);
+    if (still_path) |p| try stmt.bindText(5, p) else try stmt.bindNull(5);
 
     _ = try stmt.step();
 }
@@ -237,6 +293,13 @@ pub fn getMetadataById(
         .backdrop_path = backdrop_path,
         .release_date = release_date,
     };
+}
+
+pub fn markEpisodeMetadataNotFound(database: *db_mod.Database, episode_id: i64) !void {
+    var stmt = try database.prepare("UPDATE episodes SET tmdb_id = 0 WHERE id = ?1;");
+    defer stmt.finalize();
+    try stmt.bindInt64(1, episode_id);
+    _ = try stmt.step();
 }
 
 pub fn deleteMetadataById(database: *db_mod.Database, movie_id: i64) !void {

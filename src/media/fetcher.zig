@@ -151,6 +151,57 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
         }
         allocator.free(missing_shows);
 
+        // Fetch Episodes
+        const missing_episodes = metadata_mod.getEpisodesMissingMetadata(database, allocator) catch |err| {
+            std.debug.print("TMDB fetcher error querying missing episodes metadata: {}\n", .{err});
+            io.sleep(std.Io.Duration.fromSeconds(30), .awake) catch {};
+            continue;
+        };
+
+        if (missing_episodes.len > 0) {
+            std.debug.print("TMDB fetcher found {d} episodes missing metadata.\n", .{missing_episodes.len});
+        }
+
+        for (missing_episodes) |ep| {
+            std.debug.print("TMDB fetcher processing episode: Show {d}, S{d}E{d}\n", .{ep.show_tmdb_id, ep.season, ep.episode});
+            
+            const results = tmdb.fetchEpisode(allocator, io, ep.show_tmdb_id, ep.season, ep.episode, token, proxy_url) catch |err| {
+                if (err == error.NotFound) {
+                    std.debug.print("TMDB fetcher found NO EPISODE MATCH for: Show {d}, S{d}E{d}\n", .{ep.show_tmdb_id, ep.season, ep.episode});
+                    metadata_mod.markEpisodeMetadataNotFound(database, ep.id) catch |e| {
+                        std.debug.print("TMDB fetcher error marking episode not found: {}\n", .{e});
+                    };
+                } else {
+                    std.debug.print("TMDB fetcher error searching for episode: {}\n", .{err});
+                    io.sleep(std.Io.Duration.fromSeconds(1), .awake) catch {};
+                }
+                continue;
+            };
+            defer results.deinit();
+
+            const episode_data = results.value;
+            std.debug.print("TMDB fetcher found episode match: {s}\n", .{episode_data.name});
+            
+            tmdb.downloadImages(allocator, io, null, episode_data.still_path, proxy_url) catch |err| {
+                std.debug.print("TMDB fetcher error downloading images for episode: {}\n", .{err});
+            };
+
+            metadata_mod.saveEpisodeMetadataById(
+                database,
+                ep.id,
+                episode_data.id,
+                episode_data.name,
+                episode_data.overview,
+                episode_data.still_path
+            ) catch |err| {
+                std.debug.print("TMDB fetcher error saving metadata for episode: {}\n", .{err});
+            };
+
+            io.sleep(std.Io.Duration.fromMilliseconds(500), .awake) catch {};
+        }
+
+        allocator.free(missing_episodes);
+
         // Sleep 30 seconds before polling again
         io.sleep(std.Io.Duration.fromSeconds(30), .awake) catch {};
     }

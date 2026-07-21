@@ -27,6 +27,13 @@ pub const TmdbShowSearchResponse = struct {
     results: []TmdbShow,
 };
 
+pub const TmdbEpisode = struct {
+    id: i64,
+    name: []const u8,
+    overview: ?[]const u8 = null,
+    still_path: ?[]const u8 = null,
+};
+
 fn writePercentEncoded(list: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
     const hex_chars = "0123456789ABCDEF";
     for (input) |ch| {
@@ -325,6 +332,83 @@ pub fn searchShow(
     }
 
     const response_parsed = try std.json.parseFromSlice(TmdbShowSearchResponse, allocator, response_body, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    });
+    return response_parsed;
+}
+
+pub fn fetchEpisode(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    show_tmdb_id: i64,
+    season: i64,
+    episode: i64,
+    token: []const u8,
+    proxy_url: ?[]const u8,
+) !std.json.Parsed(TmdbEpisode) {
+    _ = io;
+
+    var config = httpx.ClientConfig.defaults();
+    if (proxy_url) |p_url| {
+        if (p_url.len > 0) {
+            const uri = try std.Uri.parse(p_url);
+            const host_bytes = switch (uri.host.?) {
+                .raw => |r| r,
+                .percent_encoded => |p| p,
+            };
+
+            var kind: httpx.ProxyKind = .http;
+            if (std.mem.eql(u8, uri.scheme, "socks5") or
+                std.mem.eql(u8, uri.scheme, "socks5h") or
+                std.mem.eql(u8, uri.scheme, "socks"))
+            {
+                kind = .socks5h;
+            }
+
+            const port = uri.port orelse switch (kind) {
+                .socks5h => 1080,
+                .http => if (std.mem.eql(u8, uri.scheme, "https")) @as(u16, 443) else @as(u16, 80),
+            };
+
+            config = config.withProxy(.{
+                .kind = kind,
+                .host = host_bytes,
+                .port = port,
+                .username = null,
+                .password = null,
+            });
+        }
+    }
+
+    var client = httpx.Client.initWithConfig(allocator, config);
+    defer client.deinit();
+
+    const fetch_url = try std.fmt.allocPrint(allocator, "https://api.themoviedb.org/3/tv/{d}/season/{d}/episode/{d}", .{show_tmdb_id, season, episode});
+    defer allocator.free(fetch_url);
+
+    std.debug.print("TMDB TV Episode Request URL: {s}\n", .{fetch_url});
+
+    var response = try client.get(fetch_url, .{
+        .bearer_token = token,
+        .headers = &[_][2][]const u8{
+            .{ "Accept", "application/json" },
+        },
+    });
+    defer response.deinit();
+
+    std.debug.print("TMDB TV Episode Response Status: {d}\n", .{response.status.code});
+    const response_body = response.body orelse return error.EmptyResponseBody;
+
+    if (response.status.code == 404) {
+        return error.NotFound;
+    }
+
+    if (!response.status.isSuccess()) {
+        return error.TmdbRequestFailed;
+    }
+
+    const response_parsed = try std.json.parseFromSlice(TmdbEpisode, allocator, response_body, .{
         .allocate = .alloc_always,
         .ignore_unknown_fields = true,
     });
