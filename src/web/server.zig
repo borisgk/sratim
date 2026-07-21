@@ -19,6 +19,8 @@ const watch_handler = @import("handlers/watch.zig");
 const metadata_handler = @import("handlers/metadata.zig");
 const global_css: []const u8 = minify.minifyCss(@embedFile("style.css"));
 const favicon_ico = @embedFile("favicon.ico");
+const font_inter = @embedFile("fonts/inter.woff2");
+const font_outfit = @embedFile("fonts/outfit.woff2");
 const c = @import("../core/c.zig").c;
 
 /// Parse an integer query parameter by name from a URL target string.
@@ -176,6 +178,28 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                 .status = .ok,
                 .extra_headers = &.{
                     .{ .name = "content-type", .value = "image/x-icon" },
+                    .{ .name = "Cache-Control", .value = "public, max-age=31536000, immutable" },
+                },
+            }) catch return;
+            continue;
+        }
+
+        // Route: Fonts
+        if (std.mem.startsWith(u8, target, "/fonts/inter.woff2")) {
+            request.respond(font_inter, .{
+                .status = .ok,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "font/woff2" },
+                    .{ .name = "Cache-Control", .value = "public, max-age=31536000, immutable" },
+                },
+            }) catch return;
+            continue;
+        }
+        if (std.mem.startsWith(u8, target, "/fonts/outfit.woff2")) {
+            request.respond(font_outfit, .{
+                .status = .ok,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "font/woff2" },
                     .{ .name = "Cache-Control", .value = "public, max-age=31536000, immutable" },
                 },
             }) catch return;
