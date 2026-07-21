@@ -6,6 +6,7 @@ const library_mod = @import("../../db/library.zig");
 const streamer = @import("../../media/streamer.zig");
 
 const WatchEventPayload = struct {
+    id: ?i64 = null,
     movie_id: ?i64 = null,
     episode_id: ?i64 = null,
     event: []const u8,
@@ -25,7 +26,9 @@ pub fn handleApiWatchEvent(request: *std.http.Server.Request, allocator: std.mem
         try body_data.appendSlice(allocator, chunk_buf[0..n]);
     }
 
-    const parsed = std.json.parseFromSlice(WatchEventPayload, allocator, body_data.items, .{}) catch |err| {
+    const parsed = std.json.parseFromSlice(WatchEventPayload, allocator, body_data.items, .{
+        .ignore_unknown_fields = true,
+    }) catch |err| {
         std.debug.print("Failed to parse watch event JSON: {any}\n", .{err});
         request.respond("Bad Request", .{ .status = .bad_request }) catch return;
         return;
@@ -33,8 +36,9 @@ pub fn handleApiWatchEvent(request: *std.http.Server.Request, allocator: std.mem
     defer parsed.deinit();
 
     const payload = parsed.value;
+    const target_movie_id = payload.movie_id orelse payload.id;
 
-    if (payload.movie_id) |movie_id| {
+    if (target_movie_id) |movie_id| {
         try logging_mod.logPlaybackEvent(logs_database, username, movie_id, payload.event, payload.position);
         try logging_mod.savePlaybackProgress(logs_database, username, movie_id, payload.position, payload.duration);
     } else if (payload.episode_id) |episode_id| {
@@ -65,7 +69,9 @@ pub fn handleApiWatchProgressUpdate(request: *std.http.Server.Request, allocator
         try body_data.appendSlice(allocator, chunk_buf[0..n]);
     }
 
-    const parsed = std.json.parseFromSlice(WatchProgressUpdatePayload, allocator, body_data.items, .{}) catch |err| {
+    const parsed = std.json.parseFromSlice(WatchProgressUpdatePayload, allocator, body_data.items, .{
+        .ignore_unknown_fields = true,
+    }) catch |err| {
         std.debug.print("Failed to parse watch progress update JSON: {any}\n", .{err});
         request.respond("Bad Request", .{ .status = .bad_request }) catch return;
         return;

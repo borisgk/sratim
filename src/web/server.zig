@@ -147,10 +147,28 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             };
             continue;
 
+        // Route: API Metadata Search
+        } else if (std.mem.startsWith(u8, target, "/api/metadata/search") and method == .GET) {
+            metadata_handler.handleApiMetadataSearch(&request, allocator, io, config) catch |err| {
+                std.debug.print("API Metadata Search error: {}\n", .{err});
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                return;
+            };
+            continue;
+
         // Route: API Metadata Link
         } else if (std.mem.startsWith(u8, target, "/api/metadata/link") and method == .POST) {
             metadata_handler.handleApiMetadataLink(&request, allocator, io, database, config, &resp_buf) catch |err| {
                 std.debug.print("API Metadata Link error: {}\n", .{err});
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                return;
+            };
+            continue;
+
+        // Route: API Metadata Auto Link
+        } else if (std.mem.startsWith(u8, target, "/api/metadata/auto-link") and method == .POST) {
+            metadata_handler.handleApiMetadataAutoLink(&request, allocator, io, database, config, &resp_buf) catch |err| {
+                std.debug.print("API Metadata Auto Link error: {}\n", .{err});
                 request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
                 return;
             };
