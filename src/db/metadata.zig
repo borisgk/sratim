@@ -87,6 +87,36 @@ pub fn getMoviesMissingMetadata(database: *db_mod.Database, allocator: std.mem.A
     return list.toOwnedSlice(allocator);
 }
 
+pub fn getShowsMissingMetadata(database: *db_mod.Database, allocator: std.mem.Allocator) ![]MovieMissingMetadata {
+    var stmt = try database.prepare(
+        \\SELECT s.id, s.title 
+        \\FROM shows s
+        \\JOIN libraries l ON s.library_id = l.id
+        \\WHERE s.tmdb_id IS NULL 
+        \\  AND s.is_present = 1 
+        \\  AND l.type = 'Shows';
+    );
+    defer stmt.finalize();
+
+    var list = std.ArrayList(MovieMissingMetadata).empty;
+    defer list.deinit(allocator);
+
+    while (try stmt.step() == .row) {
+        const id = stmt.columnInt64(0);
+        const title_val = stmt.columnText(1);
+        var clean_name: []const u8 = "";
+        if (title_val) |cn| {
+            clean_name = try allocator.dupe(u8, cn);
+        }
+        try list.append(allocator, MovieMissingMetadata{
+            .id = id,
+            .clean_name = clean_name,
+        });
+    }
+
+    return list.toOwnedSlice(allocator);
+}
+
 pub fn saveMetadataById(
     database: *db_mod.Database,
     movie_id: i64,
@@ -109,6 +139,32 @@ pub fn saveMetadataById(
     if (poster_path) |p| try stmt.bindText(5, p) else try stmt.bindNull(5);
     if (backdrop_path) |b| try stmt.bindText(6, b) else try stmt.bindNull(6);
     if (release_date) |r| try stmt.bindText(7, r) else try stmt.bindNull(7);
+
+    _ = try stmt.step();
+}
+
+pub fn saveShowMetadataById(
+    database: *db_mod.Database,
+    show_id: i64,
+    tmdb_id: i64,
+    title: []const u8,
+    overview: ?[]const u8,
+    poster_path: ?[]const u8,
+    backdrop_path: ?[]const u8,
+    first_air_date: ?[]const u8,
+) !void {
+    _ = first_air_date; // Ignore for now as it's not in the schema
+    var stmt = try database.prepare(
+        \\UPDATE shows SET tmdb_id = ?2, title = ?3, overview = ?4, poster_path = ?5, backdrop_path = ?6 WHERE id = ?1;
+    );
+    defer stmt.finalize();
+
+    try stmt.bindInt64(1, show_id);
+    try stmt.bindInt64(2, tmdb_id);
+    try stmt.bindText(3, title);
+    if (overview) |o| try stmt.bindText(4, o) else try stmt.bindNull(4);
+    if (poster_path) |p| try stmt.bindText(5, p) else try stmt.bindNull(5);
+    if (backdrop_path) |b| try stmt.bindText(6, b) else try stmt.bindNull(6);
 
     _ = try stmt.step();
 }
@@ -194,6 +250,13 @@ pub fn markMetadataNotFound(database: *db_mod.Database, movie_id: i64) !void {
     var stmt = try database.prepare("UPDATE movies SET tmdb_id = 0 WHERE id = ?1;");
     defer stmt.finalize();
     try stmt.bindInt64(1, movie_id);
+    _ = try stmt.step();
+}
+
+pub fn markShowMetadataNotFound(database: *db_mod.Database, show_id: i64) !void {
+    var stmt = try database.prepare("UPDATE shows SET tmdb_id = 0 WHERE id = ?1;");
+    defer stmt.finalize();
+    try stmt.bindInt64(1, show_id);
     _ = try stmt.step();
 }
 

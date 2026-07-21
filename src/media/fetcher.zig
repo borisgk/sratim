@@ -86,6 +86,71 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
         }
         allocator.free(missing);
 
+        // Fetch TV Shows
+        const missing_shows = metadata_mod.getShowsMissingMetadata(database, allocator) catch |err| {
+            std.debug.print("TMDB fetcher error querying missing shows metadata: {}\n", .{err});
+            io.sleep(std.Io.Duration.fromSeconds(30), .awake) catch {};
+            continue;
+        };
+
+        if (missing_shows.len > 0) {
+            std.debug.print("TMDB fetcher found {d} shows missing metadata.\n", .{missing_shows.len});
+        }
+
+        for (missing_shows) |show| {
+            std.debug.print("TMDB fetcher processing show: {s}\n", .{show.clean_name});
+            
+            const parsed_name = tmdb.parseYearAndCleanName(allocator, show.clean_name) catch |err| {
+                std.debug.print("Error parsing name for show {s}: {}\n", .{show.clean_name, err});
+                continue;
+            };
+            defer {
+                if (parsed_name.clean.ptr != show.clean_name.ptr) allocator.free(parsed_name.clean);
+                if (parsed_name.year) |y| allocator.free(y);
+            }
+
+            const results = tmdb.searchShow(allocator, io, parsed_name.clean, parsed_name.year, token, proxy_url) catch |err| {
+                std.debug.print("TMDB fetcher error searching for show {s}: {}\n", .{show.clean_name, err});
+                io.sleep(std.Io.Duration.fromSeconds(1), .awake) catch {};
+                continue;
+            };
+            defer results.deinit();
+
+            if (results.value.results.len > 0) {
+                const first = results.value.results[0];
+                std.debug.print("TMDB fetcher found show match: {s}\n", .{first.name});
+                
+                tmdb.downloadImages(allocator, io, first.poster_path, first.backdrop_path, proxy_url) catch |err| {
+                    std.debug.print("TMDB fetcher error downloading images for show {s}: {}\n", .{show.clean_name, err});
+                };
+
+                metadata_mod.saveShowMetadataById(
+                    database,
+                    show.id,
+                    first.id,
+                    first.name,
+                    first.overview,
+                    first.poster_path,
+                    first.backdrop_path,
+                    first.first_air_date
+                ) catch |err| {
+                    std.debug.print("TMDB fetcher error saving metadata for show {s}: {}\n", .{show.clean_name, err});
+                };
+            } else {
+                std.debug.print("TMDB fetcher found NO SHOW MATCH for: {s}\n", .{show.clean_name});
+                metadata_mod.markShowMetadataNotFound(database, show.id) catch |err| {
+                    std.debug.print("TMDB fetcher error marking show not found for {s}: {}\n", .{show.clean_name, err});
+                };
+            }
+
+            io.sleep(std.Io.Duration.fromMilliseconds(500), .awake) catch {};
+        }
+
+        for (missing_shows) |show| {
+            allocator.free(show.clean_name);
+        }
+        allocator.free(missing_shows);
+
         // Sleep 30 seconds before polling again
         io.sleep(std.Io.Duration.fromSeconds(30), .awake) catch {};
     }

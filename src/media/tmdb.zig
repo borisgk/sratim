@@ -14,6 +14,19 @@ pub const TmdbSearchResponse = struct {
     results: []TmdbMovie,
 };
 
+pub const TmdbShow = struct {
+    id: i64,
+    name: []const u8,
+    overview: ?[]const u8 = null,
+    poster_path: ?[]const u8 = null,
+    backdrop_path: ?[]const u8 = null,
+    first_air_date: ?[]const u8 = null,
+};
+
+pub const TmdbShowSearchResponse = struct {
+    results: []TmdbShow,
+};
+
 fn writePercentEncoded(list: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
     const hex_chars = "0123456789ABCDEF";
     for (input) |ch| {
@@ -227,6 +240,91 @@ pub fn searchMovie(
 
     // Parse Response
     const response_parsed = try std.json.parseFromSlice(TmdbSearchResponse, allocator, response_body, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    });
+    return response_parsed;
+}
+
+pub fn searchShow(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    query: []const u8,
+    year: ?[]const u8,
+    token: []const u8,
+    proxy_url: ?[]const u8,
+) !std.json.Parsed(TmdbShowSearchResponse) {
+    _ = io;
+
+    var config = httpx.ClientConfig.defaults();
+    if (proxy_url) |p_url| {
+        if (p_url.len > 0) {
+            const uri = try std.Uri.parse(p_url);
+            const host_bytes = switch (uri.host.?) {
+                .raw => |r| r,
+                .percent_encoded => |p| p,
+            };
+
+            var kind: httpx.ProxyKind = .http;
+            if (std.mem.eql(u8, uri.scheme, "socks5") or
+                std.mem.eql(u8, uri.scheme, "socks5h") or
+                std.mem.eql(u8, uri.scheme, "socks"))
+            {
+                kind = .socks5h;
+            }
+
+            const port = uri.port orelse switch (kind) {
+                .socks5h => 1080,
+                .http => if (std.mem.eql(u8, uri.scheme, "https")) @as(u16, 443) else @as(u16, 80),
+            };
+
+            config = config.withProxy(.{
+                .kind = kind,
+                .host = host_bytes,
+                .port = port,
+                .username = null,
+                .password = null,
+            });
+        }
+    }
+
+    var client = httpx.Client.initWithConfig(allocator, config);
+    defer client.deinit();
+
+    var query_encoded = std.ArrayList(u8).empty;
+    defer query_encoded.deinit(allocator);
+    try writePercentEncoded(&query_encoded, allocator, query);
+
+    const search_url = if (year) |y|
+        try std.fmt.allocPrint(allocator, "https://api.themoviedb.org/3/search/tv?query={s}&first_air_date_year={s}", .{query_encoded.items, y})
+    else
+        try std.fmt.allocPrint(allocator, "https://api.themoviedb.org/3/search/tv?query={s}", .{query_encoded.items});
+    defer allocator.free(search_url);
+
+    std.debug.print("TMDB TV Request URL: {s}\n", .{search_url});
+    if (proxy_url) |p| {
+        if (p.len > 0) {
+            std.debug.print("TMDB TV Request Proxy: {s}\n", .{p});
+        }
+    }
+
+    var response = try client.get(search_url, .{
+        .bearer_token = token,
+        .headers = &[_][2][]const u8{
+            .{ "Accept", "application/json" },
+        },
+    });
+    defer response.deinit();
+
+    std.debug.print("TMDB TV Response Status: {d}\n", .{response.status.code});
+    const response_body = response.body orelse return error.EmptyResponseBody;
+    std.debug.print("TMDB TV Response Body: {s}\n", .{response_body});
+
+    if (!response.status.isSuccess()) {
+        return error.TmdbRequestFailed;
+    }
+
+    const response_parsed = try std.json.parseFromSlice(TmdbShowSearchResponse, allocator, response_body, .{
         .allocate = .alloc_always,
         .ignore_unknown_fields = true,
     });
