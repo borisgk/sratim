@@ -6,6 +6,7 @@ const db_mod = @import("../db/db.zig");
 const users_mod = @import("../db/users.zig");
 const session_mod = @import("../db/session.zig");
 const template_engine = @import("../core/template.zig");
+const minify = @import("../core/minify.zig");
 const library_mod = @import("../db/library.zig");
 const logging_mod = @import("../db/logging.zig");
 const config_mod = @import("../config.zig");
@@ -16,7 +17,7 @@ const library_handler = @import("handlers/library.zig");
 const browse_handler = @import("handlers/browse.zig");
 const watch_handler = @import("handlers/watch.zig");
 const metadata_handler = @import("handlers/metadata.zig");
-const global_css = @embedFile("style.css");
+const global_css: []const u8 = minify.minifyCss(@embedFile("style.css"));
 const favicon_ico = @embedFile("favicon.ico");
 const c = @import("../core/c.zig").c;
 

@@ -1,10 +1,11 @@
 const std = @import("std");
 const template_engine = @import("../core/template.zig");
+const minify = @import("../core/minify.zig");
 const db_mod = @import("../db/db.zig");
 const library_mod = @import("../db/library.zig");
 const logging_mod = @import("../db/logging.zig");
 const metadata_mod = @import("../db/metadata.zig");
-const global_css: []const u8 = @embedFile("style.css");
+const global_css: []const u8 = minify.minifyCss(@embedFile("style.css"));
 
 const video_extensions = [_][]const u8{ ".mkv", ".mp4", ".avi", ".ts", ".webm", ".mov" };
 
