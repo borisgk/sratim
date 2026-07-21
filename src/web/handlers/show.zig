@@ -49,7 +49,7 @@ pub fn handleShow(
     _ = backdrop_path;
 
     var ep_stmt = try database.prepare(
-        \\SELECT id, file_path, season, episode, is_present 
+        \\SELECT id, file_path, season, episode, is_present, title, overview, still_path
         \\FROM episodes 
         \\WHERE show_id = ?1 AND is_present = 1
         \\ORDER BY season ASC, episode ASC;
@@ -78,46 +78,65 @@ pub fn handleShow(
             try seasons_buf.appendSlice(allocator, season_header);
         }
 
-        const ep_row_start = try std.fmt.allocPrint(allocator,
-            \\<div class="movie-item">
-            \\    <div class="movie-card" data-name="Episode {d}">
-            \\        <button class="context-menu-btn" title="Actions">
-            \\            <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
-            \\                <circle cx="12" cy="5" r="2"/>
-            \\                <circle cx="12" cy="12" r="2"/>
-            \\                <circle cx="12" cy="19" r="2"/>
-            \\            </svg>
-            \\        </button>
-            \\        <div class="context-dropdown">
-            \\            <a class="dropdown-item" style="text-decoration: none;" href="/player?episode_id={d}">Quick Play</a>
-            \\        </div>
-            \\        <a href="/player?episode_id={d}" class="play-link"></a>
-            \\        <div class="card-content">
-            \\            <div class="card-top">
-            \\                <div class="icon-wrapper">
-            \\                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
-            \\                        <path d="M15 10l5-3.07v10.14L15 14v-4z" stroke-linecap="round" stroke-linejoin="round"/>
-            \\                        <rect x="4" y="6" width="11" height="12" rx="2" stroke-linecap="round" stroke-linejoin="round"/>
-            \\                    </svg>
+        const ep_title_opt = ep_stmt.columnText(5);
+        const ep_still_path_opt = ep_stmt.columnText(7);
+        const basename = std.fs.path.basename(file_path);
+        
+        var buf: [16]u8 = undefined;
+        const ep_num = try std.fmt.bufPrint(&buf, "Episode {d}", .{episode});
+
+        const display_title = if (ep_title_opt) |t| t else basename;
+
+        try seasons_buf.appendSlice(allocator, "    <div class=\"movie-item\">\n");
+        
+        if (ep_still_path_opt != null and ep_still_path_opt.?.len > 0) {
+            try seasons_buf.appendSlice(allocator, "        <div class=\"movie-card has-poster\" data-name=\"");
+        } else {
+            try seasons_buf.appendSlice(allocator, "        <div class=\"movie-card\" data-name=\"");
+        }
+        try escapeHtml(&seasons_buf, allocator, display_title);
+        try seasons_buf.appendSlice(allocator, "\">\n");
+        
+        if (ep_still_path_opt != null and ep_still_path_opt.?.len > 0) {
+            try seasons_buf.appendSlice(allocator, "            <img class=\"poster-img\" loading=\"lazy\" alt=\"still\" src=\"/images/backdrops/original");
+            try seasons_buf.appendSlice(allocator, ep_still_path_opt.?);
+            try seasons_buf.appendSlice(allocator, "\">\n");
+        }
+
+        const dropdown_content = try std.fmt.allocPrint(allocator,
+            \\            <button class="context-menu-btn" title="Actions">
+            \\                <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+            \\                    <circle cx="12" cy="5" r="2"/>
+            \\                    <circle cx="12" cy="12" r="2"/>
+            \\                    <circle cx="12" cy="19" r="2"/>
+            \\                </svg>
+            \\            </button>
+            \\            <div class="context-dropdown">
+            \\                <a class="dropdown-item" style="text-decoration: none;" href="/player?episode_id={d}">Quick Play</a>
+            \\            </div>
+            \\            <a href="/player?episode_id={d}" class="play-link"></a>
+            \\            <div class="card-content">
+            \\                <div class="card-top">
+            \\                    <div class="icon-wrapper">
+            \\                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+            \\                            <path d="M15 10l5-3.07v10.14L15 14v-4z" stroke-linecap="round" stroke-linejoin="round"/>
+            \\                            <rect x="4" y="6" width="11" height="12" rx="2" stroke-linecap="round" stroke-linejoin="round"/>
+            \\                        </svg>
+            \\                    </div>
             \\                </div>
             \\            </div>
             \\        </div>
-            \\    </div>
-            \\    <h3 class="movie-title" title="
-        , .{ episode, ep_id, ep_id });
-        defer allocator.free(ep_row_start);
-        try seasons_buf.appendSlice(allocator, ep_row_start);
+            \\        <h3 class="movie-title" title="
+        , .{ ep_id, ep_id });
+        defer allocator.free(dropdown_content);
+        try seasons_buf.appendSlice(allocator, dropdown_content);
 
-        const basename = std.fs.path.basename(file_path);
-        try escapeHtml(&seasons_buf, allocator, basename);
-        try seasons_buf.appendSlice(allocator, "\">Episode ");
-        
-        var buf: [16]u8 = undefined;
-        const ep_num = try std.fmt.bufPrint(&buf, "{d}", .{episode});
+        try escapeHtml(&seasons_buf, allocator, display_title);
+        try seasons_buf.appendSlice(allocator, "\">");
         try seasons_buf.appendSlice(allocator, ep_num);
         try seasons_buf.appendSlice(allocator, " - ");
-        try escapeHtml(&seasons_buf, allocator, basename);
-        try seasons_buf.appendSlice(allocator, "</h3>\n</div>\n");
+        try escapeHtml(&seasons_buf, allocator, display_title);
+        try seasons_buf.appendSlice(allocator, "</h3>\n    </div>\n");
     }
     
     if (current_season != -1) {
