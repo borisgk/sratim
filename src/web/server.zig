@@ -17,6 +17,7 @@ const library_handler = @import("handlers/library.zig");
 const browse_handler = @import("handlers/browse.zig");
 const watch_handler = @import("handlers/watch.zig");
 const metadata_handler = @import("handlers/metadata.zig");
+const show_handler = @import("handlers/show.zig");
 const global_css: []const u8 = minify.minifyCss(@embedFile("style.css"));
 const favicon_ico = @embedFile("favicon.ico");
 const font_inter = @embedFile("fonts/inter.woff2");
@@ -57,19 +58,18 @@ const ResolvedMovie = struct {
 /// Looks up the movie, resolves the library base path, joins them,
 /// and performs a path traversal check. Returns null if the movie
 /// is not found; returns error on path resolution failures.
-fn resolveMoviePath(
+fn resolveMediaPath(
     database: *db_mod.Database,
     allocator: std.mem.Allocator,
-    movie_id: i64,
+    info_opt: ?metadata_mod.MovieInfo,
     working_folder: []const u8,
 ) !?ResolvedMovie {
-    const info = metadata_mod.getMovieInfoById(database, allocator, movie_id) catch return null;
-    if (info == null) return null;
-    const movie_info = info.?;
+    if (info_opt == null) return null;
+    const media_info = info_opt.?;
 
     // Determine the base path: use the library path if available, otherwise fall back to working_folder
     var base_path = try allocator.dupe(u8, working_folder);
-    if (library_mod.getLibraryById(database, allocator, movie_info.library_id) catch null) |lib| {
+    if (library_mod.getLibraryById(database, allocator, media_info.library_id) catch null) |lib| {
         allocator.free(base_path);
         base_path = try allocator.dupe(u8, lib.path);
         allocator.free(lib.name);
@@ -78,7 +78,7 @@ fn resolveMoviePath(
         if (lib.ignore_patterns) |pat| allocator.free(pat);
     }
 
-    const full_path = try std.fs.path.join(allocator, &[_][]const u8{ base_path, movie_info.file_path });
+    const full_path = try std.fs.path.join(allocator, &[_][]const u8{ base_path, media_info.file_path });
     const resolved_path = try std.fs.path.resolve(allocator, &[_][]const u8{full_path});
     const abs_base = try std.fs.path.resolve(allocator, &[_][]const u8{base_path});
     allocator.free(base_path);
@@ -90,7 +90,7 @@ fn resolveMoviePath(
 
     return ResolvedMovie{
         .resolved_path = resolved_path,
-        .file_path = movie_info.file_path,
+        .file_path = media_info.file_path,
     };
 }
 
@@ -355,6 +355,19 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                 request.respond("Library not found", .{ .status = .not_found }) catch return;
             }
 
+        // Route: Show Details
+        } else if (std.mem.startsWith(u8, target, "/show")) {
+            const show_id = parseQueryInt(i64, target, "id") orelse {
+                request.respond("Missing id param", .{ .status = .bad_request }) catch return;
+                continue;
+            };
+
+            show_handler.handleShow(allocator, &request, database, logs_database, session_info.?.username, show_id) catch |err| {
+                std.debug.print("Show page error: {}\n", .{err});
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+            };
+            continue;
+
         } else if (std.mem.startsWith(u8, target, "/details")) {
             const movie_id = parseQueryInt(i64, target, "id") orelse {
                 request.respond("Missing id param", .{ .status = .bad_request }) catch return;
@@ -380,12 +393,20 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
 
         // Route: Web UI (Player)
         } else if (std.mem.startsWith(u8, target, "/player")) {
-            const movie_id = parseQueryInt(i64, target, "id") orelse {
-                request.respond("Missing movie id parameter", .{ .status = .bad_request }) catch return;
+            const movie_id = parseQueryInt(i64, target, "id");
+            const episode_id = parseQueryInt(i64, target, "episode_id");
+            
+            if (movie_id == null and episode_id == null) {
+                request.respond("Missing movie id or episode id parameter", .{ .status = .bad_request }) catch return;
                 continue;
-            };
+            }
 
-            const resolved = resolveMoviePath(database, allocator, movie_id, working_folder) catch |err| {
+            const media_info_opt = if (movie_id != null)
+                metadata_mod.getMovieInfoById(database, allocator, movie_id.?) catch null
+            else
+                metadata_mod.getEpisodeInfoById(database, allocator, episode_id.?) catch null;
+
+            const resolved = resolveMediaPath(database, allocator, media_info_opt, working_folder) catch |err| {
                 if (err == error.PathTraversal) {
                     request.respond("Forbidden", .{ .status = .forbidden }) catch return;
                 } else {
@@ -394,7 +415,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                 continue;
             };
             if (resolved == null) {
-                request.respond("Movie not found", .{ .status = .not_found }) catch return;
+                request.respond("Media not found", .{ .status = .not_found }) catch return;
                 continue;
             }
 
@@ -430,8 +451,20 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             const audio_tracks_json = json_out.items;
 
             const start_opt = parseQueryFloat(target, "start");
-            const resume_pos = if (start_opt) |s| s else logging_mod.getPlaybackProgress(logs_database, session_info.?.username, movie_id) catch 0.0;
-            const html_content = html.generatePlayerHtml(allocator, movie_id, media_info.duration, media_info.codec_str, audio_tracks_json, resume_pos) catch return;
+            const resume_pos = if (start_opt) |s| s else 
+                if (movie_id != null) 
+                    logging_mod.getPlaybackProgress(logs_database, session_info.?.username, movie_id.?) catch 0.0
+                else
+                    logging_mod.getEpisodePlaybackProgress(logs_database, session_info.?.username, episode_id.?) catch 0.0;
+            
+            // Pass the media query string to the player
+            const media_query = if (movie_id != null) 
+                std.fmt.allocPrint(allocator, "id={d}", .{movie_id.?}) catch return
+            else 
+                std.fmt.allocPrint(allocator, "episode_id={d}", .{episode_id.?}) catch return;
+            defer allocator.free(media_query);
+
+            const html_content = html.generatePlayerHtml(allocator, media_query, media_info.duration, media_info.codec_str, audio_tracks_json, resume_pos) catch return;
 
             request.respond(html_content, .{
                 .status = .ok,
@@ -442,12 +475,20 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             
         // Route: Media Streamer
         } else if (std.mem.startsWith(u8, target, "/stream")) {
-            const movie_id = parseQueryInt(i64, target, "id") orelse {
-                request.respond("Missing file parameter", .{ .status = .bad_request }) catch return;
+            const movie_id = parseQueryInt(i64, target, "id");
+            const episode_id = parseQueryInt(i64, target, "episode_id");
+            
+            if (movie_id == null and episode_id == null) {
+                request.respond("Missing id or episode_id parameter", .{ .status = .bad_request }) catch return;
                 continue;
-            };
+            }
 
-            const resolved = resolveMoviePath(database, allocator, movie_id, working_folder) catch |err| {
+            const media_info_opt = if (movie_id != null)
+                metadata_mod.getMovieInfoById(database, allocator, movie_id.?) catch null
+            else
+                metadata_mod.getEpisodeInfoById(database, allocator, episode_id.?) catch null;
+
+            const resolved = resolveMediaPath(database, allocator, media_info_opt, working_folder) catch |err| {
                 if (err == error.PathTraversal) {
                     request.respond("Forbidden", .{ .status = .forbidden }) catch return;
                 } else {

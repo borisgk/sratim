@@ -38,6 +38,25 @@ pub fn getMovieInfoById(database: *db_mod.Database, allocator: std.mem.Allocator
     return MovieInfo{ .library_id = library_id, .file_path = file_path_dup };
 }
 
+pub fn getEpisodeInfoById(database: *db_mod.Database, allocator: std.mem.Allocator, episode_id: i64) !?MovieInfo {
+    var stmt = try database.prepare(
+        \\SELECT s.library_id, e.file_path 
+        \\FROM episodes e 
+        \\JOIN shows s ON e.show_id = s.id 
+        \\WHERE e.id = ?1;
+    );
+    defer stmt.finalize();
+    try stmt.bindInt64(1, episode_id);
+    if (try stmt.step() != .row) return null;
+    const library_id = stmt.columnInt64(0);
+    const file_path_val = stmt.columnText(1);
+    var file_path_dup: []const u8 = "";
+    if (file_path_val) |fp| {
+        file_path_dup = try allocator.dupe(u8, fp);
+    }
+    return MovieInfo{ .library_id = library_id, .file_path = file_path_dup };
+}
+
 pub fn getMoviesMissingMetadata(database: *db_mod.Database, allocator: std.mem.Allocator) ![]MovieMissingMetadata {
     var stmt = try database.prepare(
         \\SELECT m.id, m.clean_name 

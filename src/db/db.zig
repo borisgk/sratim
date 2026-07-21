@@ -227,6 +227,33 @@ pub fn initSchema(database: *Database) !void {
             \\);
         );
     }
+    
+    try database.exec(
+        \\CREATE TABLE IF NOT EXISTS shows (
+        \\    id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\    library_id INTEGER NOT NULL,
+        \\    path TEXT NOT NULL,
+        \\    title TEXT NOT NULL,
+        \\    is_present INTEGER NOT NULL DEFAULT 1,
+        \\    tmdb_id INTEGER,
+        \\    overview TEXT,
+        \\    poster_path TEXT,
+        \\    backdrop_path TEXT,
+        \\    UNIQUE(library_id, path)
+        \\);
+    );
+
+    try database.exec(
+        \\CREATE TABLE IF NOT EXISTS episodes (
+        \\    id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\    show_id INTEGER NOT NULL,
+        \\    file_path TEXT NOT NULL,
+        \\    season INTEGER NOT NULL DEFAULT 0,
+        \\    episode INTEGER NOT NULL DEFAULT 0,
+        \\    is_present INTEGER NOT NULL DEFAULT 1,
+        \\    UNIQUE(show_id, file_path)
+        \\);
+    );
 
     // Migration logic from old tables
     // We ignore errors since this is just for safe transition, and old tables might not exist

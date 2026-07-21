@@ -8,6 +8,12 @@ pub const ProgressInfo = struct {
     duration: f64,
 };
 
+pub const EpisodeProgressInfo = struct {
+    episode_id: i64,
+    position: f64,
+    duration: f64,
+};
+
 /// Initializes the logging and progress database schema.
 pub fn initLogsSchema(database: *db_mod.Database) !void {
     try database.exec(
@@ -63,6 +69,26 @@ pub fn initLogsSchema(database: *db_mod.Database) !void {
         \\    duration REAL NOT NULL,
         \\    updated_at INTEGER NOT NULL,
         \\    PRIMARY KEY(username, movie_id)
+        \\);
+    );
+    try database.exec(
+        \\CREATE TABLE IF NOT EXISTS episode_playback_logs (
+        \\    id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\    username TEXT NOT NULL,
+        \\    episode_id INTEGER NOT NULL,
+        \\    event_type TEXT NOT NULL CHECK(event_type IN ('start', 'stop', 'seek', 'progress')),
+        \\    position REAL NOT NULL,
+        \\    timestamp INTEGER NOT NULL
+        \\);
+    );
+    try database.exec(
+        \\CREATE TABLE IF NOT EXISTS episode_playback_progress (
+        \\    username TEXT NOT NULL,
+        \\    episode_id INTEGER NOT NULL,
+        \\    position REAL NOT NULL,
+        \\    duration REAL NOT NULL,
+        \\    updated_at INTEGER NOT NULL,
+        \\    PRIMARY KEY(username, episode_id)
         \\);
     );
 }
@@ -176,6 +202,103 @@ pub fn resetPlaybackProgress(database: *db_mod.Database, username: []const u8, m
 
     try stmt.bindText(1, username);
     try stmt.bindInt64(2, movie_id);
+
+    _ = try stmt.step();
+}
+
+/// Logs a specific episode playback watch event.
+pub fn logEpisodePlaybackEvent(database: *db_mod.Database, username: []const u8, episode_id: i64, event_type: []const u8, position: f64) !void {
+    const now = c.time(null);
+    var stmt = try database.prepare("INSERT INTO episode_playback_logs (username, episode_id, event_type, position, timestamp) VALUES (?1, ?2, ?3, ?4, ?5);");
+    defer stmt.finalize();
+
+    try stmt.bindText(1, username);
+    try stmt.bindInt64(2, episode_id);
+    try stmt.bindText(3, event_type);
+    
+    if (c.sqlite3_bind_double(stmt.stmt, 4, position) != c.SQLITE_OK) {
+        return error.SqliteBindFailed;
+    }
+    
+    try stmt.bindInt64(5, now);
+
+    _ = try stmt.step();
+}
+
+/// Saves the user's current playback position progress for an episode.
+pub fn saveEpisodePlaybackProgress(database: *db_mod.Database, username: []const u8, episode_id: i64, position: f64, duration: f64) !void {
+    const now = c.time(null);
+    var stmt = try database.prepare(
+        \\INSERT INTO episode_playback_progress (username, episode_id, position, duration, updated_at)
+        \\VALUES (?1, ?2, ?3, ?4, ?5)
+        \\ON CONFLICT(username, episode_id) DO UPDATE SET
+        \\  position = excluded.position,
+        \\  duration = excluded.duration,
+        \\  updated_at = excluded.updated_at;
+    );
+    defer stmt.finalize();
+
+    try stmt.bindText(1, username);
+    try stmt.bindInt64(2, episode_id);
+
+    if (c.sqlite3_bind_double(stmt.stmt, 3, position) != c.SQLITE_OK) {
+        return error.SqliteBindFailed;
+    }
+    if (c.sqlite3_bind_double(stmt.stmt, 4, duration) != c.SQLITE_OK) {
+        return error.SqliteBindFailed;
+    }
+
+    try stmt.bindInt64(5, now);
+
+    _ = try stmt.step();
+}
+
+/// Retrieves the user's last saved playback position for a specific episode.
+pub fn getEpisodePlaybackProgress(database: *db_mod.Database, username: []const u8, episode_id: i64) !f64 {
+    var stmt = try database.prepare("SELECT position FROM episode_playback_progress WHERE username = ?1 AND episode_id = ?2;");
+    defer stmt.finalize();
+
+    try stmt.bindText(1, username);
+    try stmt.bindInt64(2, episode_id);
+
+    if (try stmt.step() == .row) {
+        return c.sqlite3_column_double(stmt.stmt, 0);
+    }
+    return 0.0;
+}
+
+/// Retrieves all episode playback progress records for a given user.
+pub fn getEpisodeProgressForUser(database: *db_mod.Database, allocator: std.mem.Allocator, username: []const u8) ![]EpisodeProgressInfo {
+    var list = std.ArrayList(EpisodeProgressInfo).empty;
+    defer list.deinit(allocator);
+
+    var stmt = try database.prepare("SELECT episode_id, position, duration FROM episode_playback_progress WHERE username = ?1;");
+    defer stmt.finalize();
+
+    try stmt.bindText(1, username);
+
+    while (try stmt.step() == .row) {
+        const episode_id = stmt.columnInt64(0);
+        const position = c.sqlite3_column_double(stmt.stmt, 1);
+        const duration = c.sqlite3_column_double(stmt.stmt, 2);
+
+        try list.append(allocator, .{
+            .episode_id = episode_id,
+            .position = position,
+            .duration = duration,
+        });
+    }
+
+    return try list.toOwnedSlice(allocator);
+}
+
+/// Resets the user's playback position to 0 for an episode.
+pub fn resetEpisodePlaybackProgress(database: *db_mod.Database, username: []const u8, episode_id: i64) !void {
+    var stmt = try database.prepare("DELETE FROM episode_playback_progress WHERE username = ?1 AND episode_id = ?2;");
+    defer stmt.finalize();
+
+    try stmt.bindText(1, username);
+    try stmt.bindInt64(2, episode_id);
 
     _ = try stmt.step();
 }

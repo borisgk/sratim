@@ -137,23 +137,82 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
         allocator.free(progress_list);
     }
 
-    var stmt = try database.prepare(
-        \\SELECT id, file_path, clean_name, title, poster_path 
-        \\FROM movies
-        \\WHERE library_id = ?1 AND is_present = 1
-        \\ORDER BY 
-        \\    CASE 
-        \\        WHEN COALESCE(title, clean_name) LIKE 'The %' THEN SUBSTR(COALESCE(title, clean_name), 5)
-        \\        WHEN COALESCE(title, clean_name) LIKE 'A %' THEN SUBSTR(COALESCE(title, clean_name), 3)
-        \\        WHEN COALESCE(title, clean_name) LIKE 'An %' THEN SUBSTR(COALESCE(title, clean_name), 4)
-        \\        ELSE COALESCE(title, clean_name)
-        \\    END COLLATE NOCASE ASC;
-    );
-    defer stmt.finalize();
-    try stmt.bindInt64(1, lib.id);
-
     var cards_buf = std.ArrayList(u8).empty;
     defer cards_buf.deinit(allocator);
+
+    if (lib.lib_type == .Shows) {
+        var stmt = try database.prepare(
+            \\SELECT id, title, poster_path 
+            \\FROM shows
+            \\WHERE library_id = ?1 AND is_present = 1
+            \\ORDER BY 
+            \\    CASE 
+            \\        WHEN title LIKE 'The %' THEN SUBSTR(title, 5)
+            \\        WHEN title LIKE 'A %' THEN SUBSTR(title, 3)
+            \\        WHEN title LIKE 'An %' THEN SUBSTR(title, 4)
+            \\        ELSE title
+            \\    END COLLATE NOCASE ASC;
+        );
+        defer stmt.finalize();
+        try stmt.bindInt64(1, lib.id);
+
+        while ((try stmt.step()) == .row) {
+            const show_id = stmt.columnInt64(0);
+            const title = stmt.columnText(1).?;
+            const poster_path_opt = stmt.columnText(2);
+
+            try cards_buf.appendSlice(allocator, "    <div class=\"movie-item\">\n");
+            if (poster_path_opt != null and poster_path_opt.?.len > 0) {
+                try cards_buf.appendSlice(allocator, "        <div class=\"movie-card has-poster\" data-name=\"");
+            } else {
+                try cards_buf.appendSlice(allocator, "        <div class=\"movie-card\" data-name=\"");
+            }
+            try escapeHtml(&cards_buf, allocator, title);
+            try cards_buf.appendSlice(allocator, "\">\n");
+            
+            if (poster_path_opt != null and poster_path_opt.?.len > 0) {
+                try cards_buf.appendSlice(allocator, "            <img class=\"poster-img\" loading=\"lazy\" alt=\"poster\" src=\"/images/posters/w185");
+                try cards_buf.appendSlice(allocator, poster_path_opt.?);
+                try cards_buf.appendSlice(allocator, "\">\n");
+            }
+
+            // No quick actions for shows, just the link to the show details
+            const dropdown_content = try std.fmt.allocPrint(allocator,
+                \\            <a href="/show?id={d}" class="play-link"></a>
+                \\            <div class="card-content">
+                \\                <div class="card-top">
+                \\                    <div class="icon-wrapper">
+                \\                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+                \\                            <rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect>
+                \\                            <polyline points="17 2 12 7 7 2"></polyline>
+                \\                        </svg>
+                \\                    </div>
+                \\                </div>
+                \\            </div>
+                \\
+            , .{ show_id });
+            defer allocator.free(dropdown_content);
+            try cards_buf.appendSlice(allocator, dropdown_content);
+
+            try cards_buf.appendSlice(allocator, "        </div>\n        <h3 class=\"movie-title\">");
+            try escapeHtml(&cards_buf, allocator, title);
+            try cards_buf.appendSlice(allocator, "</h3>\n    </div>\n");
+        }
+    } else {
+        var stmt = try database.prepare(
+            \\SELECT id, file_path, clean_name, title, poster_path 
+            \\FROM movies
+            \\WHERE library_id = ?1 AND is_present = 1
+            \\ORDER BY 
+            \\    CASE 
+            \\        WHEN COALESCE(title, clean_name) LIKE 'The %' THEN SUBSTR(COALESCE(title, clean_name), 5)
+            \\        WHEN COALESCE(title, clean_name) LIKE 'A %' THEN SUBSTR(COALESCE(title, clean_name), 3)
+            \\        WHEN COALESCE(title, clean_name) LIKE 'An %' THEN SUBSTR(COALESCE(title, clean_name), 4)
+            \\        ELSE COALESCE(title, clean_name)
+            \\    END COLLATE NOCASE ASC;
+        );
+        defer stmt.finalize();
+        try stmt.bindInt64(1, lib.id);
 
     while ((try stmt.step()) == .row) {
         const movie_id = stmt.columnInt64(0);
@@ -229,6 +288,7 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
         try cards_buf.appendSlice(allocator, "        </div>\n        <h3 class=\"movie-title\">");
         try escapeHtml(&cards_buf, allocator, display_title);
         try cards_buf.appendSlice(allocator, "</h3>\n    </div>\n");
+    }
     }
 
     return try template_engine.render(allocator, @embedFile("templates/library_view.html"), .{

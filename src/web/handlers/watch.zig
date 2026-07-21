@@ -6,7 +6,8 @@ const library_mod = @import("../../db/library.zig");
 const streamer = @import("../../media/streamer.zig");
 
 const WatchEventPayload = struct {
-    movie_id: i64,
+    movie_id: ?i64 = null,
+    episode_id: ?i64 = null,
     event: []const u8,
     position: f64,
     duration: f64,
@@ -33,8 +34,16 @@ pub fn handleApiWatchEvent(request: *std.http.Server.Request, allocator: std.mem
 
     const payload = parsed.value;
 
-    try logging_mod.logPlaybackEvent(logs_database, username, payload.movie_id, payload.event, payload.position);
-    try logging_mod.savePlaybackProgress(logs_database, username, payload.movie_id, payload.position, payload.duration);
+    if (payload.movie_id) |movie_id| {
+        try logging_mod.logPlaybackEvent(logs_database, username, movie_id, payload.event, payload.position);
+        try logging_mod.savePlaybackProgress(logs_database, username, movie_id, payload.position, payload.duration);
+    } else if (payload.episode_id) |episode_id| {
+        try logging_mod.logEpisodePlaybackEvent(logs_database, username, episode_id, payload.event, payload.position);
+        try logging_mod.saveEpisodePlaybackProgress(logs_database, username, episode_id, payload.position, payload.duration);
+    } else {
+        request.respond("Missing movie_id or episode_id", .{ .status = .bad_request }) catch return;
+        return;
+    }
 
     request.respond("OK", .{ .status = .ok }) catch return;
 }
