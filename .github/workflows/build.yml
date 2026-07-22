@@ -28,7 +28,7 @@ jobs:
 
       - name: Build Binary (-Doptimize=ReleaseFast -Dcpu=silvermont)
         run: |
-          /opt/zig/zig build -Doptimize=ReleaseFast -Dtarget=x86_64-linux-gnu -Dcpu=silvermont
+          /opt/zig/zig build -Doptimize=ReleaseFast -Dcpu=silvermont
 
       - name: Upload Binary Artifact
         uses: actions/upload-artifact@v4
