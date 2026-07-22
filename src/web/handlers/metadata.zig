@@ -190,6 +190,8 @@ pub fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: s
             first_show.first_air_date,
         );
 
+        try metadata_mod.resetShowEpisodesMetadata(database, show_id);
+
         request.respond("OK", .{ .status = .ok }) catch return;
         return;
     }
@@ -321,6 +323,8 @@ pub fn handleApiMetadataManualLink(request: *std.http.Server.Request, allocator:
             show.backdrop_path,
             show.first_air_date,
         );
+
+        try metadata_mod.resetShowEpisodesMetadata(database, show_id);
 
         request.respond("OK", .{ .status = .ok }) catch return;
         return;

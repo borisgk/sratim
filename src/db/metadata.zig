@@ -335,6 +335,13 @@ pub fn markShowMetadataNotFound(database: *db_mod.Database, show_id: i64) !void 
     _ = try stmt.step();
 }
 
+pub fn resetShowEpisodesMetadata(database: *db_mod.Database, show_id: i64) !void {
+    var stmt = try database.prepare("UPDATE episodes SET tmdb_id = NULL, title = NULL, overview = NULL, still_path = NULL WHERE show_id = ?1;");
+    defer stmt.finalize();
+    try stmt.bindInt64(1, show_id);
+    _ = try stmt.step();
+}
+
 test "metadata: save, get and delete movie metadata" {
     const allocator = std.testing.allocator;
     var db = try db_mod.Database.open(":memory:");
@@ -364,4 +371,23 @@ test "metadata: save, get and delete movie metadata" {
     try deleteMetadataById(&db, 1);
     const meta_nil = try getMetadataById(&db, allocator, 1);
     try std.testing.expect(meta_nil == null);
+}
+
+test "metadata: reset show episodes metadata" {
+    var db = try db_mod.Database.open(":memory:");
+    defer db.close();
+
+    try db_mod.initSchema(&db);
+
+    _ = try db.exec("INSERT INTO libraries (name, path, type) VALUES ('Shows', '/tmp/shows', 'Shows')");
+    _ = try db.exec("INSERT INTO shows (id, library_id, path, title) VALUES (1, 1, 'Show1', 'Test Show')");
+    _ = try db.exec("INSERT INTO episodes (id, show_id, file_path, season, episode, tmdb_id, title) VALUES (1, 1, 'ep1.mp4', 1, 1, 999, 'Old Title')");
+
+    try resetShowEpisodesMetadata(&db, 1);
+
+    var stmt = try db.prepare("SELECT tmdb_id, title FROM episodes WHERE id = 1;");
+    defer stmt.finalize();
+    try std.testing.expect((try stmt.step()) == .row);
+    try std.testing.expect(stmt.columnText(0) == null);
+    try std.testing.expect(stmt.columnText(1) == null);
 }
