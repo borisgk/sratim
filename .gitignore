@@ -15,4 +15,4 @@ images/
 public/
 AGENTS.md
 .DS_Store
-
+*.sh
