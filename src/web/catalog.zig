@@ -49,7 +49,7 @@ fn escapeHtml(list: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []c
 }
 
 /// Generates the HTML catalog of libraries.
-pub fn generateHtml(allocator: std.mem.Allocator, database: *db_mod.Database) ![]u8 {
+pub fn generateHtml(allocator: std.mem.Allocator, database: *db_mod.Database, is_admin: bool) ![]u8 {
     const libraries = try library_mod.getLibraries(database, allocator);
     defer {
         for (libraries) |lib| {
@@ -113,9 +113,21 @@ pub fn generateHtml(allocator: std.mem.Allocator, database: *db_mod.Database) ![
         }
     }
 
+    const admin_link_html = if (is_admin)
+        \\<a href="/admin" class="admin-btn">
+        \\    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+        \\        <path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/>
+        \\        <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
+        \\    </svg>
+        \\    Admin
+        \\</a>
+    else
+        "";
+
     return template_engine.render(allocator, @embedFile("templates/catalog.html"), .{
         .INLINE_CSS = global_css,
         .LIBRARY_CARDS = cards_buf.items,
+        .ADMIN_LINK = admin_link_html,
     });
 }
 

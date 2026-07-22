@@ -242,10 +242,11 @@ pub fn scanLibraryById(database: *db_mod.Database, allocator: std.mem.Allocator,
     }
 
     var insert_stmt = try database.prepare(
-        \\INSERT INTO movies (library_id, file_path, clean_name, is_present)
-        \\VALUES (?1, ?2, ?3, 1)
+        \\INSERT INTO movies (library_id, file_path, clean_name, is_present, file_size)
+        \\VALUES (?1, ?2, ?3, 1, ?4)
         \\ON CONFLICT(library_id, file_path) DO UPDATE SET 
         \\    clean_name = excluded.clean_name,
+        \\    file_size = excluded.file_size,
         \\    is_present = 1;
     );
     defer insert_stmt.finalize();
@@ -261,11 +262,12 @@ pub fn scanLibraryById(database: *db_mod.Database, allocator: std.mem.Allocator,
     defer insert_show_stmt.finalize();
 
     var insert_ep_stmt = try database.prepare(
-        \\INSERT INTO episodes (show_id, file_path, season, episode, is_present)
-        \\VALUES (?1, ?2, ?3, ?4, 1)
+        \\INSERT INTO episodes (show_id, file_path, season, episode, is_present, file_size)
+        \\VALUES (?1, ?2, ?3, ?4, 1, ?5)
         \\ON CONFLICT(show_id, file_path) DO UPDATE SET 
         \\    season = excluded.season,
         \\    episode = excluded.episode,
+        \\    file_size = excluded.file_size,
         \\    is_present = 1;
     );
     defer insert_ep_stmt.finalize();
@@ -329,12 +331,15 @@ fn scanSingleLibraryInternal(
                     defer allocator.free(rel_ep_path);
 
                     const parsed = parseSeasonEpisode(ep_entry.basename);
+                    const ep_stat = ep_entry.dir.statFile(io, ep_entry.basename, .{}) catch null;
+                    const file_size: i64 = if (ep_stat) |st| @intCast(st.size) else 0;
 
                     insert_ep_stmt.reset() catch continue;
                     insert_ep_stmt.bindInt64(1, show_id) catch continue;
                     insert_ep_stmt.bindText(2, rel_ep_path) catch continue;
                     insert_ep_stmt.bindInt64(3, parsed.season) catch continue;
                     insert_ep_stmt.bindInt64(4, parsed.episode) catch continue;
+                    insert_ep_stmt.bindInt64(5, file_size) catch continue;
                     _ = insert_ep_stmt.step() catch |err| {
                         std.debug.print("Failed to insert episode file {s}: {}\n", .{rel_ep_path, err});
                     };
@@ -370,11 +375,14 @@ fn scanSingleLibraryInternal(
                 const ext = std.fs.path.extension(entry.basename);
                 const ext_idx = entry.basename.len - ext.len;
                 const clean_name = entry.basename[0..ext_idx];
+                const movie_stat = dir.statFile(io, entry.path, .{}) catch null;
+                const file_size: i64 = if (movie_stat) |st| @intCast(st.size) else 0;
 
                 insert_stmt.reset() catch continue;
                 insert_stmt.bindInt64(1, lib.id) catch continue;
                 insert_stmt.bindText(2, entry.path) catch continue;
                 insert_stmt.bindText(3, clean_name) catch continue;
+                insert_stmt.bindInt64(4, file_size) catch continue;
                 _ = insert_stmt.step() catch |err| {
                     std.debug.print("Failed to insert library file {s}: {}\n", .{entry.path, err});
                 };
@@ -413,10 +421,11 @@ pub fn scanLibraryFiles(database: *db_mod.Database, allocator: std.mem.Allocator
 
     // Prepare insert statements
     var insert_stmt = try database.prepare(
-        \\INSERT INTO movies (library_id, file_path, clean_name, is_present)
-        \\VALUES (?1, ?2, ?3, 1)
+        \\INSERT INTO movies (library_id, file_path, clean_name, is_present, file_size)
+        \\VALUES (?1, ?2, ?3, 1, ?4)
         \\ON CONFLICT(library_id, file_path) DO UPDATE SET 
         \\    clean_name = excluded.clean_name,
+        \\    file_size = excluded.file_size,
         \\    is_present = 1;
     );
     defer insert_stmt.finalize();
@@ -432,11 +441,12 @@ pub fn scanLibraryFiles(database: *db_mod.Database, allocator: std.mem.Allocator
     defer insert_show_stmt.finalize();
 
     var insert_ep_stmt = try database.prepare(
-        \\INSERT INTO episodes (show_id, file_path, season, episode, is_present)
-        \\VALUES (?1, ?2, ?3, ?4, 1)
+        \\INSERT INTO episodes (show_id, file_path, season, episode, is_present, file_size)
+        \\VALUES (?1, ?2, ?3, ?4, 1, ?5)
         \\ON CONFLICT(show_id, file_path) DO UPDATE SET 
         \\    season = excluded.season,
         \\    episode = excluded.episode,
+        \\    file_size = excluded.file_size,
         \\    is_present = 1;
     );
     defer insert_ep_stmt.finalize();

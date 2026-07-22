@@ -12,6 +12,9 @@ const metadata_handler = @import("handlers/metadata.zig");
 const show_handler = @import("handlers/show.zig");
 const static_handler = @import("handlers/static.zig");
 const player_handler = @import("handlers/player.zig");
+const admin_handler = @import("handlers/admin.zig");
+const users_admin_handler = @import("handlers/users_admin.zig");
+const unmatched_admin_handler = @import("handlers/unmatched_admin.zig");
 
 /// Handles an incoming HTTP connection from a client.
 /// This function runs inside an isolated OS thread spawned specifically for this connection.
@@ -102,7 +105,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
 
         // Route: Catalog (Libraries Home Page)
         if (std.mem.eql(u8, target, "/")) {
-            const html_content = catalog.generateHtml(allocator, database) catch |err| {
+            const html_content = catalog.generateHtml(allocator, database, session_info.?.is_admin) catch |err| {
                 std.debug.print("Catalog error: {}\n", .{err});
                 request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
                 return;
@@ -114,6 +117,78 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                     .{ .name = "content-type", .value = "text/html; charset=utf-8" },
                 },
             }) catch return;
+
+        // Route: Admin Dashboard
+        } else if (std.mem.eql(u8, target, "/admin")) {
+            if (!session_info.?.is_admin) {
+                request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden }) catch return;
+                continue;
+            }
+            admin_handler.serveAdminPage(&request, allocator, database) catch |err| {
+                std.debug.print("Admin handler error: {}\n", .{err});
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+            };
+            continue;
+
+        // Route: User Management Page
+        } else if (std.mem.eql(u8, target, "/admin/users")) {
+            if (!session_info.?.is_admin) {
+                request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden }) catch return;
+                continue;
+            }
+            users_admin_handler.serveUserManagementPage(&request, allocator, database, session_info.?.username, "") catch |err| {
+                std.debug.print("User management handler error: {}\n", .{err});
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+            };
+            continue;
+
+        // Route: Unmatched Metadata Resolution Page
+        } else if (std.mem.eql(u8, target, "/admin/unmatched")) {
+            if (!session_info.?.is_admin) {
+                request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden }) catch return;
+                continue;
+            }
+            unmatched_admin_handler.serveUnmatchedPage(&request, allocator, database) catch |err| {
+                std.debug.print("Unmatched page handler error: {}\n", .{err});
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+            };
+            continue;
+
+        // Route: Admin Create User
+        } else if (std.mem.eql(u8, target, "/admin/users/create") and method == .POST) {
+            if (!session_info.?.is_admin) {
+                request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden }) catch return;
+                continue;
+            }
+            users_admin_handler.handleCreateUserPost(&request, allocator, database, io, &resp_buf) catch return;
+            continue;
+
+        // Route: Admin Delete User
+        } else if (std.mem.eql(u8, target, "/admin/users/delete") and method == .POST) {
+            if (!session_info.?.is_admin) {
+                request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden }) catch return;
+                continue;
+            }
+            users_admin_handler.handleDeleteUserPost(&request, allocator, database, session_info.?.username, &resp_buf) catch return;
+            continue;
+
+        // Route: Admin Toggle User Role
+        } else if (std.mem.eql(u8, target, "/admin/users/toggle-role") and method == .POST) {
+            if (!session_info.?.is_admin) {
+                request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden }) catch return;
+                continue;
+            }
+            users_admin_handler.handleToggleRolePost(&request, allocator, database, session_info.?.username, &resp_buf) catch return;
+            continue;
+
+        // Route: Admin Reset User Password
+        } else if (std.mem.eql(u8, target, "/admin/users/reset-password") and method == .POST) {
+            if (!session_info.?.is_admin) {
+                request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden }) catch return;
+                continue;
+            }
+            users_admin_handler.handleResetPasswordPost(&request, allocator, database, io, &resp_buf) catch return;
+            continue;
 
         // Route: Add Library
         } else if (std.mem.startsWith(u8, target, "/libraries/add") and method == .POST) {

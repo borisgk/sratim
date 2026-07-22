@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unmatched Metadata - Sratim</title>
+    <style>__INLINE_CSS__</style>
+</head>
+<body>
+    <div class="container">
+        <a href="/admin" class="back-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <path d="M19 12H5M12 19l-7-7 7-7" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Admin Dashboard
+        </a>
+
+        <header>
+            <h1>Unmatched Metadata</h1>
+            <p class="subtitle">Review and resolve media items missing TMDB metadata</p>
+        </header>
+
+        <div class="admin-card unmatched-card">
+            <h3 class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20" style="color: #f59e0b;">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                </svg>
+                Unmatched Items (__TOTAL_UNMATCHED_COUNT__)
+            </h3>
+
+            <div class="table-container">
+                <table class="user-table">
+                    <thead>
+                        <tr>
+                            <th>Title / Path</th>
+                            <th>Library</th>
+                            <th>Status</th>
+                            <th style="text-align: right;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        __UNMATCHED_ROWS__
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live TMDB Search Modal -->
+    <div id="search-tmdb-modal" class="modal-overlay">
+        <div class="modal-card" style="max-width: 620px;">
+            <div class="modal-header">
+                <h3 class="modal-title">Search TMDB Metadata</h3>
+                <button type="button" class="close-btn" onclick="closeSearchModal()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            
+            <div class="search-container" style="width: 100%; margin: 10px 0 20px 0;">
+                <input type="text" id="tmdb-search-input" class="search-input" placeholder="Type movie or show title to search TMDB..." style="background: rgba(0, 0, 0, 0.4); width: 100%;">
+            </div>
+
+            <div id="tmdb-results-list" class="tmdb-results-grid" style="max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;">
+                <div style="color: #9ca3af; text-align: center; padding: 20px;">Search TMDB by typing above...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manual TMDB ID Modal -->
+    <div id="manual-id-modal" class="modal-overlay">
+        <div class="modal-card" style="max-width: 440px;">
+            <div class="modal-header">
+                <h3 class="modal-title">Manual TMDB Link</h3>
+                <button type="button" class="close-btn" onclick="closeManualModal()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <form onsubmit="submitManualId(event)">
+                <input type="hidden" id="manual-target-id" value="">
+                <input type="hidden" id="manual-target-type" value="">
+                <div class="form-group">
+                    <label>Linking Item: <strong id="manual-target-title" style="color: #c084fc;"></strong></label>
+                </div>
+                <div class="form-group">
+                    <label for="manual-tmdb-id">TMDB ID</label>
+                    <input type="number" id="manual-tmdb-id" required placeholder="e.g. 550 for Fight Club">
+                </div>
+                <button type="submit" class="submit-btn">Link TMDB ID</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let currentTargetId = null;
+        let currentTargetType = null;
+
+        async function triggerAutoLink(id, type, btn) {
+            btn.disabled = true;
+            btn.innerText = 'Searching...';
+            try {
+                const payload = type === 'show' ? { show_id: id } : { movie_id: id };
+                const res = await fetch('/api/metadata/auto-link', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    btn.innerText = 'Matched!';
+                    setTimeout(() => location.reload(), 600);
+                } else {
+                    const txt = await res.text();
+                    alert('Auto link failed: ' + txt);
+                    btn.disabled = false;
+                    btn.innerText = 'Auto Link';
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+                btn.disabled = false;
+                btn.innerText = 'Auto Link';
+            }
+        }
+
+        function openManualModal(id, type, title) {
+            currentTargetId = id;
+            currentTargetType = type;
+            document.getElementById('manual-target-id').value = id;
+            document.getElementById('manual-target-type').value = type;
+            document.getElementById('manual-target-title').innerText = title;
+            document.getElementById('manual-id-modal').classList.add('active');
+            document.getElementById('manual-tmdb-id').focus();
+        }
+
+        function closeManualModal() {
+            document.getElementById('manual-id-modal').classList.remove('active');
+        }
+
+        async function submitManualId(e) {
+            e.preventDefault();
+            const id = parseInt(document.getElementById('manual-target-id').value, 10);
+            const type = document.getElementById('manual-target-type').value;
+            const tmdbId = parseInt(document.getElementById('manual-tmdb-id').value, 10);
+
+            const payload = type === 'show' ? { show_id: id, tmdb_id: tmdbId } : { movie_id: id, tmdb_id: tmdbId };
+            try {
+                const res = await fetch('/api/metadata/manual-link', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    closeManualModal();
+                    location.reload();
+                } else {
+                    alert('Manual link failed');
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        function openSearchModal(id, type, title) {
+            currentTargetId = id;
+            currentTargetType = type;
+            document.getElementById('search-tmdb-modal').classList.add('active');
+            const searchInput = document.getElementById('tmdb-search-input');
+            searchInput.value = title;
+            searchInput.focus();
+            doTmdbSearch(title);
+        }
+
+        function closeSearchModal() {
+            document.getElementById('search-tmdb-modal').classList.remove('active');
+        }
+
+        let searchTimeout = null;
+        document.getElementById('tmdb-search-input').addEventListener('input', (e) => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                doTmdbSearch(e.target.value.trim());
+            }, 350);
+        });
+
+        async function doTmdbSearch(query) {
+            const container = document.getElementById('tmdb-results-list');
+            if (!query) {
+                container.innerHTML = '<div style="color: #9ca3af; text-align: center; padding: 20px;">Type a title to search...</div>';
+                return;
+            }
+            container.innerHTML = '<div style="color: #9ca3af; text-align: center; padding: 20px;">Searching TMDB...</div>';
+            try {
+                const res = await fetch('/api/metadata/search?query=' + encodeURIComponent(query));
+                if (!res.ok) throw new Error('Search failed');
+                const results = await res.json();
+                if (!results || results.length === 0) {
+                    container.innerHTML = '<div style="color: #9ca3af; text-align: center; padding: 20px;">No results found on TMDB</div>';
+                    return;
+                }
+                container.innerHTML = '';
+                results.forEach(item => {
+                    const row = document.createElement('div');
+                    row.className = 'tmdb-result-row';
+                    const posterSrc = item.poster_path ? ('/images/posters/w185' + item.poster_path) : '';
+                    row.innerHTML = `
+                        <div style="width: 48px; height: 70px; background: #1f2937; border-radius: 6px; overflow: hidden; flex-shrink: 0;">
+                            ${posterSrc ? `<img src="${posterSrc}" style="width:100%; height:100%; object-fit:cover;">` : ''}
+                        </div>
+                        <div style="flex: 1; min-width: 0;">
+                            <div style="font-weight: 600; color: #f3f4f6;">${item.title || item.name} <span style="color: #9ca3af; font-size: 0.85rem;">(${item.release_date || item.first_air_date || ''})</span></div>
+                            <div style="color: #9ca3af; font-size: 0.8rem; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${item.overview || 'No overview available.'}</div>
+                        </div>
+                        <button type="button" class="action-btn toggle-btn" onclick="selectSearchTmdbId(${item.id})">Link</button>
+                    `;
+                    container.appendChild(row);
+                });
+            } catch (err) {
+                container.innerHTML = `<div style="color: #fca5a5; text-align: center; padding: 20px;">Error: ${err.message}</div>`;
+            }
+        }
+
+        async function selectSearchTmdbId(tmdbId) {
+            closeSearchModal();
+            const payload = currentTargetType === 'show'
+                ? { show_id: currentTargetId, tmdb_id: tmdbId }
+                : { movie_id: currentTargetId, tmdb_id: tmdbId };
+
+            try {
+                const res = await fetch('/api/metadata/manual-link', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    location.reload();
+                } else {
+                    alert('Linking failed');
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+    </script>
+</body>
+</html>

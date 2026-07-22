@@ -259,7 +259,9 @@ pub fn initSchema(database: *Database) !void {
         \\);
     );
 
-    // Migrations to add missing columns to existing episodes table
+    // Migrations to add missing columns to existing tables
+    _ = database.exec("ALTER TABLE movies ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0;") catch {};
+    _ = database.exec("ALTER TABLE episodes ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0;") catch {};
     _ = database.exec("ALTER TABLE episodes ADD COLUMN tmdb_id INTEGER;") catch {};
     _ = database.exec("ALTER TABLE episodes ADD COLUMN title TEXT;") catch {};
     _ = database.exec("ALTER TABLE episodes ADD COLUMN overview TEXT;") catch {};

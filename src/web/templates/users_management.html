@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Management - Sratim</title>
+    <style>__INLINE_CSS__</style>
+</head>
+<body>
+    <div class="container">
+        <a href="/admin" class="back-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <path d="M19 12H5M12 19l-7-7 7-7" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Admin Dashboard
+        </a>
+
+        <header>
+            <h1>User Management</h1>
+            <p class="subtitle">Manage system accounts, access credentials, and administrative permissions</p>
+        </header>
+
+        <!-- Display Notice / Message if present -->
+        <div id="notice-alert" class="admin-notice" style="display: __NOTICE_DISPLAY__;">
+            __NOTICE_MESSAGE__
+        </div>
+
+        <div class="user-management-grid">
+            <!-- Create User Card -->
+            <div class="admin-card">
+                <h3 class="card-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="8.5" cy="7" r="4"></circle>
+                        <line x1="20" y1="8" x2="20" y2="14"></line>
+                        <line x1="17" y1="11" x2="23" y2="11"></line>
+                    </svg>
+                    Add New User
+                </h3>
+                <form method="POST" action="/admin/users/create" class="user-form">
+                    <div class="form-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" name="username" required placeholder="e.g. john_doe" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" name="password" required placeholder="Set user password">
+                    </div>
+                    <div class="form-group">
+                        <label for="is_admin">Role</label>
+                        <select id="is_admin" name="is_admin">
+                            <option value="0">Standard User</option>
+                            <option value="1">Administrator</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="submit-btn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        Create User
+                    </button>
+                </form>
+            </div>
+
+            <!-- Users Table Card -->
+            <div class="admin-card user-table-card">
+                <h3 class="card-title">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                    </svg>
+                    Registered Accounts
+                </h3>
+                <div class="table-container">
+                    <table class="user-table">
+                        <thead>
+                            <tr>
+                                <th>User</th>
+                                <th>Role</th>
+                                <th style="text-align: right;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            __USER_ROWS__
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Password Reset Modal -->
+    <div id="reset-pwd-modal" class="modal-overlay">
+        <div class="modal-card" style="max-width: 440px;">
+            <div class="modal-header">
+                <h3 class="modal-title">Reset Password</h3>
+                <button type="button" class="close-btn" onclick="closeResetModal()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <form method="POST" action="/admin/users/reset-password">
+                <input type="hidden" id="reset-user-id" name="user_id" value="">
+                <div class="form-group">
+                    <label>User: <strong id="reset-user-name" style="color: #c084fc;"></strong></label>
+                </div>
+                <div class="form-group">
+                    <label for="new_password">New Password</label>
+                    <input type="password" id="new_password" name="new_password" required placeholder="Enter new password">
+                </div>
+                <button type="submit" class="submit-btn">Update Password</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        function openResetModal(userId, username) {
+            document.getElementById('reset-user-id').value = userId;
+            document.getElementById('reset-user-name').innerText = username;
+            document.getElementById('reset-pwd-modal').classList.add('active');
+            document.getElementById('new_password').focus();
+        }
+
+        function closeResetModal() {
+            document.getElementById('reset-pwd-modal').classList.remove('active');
+        }
+
+        document.getElementById('reset-pwd-modal').addEventListener('click', (e) => {
+            if (e.target === document.getElementById('reset-pwd-modal')) {
+                closeResetModal();
+            }
+        });
+    </script>
+</body>
+</html>

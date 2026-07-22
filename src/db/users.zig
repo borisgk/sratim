@@ -139,3 +139,86 @@ pub fn ensureAdminExists(database: *db_mod.Database, io: std.Io) !void {
         std.debug.print("\n⚠️  Default admin account created (username: admin, password: admin)\n⚠️  Please change the default password!\n\n", .{});
     }
 }
+
+pub const User = struct {
+    id: i64,
+    username: []const u8,
+    is_admin: bool,
+};
+
+/// Returns total number of registered users.
+pub fn getUserCount(database: *db_mod.Database) !i64 {
+    var stmt = try database.prepare("SELECT COUNT(*) FROM users;");
+    defer stmt.finalize();
+
+    if ((try stmt.step()) == .row) {
+        return stmt.columnInt64(0);
+    }
+    return 0;
+}
+
+/// Retrieves all registered users. Caller owns the returned array and username strings.
+pub fn getAllUsers(database: *db_mod.Database, allocator: std.mem.Allocator) ![]User {
+    var stmt = try database.prepare("SELECT id, username, is_admin FROM users ORDER BY id ASC;");
+    defer stmt.finalize();
+
+    var list = std.ArrayList(User).empty;
+    defer list.deinit(allocator);
+
+    while ((try stmt.step()) == .row) {
+        const id = stmt.columnInt64(0);
+        const username_raw = stmt.columnText(1) orelse "";
+        const is_admin = stmt.columnInt(2) != 0;
+
+        const username_dupe = try allocator.dupe(u8, username_raw);
+        try list.append(allocator, .{
+            .id = id,
+            .username = username_dupe,
+            .is_admin = is_admin,
+        });
+    }
+
+    return list.toOwnedSlice(allocator);
+}
+
+/// Deletes a user by ID.
+pub fn deleteUserById(database: *db_mod.Database, id: i64) !void {
+    var stmt = try database.prepare("DELETE FROM users WHERE id = ?1;");
+    defer stmt.finalize();
+
+    try stmt.bindInt64(1, id);
+    _ = try stmt.step();
+}
+
+/// Toggles admin role for a user by ID.
+pub fn toggleAdminRole(database: *db_mod.Database, id: i64) !void {
+    var stmt = try database.prepare("UPDATE users SET is_admin = CASE WHEN is_admin = 1 THEN 0 ELSE 1 END WHERE id = ?1;");
+    defer stmt.finalize();
+
+    try stmt.bindInt64(1, id);
+    _ = try stmt.step();
+}
+
+/// Resets a user's password by ID.
+pub fn resetUserPassword(database: *db_mod.Database, io: std.Io, id: i64, new_password: []const u8) !void {
+    var salt: [SALT_LEN]u8 = undefined;
+    io.random(&salt);
+
+    var derived_key: [KEY_LEN]u8 = undefined;
+    try pbkdf2(&derived_key, new_password, &salt, PBKDF2_ROUNDS, HmacSha256);
+
+    var hash_hex: [KEY_LEN * 2]u8 = undefined;
+    bytesToHex(&hash_hex, derived_key);
+
+    var salt_hex: [SALT_LEN * 2]u8 = undefined;
+    saltToHex(&salt_hex, salt);
+
+    var stmt = try database.prepare("UPDATE users SET password_hash = ?1, salt = ?2 WHERE id = ?3;");
+    defer stmt.finalize();
+
+    try stmt.bindText(1, &hash_hex);
+    try stmt.bindText(2, &salt_hex);
+    try stmt.bindInt64(3, id);
+
+    _ = try stmt.step();
+}
