@@ -8,5 +8,5 @@ rsync -avz --delete \
   ./ borisk@padre.rus9n.com:/home/borisk/sratim/
 
 echo "Sync complete. Triggering remote build..."
-ssh borisk@padre.rus9n.com "cd /home/borisk/sratim && zig build -Doptimize=ReleaseFast"
+ssh borisk@padre.rus9n.com "cd /home/borisk/sratim && zig build -Doptimize=ReleaseFast -fincremental"
 echo "Remote build complete."
