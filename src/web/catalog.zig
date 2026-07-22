@@ -274,6 +274,8 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
         });
         defer allocator.free(card_header);
         try cards_buf.appendSlice(allocator, card_header);
+        try escapeHtml(&cards_buf, allocator, display_title);
+        try cards_buf.appendSlice(allocator, " ");
         try escapeHtml(&cards_buf, allocator, file_path);
         try cards_buf.appendSlice(allocator, "\">\n");
         
