@@ -1,0 +1,38 @@
+name: Build Arch Linux Binary
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    name: Build Arch Linux x86_64 Executable
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Update Pacman & Install System Dependencies
+        run: |
+          pacman -Syu --noconfirm git sqlite ffmpeg curl tar xz pkgconf
+
+      - name: Download & Install Zig 0.16.0
+        run: |
+          curl -L -o zig.tar.xz https://ziglang.org/builds/zig-linux-x86_64-0.16.0-dev.167+998630761.tar.xz || curl -L -o zig.tar.xz https://ziglang.org/download/0.16.0/zig-linux-x86_64-0.16.0.tar.xz
+          mkdir -p /opt/zig
+          tar -xf zig.tar.xz -C /opt/zig --strip-components=1
+          echo "/opt/zig" >> $GITHUB_PATH
+
+      - name: Build Binary (-Doptimize=ReleaseFast)
+        run: |
+          /opt/zig/zig build -Doptimize=ReleaseFast
+
+      - name: Upload Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sratim-arch-x86_64
+          path: zig-out/bin/sratim
+          retention-days: 30
