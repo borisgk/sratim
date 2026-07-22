@@ -64,6 +64,18 @@ pub fn getEpisodeInfoById(database: *db_mod.Database, allocator: std.mem.Allocat
     return MovieInfo{ .library_id = library_id, .file_path = file_path_dup };
 }
 
+pub fn getShowTitleById(database: *db_mod.Database, allocator: std.mem.Allocator, show_id: i64) !?[]const u8 {
+    var stmt = try database.prepare("SELECT title FROM shows WHERE id = ?1;");
+    defer stmt.finalize();
+    try stmt.bindInt64(1, show_id);
+    if ((try stmt.step()) != .row) return null;
+    const title_val = stmt.columnText(0);
+    if (title_val) |t| {
+        return try allocator.dupe(u8, t);
+    }
+    return null;
+}
+
 pub fn getMoviesMissingMetadata(database: *db_mod.Database, allocator: std.mem.Allocator) ![]MovieMissingMetadata {
     var stmt = try database.prepare(
         \\SELECT m.id, m.clean_name 

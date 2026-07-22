@@ -15,6 +15,7 @@
             </svg>
             Libraries
         </a>
+        __RESCAN_BTN__
         <a href="/logout" class="logout-btn">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" stroke-linecap="round" stroke-linejoin="round"/>
@@ -107,41 +108,7 @@
             document.querySelectorAll('.context-dropdown').forEach(d => d.classList.remove('active'));
         });
 
-        // Handle Progress Update clicks
-        document.querySelectorAll('.reset-btn, .watch-btn').forEach(item => {
-            item.addEventListener('click', async (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                
-                const movieId = item.getAttribute('data-id');
-                const action = item.classList.contains('reset-btn') ? 'reset' : 'watched';
-                const card = item.closest('.movie-card');
-                
-                try {
-                    const res = await fetch('/api/watch/progress/update', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            movie_id: parseInt(movieId, 10),
-                            action: action
-                        })
-                    });
-                    
-                    if (res.ok) {
-                        const progressEl = card.querySelector('.card-progress');
-                        if (progressEl) {
-                            progressEl.remove();
-                        }
-                    } else {
-                        console.error('Failed to update progress');
-                    }
-                } catch (err) {
-                    console.error('Error updating progress:', err);
-                }
-                
-                item.parentElement.classList.remove('active');
-            });
-        });
+
 
         // Automatic Lookup Logic
         document.querySelectorAll('.lookup-btn').forEach(btn => {
@@ -149,7 +116,9 @@
                 e.preventDefault();
                 e.stopPropagation();
                 
-                const movieId = btn.getAttribute('data-id');
+                const targetId = parseInt(btn.getAttribute('data-id'), 10);
+                const itemType = btn.getAttribute('data-type') || 'movie';
+                const payload = (itemType === 'show') ? { show_id: targetId } : { movie_id: targetId };
                 
                 const originalText = btn.innerText;
                 btn.innerText = 'Looking up...';
@@ -159,9 +128,7 @@
                     const res = await fetch('/api/metadata/auto-link', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            movie_id: parseInt(movieId, 10)
-                        })
+                        body: JSON.stringify(payload)
                     });
                     
                     if (res.ok) {
@@ -196,10 +163,13 @@
                 e.preventDefault();
                 e.stopPropagation();
 
-                const movieId = btn.getAttribute('data-id');
+                const targetId = btn.getAttribute('data-id');
+                const itemType = btn.getAttribute('data-type') || 'movie';
                 const currentTmdbId = btn.getAttribute('data-tmdb-id');
 
-                manualMovieIdInput.value = movieId;
+                manualMovieIdInput.value = targetId;
+                manualMovieIdInput.setAttribute('data-type', itemType);
+
                 if (currentTmdbId && currentTmdbId.trim() !== '') {
                     currentTmdbText.innerText = `Current TMDB ID: ${currentTmdbId}`;
                     manualTmdbInput.value = currentTmdbId;
@@ -226,8 +196,13 @@
 
         manualForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const movieId = parseInt(manualMovieIdInput.value, 10);
+            const targetId = parseInt(manualMovieIdInput.value, 10);
+            const itemType = manualMovieIdInput.getAttribute('data-type') || 'movie';
             const tmdbId = parseInt(manualTmdbInput.value, 10);
+
+            const payload = (itemType === 'show')
+                ? { show_id: targetId, tmdb_id: tmdbId }
+                : { movie_id: targetId, tmdb_id: tmdbId };
 
             const submitBtn = document.getElementById('manual-id-submit-btn');
             const originalText = submitBtn.innerText;
@@ -238,10 +213,7 @@
                 const res = await fetch('/api/metadata/manual-link', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        movie_id: movieId,
-                        tmdb_id: tmdbId
-                    })
+                    body: JSON.stringify(payload)
                 });
 
                 if (res.ok) {
@@ -259,6 +231,99 @@
                 submitBtn.disabled = false;
             }
         });
+
+        // Rescan Library Logic (Admin only)
+        const rescanBtn = document.getElementById('rescan-lib-btn');
+        if (rescanBtn) {
+            rescanBtn.addEventListener('click', async () => {
+                const libId = parseInt(rescanBtn.getAttribute('data-id'), 10);
+                rescanBtn.classList.add('loading');
+                rescanBtn.disabled = true;
+                const originalHtml = rescanBtn.innerHTML;
+                rescanBtn.innerText = 'Rescanning...';
+
+                try {
+                    const res = await fetch('/api/library/rescan', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ library_id: libId })
+                    });
+
+                    if (res.ok) {
+                        window.location.reload();
+                    } else {
+                        const text = await res.text();
+                        alert('Rescan failed: ' + text);
+                        rescanBtn.innerHTML = originalHtml;
+                        rescanBtn.classList.remove('loading');
+                        rescanBtn.disabled = false;
+                    }
+                } catch (err) {
+                    console.error('Error rescanning library:', err);
+                    alert('Error starting library rescan');
+                    rescanBtn.innerHTML = originalHtml;
+                    rescanBtn.classList.remove('loading');
+                    rescanBtn.disabled = false;
+                }
+            });
+        }
+
+        // Smart Live Metadata Polling
+        const libraryIdMatch = window.location.search.match(/id=(\d+)/);
+        if (libraryIdMatch) {
+            const currentLibraryId = parseInt(libraryIdMatch[1], 10);
+            
+            function checkAndStartPolling() {
+                const pendingCards = document.querySelectorAll('.movie-card[data-tmdb-id=""]');
+                if (pendingCards.length === 0) return;
+
+                let pollInterval = setInterval(async () => {
+                    try {
+                        const res = await fetch(`/api/library/updates?id=${currentLibraryId}`);
+                        if (!res.ok) return;
+
+                        const data = await res.json();
+                        if (data.updates && Array.isArray(data.updates)) {
+                            data.updates.forEach(item => {
+                                const card = document.querySelector(`.movie-card[data-id="${item.id}"]`);
+                                if (!card) return;
+
+                                card.setAttribute('data-tmdb-id', item.tmdb_id);
+
+                                if (item.poster_path && item.poster_path.trim() !== '') {
+                                    card.classList.add('has-poster');
+                                    let img = card.querySelector('.poster-img');
+                                    if (!img) {
+                                        img = document.createElement('img');
+                                        img.className = 'poster-img';
+                                        img.loading = 'lazy';
+                                        img.alt = 'poster';
+                                        card.insertBefore(img, card.firstChild);
+                                    }
+                                    img.src = `/images/posters/w185${item.poster_path}`;
+                                }
+
+                                if (item.title) {
+                                    const movieItem = card.closest('.movie-item');
+                                    if (movieItem) {
+                                        const titleEl = movieItem.querySelector('.movie-title');
+                                        if (titleEl) titleEl.innerText = item.title;
+                                    }
+                                }
+                            });
+                        }
+
+                        if (data.remaining_pending === 0) {
+                            clearInterval(pollInterval);
+                        }
+                    } catch (err) {
+                        console.error('Error polling metadata updates:', err);
+                    }
+                }, 4000);
+            }
+
+            checkAndStartPolling();
+        }
     </script>
 </body>
 </html>

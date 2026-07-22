@@ -53,3 +53,46 @@ pub fn searchShow(
         .ignore_unknown_fields = true,
     });
 }
+
+pub fn fetchShowDetails(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    tmdb_id: i64,
+    token: []const u8,
+    proxy_url: ?[]const u8,
+) !std.json.Parsed(types.TmdbShow) {
+    _ = io;
+
+    var client = try client_mod.createClient(allocator, proxy_url);
+    defer client.deinit();
+
+    const fetch_url = try std.fmt.allocPrint(allocator, "https://api.themoviedb.org/3/tv/{d}", .{tmdb_id});
+    defer allocator.free(fetch_url);
+
+    std.debug.print("TMDB TV Details Request URL: {s}\n", .{fetch_url});
+
+    var response = try client.get(fetch_url, .{
+        .bearer_token = token,
+        .headers = &[_][2][]const u8{
+            .{ "Accept", "application/json" },
+        },
+    });
+    defer response.deinit();
+
+    std.debug.print("TMDB TV Details Response Status: {d}\n", .{response.status.code});
+
+    if (response.status.code == 404) {
+        return error.NotFound;
+    }
+
+    if (!response.status.isSuccess()) {
+        return error.TmdbRequestFailed;
+    }
+
+    const response_body = response.body orelse return error.EmptyResponseBody;
+
+    return try std.json.parseFromSlice(types.TmdbShow, allocator, response_body, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    });
+}

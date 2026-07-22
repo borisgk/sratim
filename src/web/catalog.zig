@@ -119,7 +119,7 @@ pub fn generateHtml(allocator: std.mem.Allocator, database: *db_mod.Database) ![
     });
 }
 
-pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, logs_database: *db_mod.Database, library_id: i64, username: []const u8) !?[]u8 {
+pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, logs_database: *db_mod.Database, library_id: i64, username: []const u8, is_admin: bool) !?[]u8 {
     _ = io;
     const lib_opt = try library_mod.getLibraryById(database, allocator, library_id);
     if (lib_opt == null) return null;
@@ -132,6 +132,19 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
         if (lib.ignore_patterns) |pat| allocator.free(pat);
     }
 
+    const rescan_btn_html = if (is_admin)
+        try std.fmt.allocPrint(allocator,
+            \\<button id="rescan-lib-btn" class="rescan-btn" data-id="{d}">
+            \\    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            \\        <path d="M21.5 2v6h-6M2.14 15.57a10 10 0 1 0 2.83-9.57l5.53 5.53" stroke-linecap="round" stroke-linejoin="round"/>
+            \\    </svg>
+            \\    Rescan Library
+            \\</button>
+        , .{lib.id})
+    else
+        "";
+    defer if (is_admin) allocator.free(rescan_btn_html);
+
     const progress_list = logging_mod.getProgressForUser(logs_database, allocator, username) catch &[_]logging_mod.ProgressInfo{};
     defer {
         allocator.free(progress_list);
@@ -142,7 +155,7 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
 
     if (lib.lib_type == .Shows) {
         var stmt = try database.prepare(
-            \\SELECT id, title, poster_path 
+            \\SELECT id, title, poster_path, tmdb_id 
             \\FROM shows
             \\WHERE library_id = ?1 AND is_present = 1
             \\ORDER BY 
@@ -160,13 +173,17 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
             const show_id = stmt.columnInt64(0);
             const title = stmt.columnText(1).?;
             const poster_path_opt = stmt.columnText(2);
+            const tmdb_id_val = stmt.columnText(3);
+            const tmdb_id_str = if (tmdb_id_val != null) stmt.columnText(3).? else "";
 
             try cards_buf.appendSlice(allocator, "    <div class=\"movie-item\">\n");
-            if (poster_path_opt != null and poster_path_opt.?.len > 0) {
-                try cards_buf.appendSlice(allocator, "        <div class=\"movie-card has-poster\" data-name=\"");
-            } else {
-                try cards_buf.appendSlice(allocator, "        <div class=\"movie-card\" data-name=\"");
-            }
+            const card_header = try std.fmt.allocPrint(allocator, "        <div class=\"movie-card{s}\" data-id=\"{d}\" data-tmdb-id=\"{s}\" data-name=\"", .{
+                if (poster_path_opt != null and poster_path_opt.?.len > 0) " has-poster" else "",
+                show_id,
+                tmdb_id_str,
+            });
+            defer allocator.free(card_header);
+            try cards_buf.appendSlice(allocator, card_header);
             try escapeHtml(&cards_buf, allocator, title);
             try cards_buf.appendSlice(allocator, "\">\n");
             
@@ -176,7 +193,18 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
                 try cards_buf.appendSlice(allocator, "\">\n");
             }
 
-            // No quick actions for shows, just the link to the show details
+            if (is_admin) {
+                try cards_buf.appendSlice(allocator, "            <button class=\"context-menu-btn\" title=\"Actions\">\n                <svg viewBox=\"0 0 24 24\" fill=\"currentColor\" width=\"20\" height=\"20\">\n                    <circle cx=\"12\" cy=\"5\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"12\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"19\" r=\"2\"/>\n                </svg>\n            </button>\n            <div class=\"context-dropdown\">\n");
+                const admin_dropdown = try std.fmt.allocPrint(allocator,
+                    \\                <button class="dropdown-item lookup-btn" data-id="{d}" data-type="show">Lookup Metadata</button>
+                    \\                <button class="dropdown-item manual-id-btn" data-id="{d}" data-type="show" data-tmdb-id="{s}">Manual TMDB ID</button>
+                    \\            </div>
+                    \\
+                , .{ show_id, show_id, tmdb_id_str });
+                defer allocator.free(admin_dropdown);
+                try cards_buf.appendSlice(allocator, admin_dropdown);
+            }
+
             const dropdown_content = try std.fmt.allocPrint(allocator,
                 \\            <a href="/show?id={d}" class="play-link"></a>
                 \\            <div class="card-content">
@@ -239,11 +267,13 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
         }
 
         try cards_buf.appendSlice(allocator, "        <div class=\"movie-item\">\n");
-        if (poster_path_opt != null and poster_path_opt.?.len > 0) {
-            try cards_buf.appendSlice(allocator, "            <div class=\"movie-card has-poster\" data-name=\"");
-        } else {
-            try cards_buf.appendSlice(allocator, "            <div class=\"movie-card\" data-name=\"");
-        }
+        const card_header = try std.fmt.allocPrint(allocator, "            <div class=\"movie-card{s}\" data-id=\"{d}\" data-tmdb-id=\"{s}\" data-name=\"", .{
+            if (poster_path_opt != null and poster_path_opt.?.len > 0) " has-poster" else "",
+            movie_id,
+            tmdb_id_str,
+        });
+        defer allocator.free(card_header);
+        try cards_buf.appendSlice(allocator, card_header);
         try escapeHtml(&cards_buf, allocator, file_path);
         try cards_buf.appendSlice(allocator, "\">\n");
         
@@ -252,15 +282,19 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
             try cards_buf.appendSlice(allocator, poster_path_opt.?);
             try cards_buf.appendSlice(allocator, "\">\n");
         }
-        try cards_buf.appendSlice(allocator, "            <button class=\"context-menu-btn\" title=\"Actions\">\n                <svg viewBox=\"0 0 24 24\" fill=\"currentColor\" width=\"20\" height=\"20\">\n                    <circle cx=\"12\" cy=\"5\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"12\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"19\" r=\"2\"/>\n                </svg>\n            </button>\n            <div class=\"context-dropdown\">\n");
-        const dropdown_content = try std.fmt.allocPrint(allocator,
-            \\                <button class="dropdown-item lookup-btn" data-id="{d}">Lookup Metadata</button>
-            \\                <button class="dropdown-item manual-id-btn" data-id="{d}" data-tmdb-id="{s}">Manual TMDB ID</button>
-            \\                <button class="dropdown-item reset-btn" data-id="{d}">Reset Progress</button>
-            \\                <button class="dropdown-item watch-btn" data-id="{d}">Mark as Watched</button>
-            \\                <a class="dropdown-item" style="text-decoration: none;" href="/player?id={d}">Quick Play</a>
-            \\            </div>
-            \\
+        if (is_admin) {
+            try cards_buf.appendSlice(allocator, "            <button class=\"context-menu-btn\" title=\"Actions\">\n                <svg viewBox=\"0 0 24 24\" fill=\"currentColor\" width=\"20\" height=\"20\">\n                    <circle cx=\"12\" cy=\"5\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"12\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"19\" r=\"2\"/>\n                </svg>\n            </button>\n            <div class=\"context-dropdown\">\n");
+            const dropdown_content = try std.fmt.allocPrint(allocator,
+                \\                <button class="dropdown-item lookup-btn" data-id="{d}" data-type="movie">Lookup Metadata</button>
+                \\                <button class="dropdown-item manual-id-btn" data-id="{d}" data-type="movie" data-tmdb-id="{s}">Manual TMDB ID</button>
+                \\            </div>
+                \\
+            , .{ movie_id, movie_id, tmdb_id_str });
+            defer allocator.free(dropdown_content);
+            try cards_buf.appendSlice(allocator, dropdown_content);
+        }
+
+        const play_link = try std.fmt.allocPrint(allocator,
             \\            <a href="/details?id={d}" class="play-link"></a>
             \\
             \\            <div class="card-content">
@@ -274,9 +308,9 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
             \\                </div>
             \\            </div>
             \\
-        , .{ movie_id, movie_id, tmdb_id_str, movie_id, movie_id, movie_id, movie_id });
-        defer allocator.free(dropdown_content);
-        try cards_buf.appendSlice(allocator, dropdown_content);
+        , .{movie_id});
+        defer allocator.free(play_link);
+        try cards_buf.appendSlice(allocator, play_link);
 
         if (progress_pct) |pct| {
             if (pct >= 1.0 and pct < 95.0) {
@@ -302,6 +336,7 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
         .LIBRARY_NAME = lib.name,
         .LIBRARY_PATH = lib.path,
         .MOVIE_CARDS = cards_buf.items,
+        .RESCAN_BTN = rescan_btn_html,
     });
 }
 

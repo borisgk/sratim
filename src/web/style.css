@@ -131,6 +131,47 @@ p.subtitle {
     box-shadow: 0 0 15px rgba(239, 68, 68, 0.1);
 }
 
+.rescan-btn {
+    position: absolute;
+    top: 0;
+    right: 125px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    background: rgba(99, 102, 241, 0.08);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    border-radius: 20px;
+    color: #a5b4fc;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(8px);
+    z-index: 10;
+}
+
+.rescan-btn:hover {
+    background: rgba(99, 102, 241, 0.2);
+    border-color: rgba(168, 85, 247, 0.4);
+    color: #ffffff;
+    box-shadow: 0 0 15px rgba(99, 102, 241, 0.2);
+}
+
+.rescan-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.rescan-btn.loading svg {
+    animation: spin 1s linear infinite;
+}
+
 /* Cards Grid */
 .grid {
     display: grid;

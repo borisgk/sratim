@@ -112,7 +112,8 @@ pub fn handleApiMetadataLink(request: *std.http.Server.Request, allocator: std.m
 }
 
 const MetadataAutoLinkPayload = struct {
-    movie_id: i64,
+    movie_id: ?i64 = null,
+    show_id: ?i64 = null,
 };
 
 pub fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, config: *const config_mod.Config, body_buf: *[8192]u8) !void {
@@ -147,7 +148,58 @@ pub fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: s
 
     const payload = parsed.value;
 
-    const info_opt = try metadata_mod.getMovieInfoById(database, allocator, payload.movie_id);
+    if (payload.show_id) |show_id| {
+        const title_opt = try metadata_mod.getShowTitleById(database, allocator, show_id);
+        if (title_opt == null) {
+            request.respond("Show not found", .{ .status = .not_found }) catch return;
+            return;
+        }
+        const show_title = title_opt.?;
+        defer allocator.free(show_title);
+
+        const parsed_name = try tmdb.parseYearAndCleanName(allocator, show_title);
+        defer allocator.free(parsed_name.clean);
+        defer if (parsed_name.year) |y| allocator.free(y);
+
+        var response_parsed = tmdb.searchShow(allocator, io, parsed_name.clean, parsed_name.year, token, config.tmdb_proxy) catch |err| {
+            std.debug.print("TMDB Auto Search Show error: {}\n", .{err});
+            request.respond("TMDB API request failed", .{ .status = .internal_server_error }) catch return;
+            return;
+        };
+        defer response_parsed.deinit();
+
+        if (response_parsed.value.results.len == 0) {
+            request.respond("No metadata found for this show name.", .{ .status = .not_found }) catch return;
+            return;
+        }
+
+        const first_show = response_parsed.value.results[0];
+
+        tmdb.downloadImages(allocator, io, first_show.poster_path, first_show.backdrop_path, config.tmdb_proxy) catch |err| {
+            std.debug.print("Failed to download images: {}\n", .{err});
+        };
+
+        try metadata_mod.saveShowMetadataById(
+            database,
+            show_id,
+            first_show.id,
+            first_show.name,
+            first_show.overview,
+            first_show.poster_path,
+            first_show.backdrop_path,
+            first_show.first_air_date,
+        );
+
+        request.respond("OK", .{ .status = .ok }) catch return;
+        return;
+    }
+
+    const movie_id = payload.movie_id orelse {
+        request.respond("Missing movie_id or show_id", .{ .status = .bad_request }) catch return;
+        return;
+    };
+
+    const info_opt = try metadata_mod.getMovieInfoById(database, allocator, movie_id);
     if (info_opt == null) {
         request.respond("Movie not found", .{ .status = .not_found }) catch return;
         return;
@@ -186,7 +238,7 @@ pub fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: s
 
     try metadata_mod.saveMetadataById(
         database,
-        payload.movie_id,
+        movie_id,
         first_movie.id,
         first_movie.title,
         first_movie.overview,
@@ -199,7 +251,8 @@ pub fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: s
 }
 
 const MetadataManualLinkPayload = struct {
-    movie_id: i64,
+    movie_id: ?i64 = null,
+    show_id: ?i64 = null,
     tmdb_id: i64,
 };
 
@@ -240,6 +293,44 @@ pub fn handleApiMetadataManualLink(request: *std.http.Server.Request, allocator:
         return;
     }
 
+    if (payload.show_id) |show_id| {
+        var parsed_show = tmdb.fetchShowDetails(allocator, io, payload.tmdb_id, token, config.tmdb_proxy) catch |err| {
+            std.debug.print("TMDB Fetch Show Details error: {}\n", .{err});
+            if (err == error.NotFound) {
+                request.respond("TMDB Show ID not found", .{ .status = .not_found }) catch return;
+            } else {
+                request.respond("TMDB API request failed", .{ .status = .internal_server_error }) catch return;
+            }
+            return;
+        };
+        defer parsed_show.deinit();
+
+        const show = parsed_show.value;
+
+        tmdb.downloadImages(allocator, io, show.poster_path, show.backdrop_path, config.tmdb_proxy) catch |err| {
+            std.debug.print("Failed to download images: {}\n", .{err});
+        };
+
+        try metadata_mod.saveShowMetadataById(
+            database,
+            show_id,
+            show.id,
+            show.name,
+            show.overview,
+            show.poster_path,
+            show.backdrop_path,
+            show.first_air_date,
+        );
+
+        request.respond("OK", .{ .status = .ok }) catch return;
+        return;
+    }
+
+    const movie_id = payload.movie_id orelse {
+        request.respond("Missing movie_id or show_id", .{ .status = .bad_request }) catch return;
+        return;
+    };
+
     var parsed_movie = tmdb.fetchMovieDetails(allocator, io, payload.tmdb_id, token, config.tmdb_proxy) catch |err| {
         std.debug.print("TMDB Fetch Movie Details error: {}\n", .{err});
         if (err == error.NotFound) {
@@ -259,7 +350,7 @@ pub fn handleApiMetadataManualLink(request: *std.http.Server.Request, allocator:
 
     try metadata_mod.saveMetadataById(
         database,
-        payload.movie_id,
+        movie_id,
         movie.id,
         movie.title,
         movie.overview,

@@ -120,6 +120,24 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             library_handler.handleLibraryAdd(&request, allocator, database, &resp_buf) catch return;
             continue;
 
+        // Route: Rescan Library
+        } else if (std.mem.startsWith(u8, target, "/api/library/rescan") and method == .POST) {
+            library_handler.handleLibraryRescan(&request, allocator, io, database, session_info.?.is_admin, &resp_buf) catch |err| {
+                std.debug.print("API Library Rescan error: {}\n", .{err});
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                return;
+            };
+            continue;
+
+        // Route: Library Updates (Live Poster Polling)
+        } else if (std.mem.startsWith(u8, target, "/api/library/updates") and method == .GET) {
+            library_handler.handleApiLibraryUpdates(&request, allocator, database) catch |err| {
+                std.debug.print("API Library Updates error: {}\n", .{err});
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
+                return;
+            };
+            continue;
+
         // Route: API Filesystem Browser
         } else if (std.mem.startsWith(u8, target, "/api/browse")) {
             browse_handler.handleApiBrowse(&request, allocator, io) catch |err| {
@@ -138,14 +156,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             };
             continue;
 
-        // Route: API Playback Progress Modification (reset/watched)
-        } else if (std.mem.startsWith(u8, target, "/api/watch/progress/update") and method == .POST) {
-            watch_handler.handleApiWatchProgressUpdate(&request, allocator, database, logs_database, session_info.?.username, working_folder, &resp_buf) catch |err| {
-                std.debug.print("API Watch Progress Update error: {}\n", .{err});
-                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-                return;
-            };
-            continue;
+
 
         // Route: API Metadata Search
         } else if (std.mem.startsWith(u8, target, "/api/metadata/search") and method == .GET) {
@@ -190,7 +201,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                 continue;
             };
 
-            const html_content_opt = catalog.generateLibraryContentHtml(allocator, io, database, logs_database, lib_id, session_info.?.username) catch |err| {
+            const html_content_opt = catalog.generateLibraryContentHtml(allocator, io, database, logs_database, lib_id, session_info.?.username, session_info.?.is_admin) catch |err| {
                 std.debug.print("Browse Library content error: {}\n", .{err});
                 if (err == error.LibraryPathNotFound) {
                     request.respond("Library path not found or inaccessible.", .{ .status = .not_found }) catch return;
