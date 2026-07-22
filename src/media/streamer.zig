@@ -57,6 +57,9 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
                 var temp_pb: ?*c.AVIOContext = pb;
                 c.avio_context_free(@ptrCast(&temp_pb));
                 ctx.*.pb = null;
+            } else if (avio_buf) |buf| {
+                c.av_free(buf);
+                avio_buf = null;
             }
             c.avformat_free_context(ctx);
         } else if (avio_buf) |buf| {
@@ -254,7 +257,20 @@ pub const AudioTrack = struct {
 pub const MediaInfo = struct {
     duration: f64,
     codec_str: []const u8,
+    dynamic_codec_str: ?[]const u8 = null,
     audio_tracks: []AudioTrack,
+
+    pub fn deinit(self: *const MediaInfo, allocator: std.mem.Allocator) void {
+        for (self.audio_tracks) |track| {
+            allocator.free(track.label);
+        }
+        if (self.audio_tracks.len > 0) {
+            allocator.free(self.audio_tracks);
+        }
+        if (self.dynamic_codec_str) |s| {
+            allocator.free(s);
+        }
+    }
 };
 
 /// Retrieves the duration, codec info, and available audio tracks of a media file.
@@ -354,6 +370,7 @@ pub fn getMediaInfo(allocator: std.mem.Allocator, file_path: [:0]const u8) !Medi
     return MediaInfo{
         .duration = duration,
         .codec_str = codec_str,
+        .dynamic_codec_str = dynamic_codec_str,
         .audio_tracks = try audio_tracks.toOwnedSlice(allocator),
     };
 }

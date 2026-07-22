@@ -275,4 +275,10 @@ pub fn initSchema(database: *Database) !void {
     
     _ = database.exec("DROP TABLE IF EXISTS movie_metadata;") catch {};
     _ = database.exec("DROP TABLE IF EXISTS library_files;") catch {};
+
+    // Create performance indexes for fast catalog and metadata queries
+    try database.exec("CREATE INDEX IF NOT EXISTS idx_movies_lib_present ON movies(library_id, is_present);");
+    try database.exec("CREATE INDEX IF NOT EXISTS idx_movies_tmdb ON movies(tmdb_id, is_present);");
+    try database.exec("CREATE INDEX IF NOT EXISTS idx_shows_lib_present ON shows(library_id, is_present);");
+    try database.exec("CREATE INDEX IF NOT EXISTS idx_episodes_show_season ON episodes(show_id, is_present, season, episode);");
 }

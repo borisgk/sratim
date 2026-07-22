@@ -33,7 +33,7 @@ pub fn handleShow(
     defer stmt.finalize();
     try stmt.bindInt64(1, show_id);
 
-    if (try stmt.step() != .row) {
+    if ((try stmt.step()) != .row) {
         try request.respond("Show not found", .{ .status = .not_found });
         return;
     }
@@ -147,7 +147,7 @@ pub fn handleShow(
     var lib_stmt = try database.prepare("SELECT name FROM libraries WHERE id = ?1;");
     defer lib_stmt.finalize();
     try lib_stmt.bindInt64(1, library_id);
-    const lib_name = if (try lib_stmt.step() == .row) lib_stmt.columnText(0).? else "Library";
+    const lib_name = if ((try lib_stmt.step()) == .row) lib_stmt.columnText(0).? else "Library";
 
     var backdrop_html = std.ArrayList(u8).empty;
     defer backdrop_html.deinit(allocator);

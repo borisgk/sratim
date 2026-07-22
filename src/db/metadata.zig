@@ -35,7 +35,7 @@ pub fn getMovieInfoById(database: *db_mod.Database, allocator: std.mem.Allocator
     var stmt = try database.prepare("SELECT library_id, file_path FROM movies WHERE id = ?1;");
     defer stmt.finalize();
     try stmt.bindInt64(1, movie_id);
-    if (try stmt.step() != .row) return null;
+    if ((try stmt.step()) != .row) return null;
     const library_id = stmt.columnInt64(0);
     const file_path_val = stmt.columnText(1);
     var file_path_dup: []const u8 = "";
@@ -54,7 +54,7 @@ pub fn getEpisodeInfoById(database: *db_mod.Database, allocator: std.mem.Allocat
     );
     defer stmt.finalize();
     try stmt.bindInt64(1, episode_id);
-    if (try stmt.step() != .row) return null;
+    if ((try stmt.step()) != .row) return null;
     const library_id = stmt.columnInt64(0);
     const file_path_val = stmt.columnText(1);
     var file_path_dup: []const u8 = "";

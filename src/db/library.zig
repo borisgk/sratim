@@ -335,7 +335,9 @@ fn scanSingleLibraryInternal(
                     insert_ep_stmt.bindText(2, rel_ep_path) catch continue;
                     insert_ep_stmt.bindInt64(3, parsed.season) catch continue;
                     insert_ep_stmt.bindInt64(4, parsed.episode) catch continue;
-                    _ = insert_ep_stmt.step() catch continue;
+                    _ = insert_ep_stmt.step() catch |err| {
+                        std.debug.print("Failed to insert episode file {s}: {}\n", .{rel_ep_path, err});
+                    };
                 }
             }
         }

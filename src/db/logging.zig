@@ -164,7 +164,7 @@ pub fn getPlaybackProgress(database: *db_mod.Database, username: []const u8, mov
     try stmt.bindText(1, username);
     try stmt.bindInt64(2, movie_id);
 
-    if (try stmt.step() == .row) {
+    if ((try stmt.step()) == .row) {
         return c.sqlite3_column_double(stmt.stmt, 0);
     }
     return 0.0;
@@ -261,7 +261,7 @@ pub fn getEpisodePlaybackProgress(database: *db_mod.Database, username: []const 
     try stmt.bindText(1, username);
     try stmt.bindInt64(2, episode_id);
 
-    if (try stmt.step() == .row) {
+    if ((try stmt.step()) == .row) {
         return c.sqlite3_column_double(stmt.stmt, 0);
     }
     return 0.0;

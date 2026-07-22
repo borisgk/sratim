@@ -113,6 +113,7 @@ pub fn handlePlayer(
         .codec_str = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\"",
         .audio_tracks = &[_]streamer.AudioTrack{},
     };
+    defer media_info.deinit(allocator);
 
     var json_out: std.ArrayList(u8) = .empty;
     defer json_out.deinit(allocator);
