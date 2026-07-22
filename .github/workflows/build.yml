@@ -21,7 +21,10 @@ jobs:
 
       - name: Download & Install Zig 0.16.0
         run: |
-          curl -L -o zig.tar.xz https://ziglang.org/builds/zig-linux-x86_64-0.16.0-dev.167+998630761.tar.xz || curl -L -o zig.tar.xz https://ziglang.org/download/0.16.0/zig-linux-x86_64-0.16.0.tar.xz
+          pacman -S --noconfirm jq
+          ZIG_URL=$(curl -s https://ziglang.org/download/index.json | jq -r '."0.16.0"["x86_64-linux"].tarball // .master["x86_64-linux"].tarball')
+          echo "Downloading Zig from $ZIG_URL"
+          curl -L -o zig.tar.xz "$ZIG_URL"
           mkdir -p /opt/zig
           tar -xf zig.tar.xz -C /opt/zig --strip-components=1
           echo "/opt/zig" >> $GITHUB_PATH
