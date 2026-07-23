@@ -2,8 +2,7 @@ const std = @import("std");
 const db_mod = @import("../../db/db.zig");
 const admin_db = @import("../../db/admin.zig");
 const template_engine = @import("../../core/template.zig");
-const minify = @import("../../core/minify.zig");
-const global_css: []const u8 = minify.minifyCss(@embedFile("../style.css"));
+const global_css: []const u8 = @embedFile("../style.css");
 
 /// Serves the Admin Dashboard page displaying catalog, storage, user, and unmatched metrics.
 pub fn serveAdminPage(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database) !void {

@@ -2,8 +2,7 @@ const std = @import("std");
 const db_mod = @import("../../db/db.zig");
 const unmatched_db = @import("../../db/unmatched.zig");
 const template_engine = @import("../../core/template.zig");
-const minify = @import("../../core/minify.zig");
-const global_css: []const u8 = minify.minifyCss(@embedFile("../style.css"));
+const global_css: []const u8 = @embedFile("../style.css");
 
 /// Escapes HTML special characters for safe rendering.
 fn escapeHtml(list: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {

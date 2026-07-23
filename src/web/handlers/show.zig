@@ -2,8 +2,7 @@ const std = @import("std");
 const db_mod = @import("../../db/db.zig");
 const logging_mod = @import("../../db/logging.zig");
 const template_engine = @import("../../core/template.zig");
-const minify = @import("../../core/minify.zig");
-const global_css: []const u8 = minify.minifyCss(@embedFile("../style.css"));
+const global_css: []const u8 = @embedFile("../style.css");
 
 fn escapeHtml(writer: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
     for (input) |c| {

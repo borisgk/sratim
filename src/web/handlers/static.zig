@@ -1,7 +1,5 @@
 const std = @import("std");
-const minify = @import("../../core/minify.zig");
-
-pub const global_css: []const u8 = minify.minifyCss(@embedFile("../style.css"));
+pub const global_css: []const u8 = @embedFile("../style.css");
 pub const favicon_ico = @embedFile("../favicon.ico");
 pub const font_inter = @embedFile("../fonts/inter.woff2");
 pub const font_outfit = @embedFile("../fonts/outfit.woff2");

@@ -2,8 +2,7 @@ const std = @import("std");
 const db_mod = @import("../../db/db.zig");
 const users_mod = @import("../../db/users.zig");
 const template_engine = @import("../../core/template.zig");
-const minify = @import("../../core/minify.zig");
-const global_css: []const u8 = minify.minifyCss(@embedFile("../style.css"));
+const global_css: []const u8 = @embedFile("../style.css");
 
 fn getFormValue(body: []const u8, key: []const u8) ?[]const u8 {
     var it = std.mem.splitSequence(u8, body, "&");
