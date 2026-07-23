@@ -6,6 +6,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  ACTIONS_NO_DEPRECATED_NODE_WARNINGS: "true"
 
 jobs:
   build:
@@ -28,7 +29,7 @@ jobs:
 
       - name: Update Pacman & Install System Dependencies
         run: |
-          pacman -Syu --noconfirm git sqlite ffmpeg curl tar xz pkgconf
+          pacman -Syu --needed --noconfirm git sqlite ffmpeg curl tar xz pkgconf
 
       - name: Cache Zig Compiler
         id: cache-zig
