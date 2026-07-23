@@ -18,16 +18,46 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Cache Pacman Packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/pacman/pkg
+          key: pacman-cache-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
+          restore-keys: |
+            pacman-cache-${{ runner.os }}-
+
       - name: Update Pacman & Install System Dependencies
         run: |
           pacman -Syu --noconfirm git sqlite ffmpeg curl tar xz pkgconf
 
+      - name: Cache Zig Compiler
+        id: cache-zig
+        uses: actions/cache@v4
+        with:
+          path: /opt/zig
+          key: zig-0.16.0-x86_64-linux
+
       - name: Download & Install Zig 0.16.0
+        if: steps.cache-zig.outputs.cache-hit != 'true'
         run: |
           curl -L -o zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
           mkdir -p /opt/zig
           tar -xf zig.tar.xz -C /opt/zig --strip-components=1
+
+      - name: Add Zig to PATH
+        run: |
           echo "/opt/zig" >> $GITHUB_PATH
+
+      - name: Cache Zig Build Artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            .zig-cache
+            ~/.cache/zig
+            zig-pkg
+          key: zig-build-${{ runner.os }}-${{ hashFiles('build.zig', 'build.zig.zon', 'src/**') }}
+          restore-keys: |
+            zig-build-${{ runner.os }}-
 
       - name: Build Binary (-Doptimize=ReleaseFast -Dcpu=silvermont)
         run: |
