@@ -13,7 +13,7 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Update Pacman & Install System Dependencies
         run: |
@@ -31,7 +31,7 @@ jobs:
           /opt/zig/zig build -Doptimize=ReleaseFast -Dcpu=silvermont
 
       - name: Upload Binary Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: sratim-arch-n3150
           path: zig-out/bin/sratim
