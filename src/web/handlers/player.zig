@@ -147,7 +147,44 @@ pub fn handlePlayer(
         try std.fmt.allocPrint(allocator, "episode_id={d}", .{episode_id.?});
     defer allocator.free(media_query);
 
-    const html_content = try html.generatePlayerHtml(allocator, media_query, media_info.duration, media_info.codec_str, json_out.items, resume_pos);
+    var media_title: []const u8 = "Sratim Media";
+    var free_title = false;
+    defer if (free_title) allocator.free(media_title);
+
+    if (movie_id) |mid| {
+        var stmt = database.prepare("SELECT COALESCE(title, clean_name) FROM movies WHERE id = ?1;") catch null;
+        if (stmt) |*s| {
+            defer s.finalize();
+            s.bindInt64(1, mid) catch {};
+            if ((s.step() catch .done) == .row) {
+                if (s.columnText(0)) |t| {
+                    media_title = try allocator.dupe(u8, t);
+                    free_title = true;
+                }
+            }
+        }
+    } else if (episode_id) |eid| {
+        var stmt = database.prepare(
+            \\SELECT COALESCE(e.title, s.title || ' S' || e.season || 'E' || e.episode)
+            \\FROM episodes e JOIN shows s ON e.show_id = s.id WHERE e.id = ?1;
+        ) catch null;
+        if (stmt) |*s| {
+            defer s.finalize();
+            s.bindInt64(1, eid) catch {};
+            if ((s.step() catch .done) == .row) {
+                if (s.columnText(0)) |t| {
+                    media_title = try allocator.dupe(u8, t);
+                    free_title = true;
+                }
+            }
+        }
+    }
+
+    const lan_ip_opt = getLanIp(allocator) catch null;
+    const lan_ip = lan_ip_opt orelse "";
+    defer if (lan_ip_opt) |ip| allocator.free(ip);
+
+    const html_content = try html.generatePlayerHtml(allocator, media_query, media_info.duration, media_info.codec_str, json_out.items, resume_pos, media_title, lan_ip);
 
     try request.respond(html_content, .{
         .status = .ok,
@@ -155,6 +192,36 @@ pub fn handlePlayer(
             .{ .name = "content-type", .value = "text/html; charset=utf-8" },
         },
     });
+}
+
+const c = @import("../../core/c.zig").c;
+
+pub fn getLanIp(allocator: std.mem.Allocator) !?[]const u8 {
+    var ifap: ?*c.ifaddrs = null;
+    if (c.getifaddrs(&ifap) != 0) return null;
+    if (ifap == null) return null;
+    defer c.freeifaddrs(ifap);
+
+    var curr = ifap;
+    while (curr) |ifa| : (curr = ifa.ifa_next) {
+        if (ifa.ifa_addr == null) continue;
+        const family = ifa.ifa_addr.*.sa_family;
+        if (family == c.AF_INET) {
+            const flags = ifa.ifa_flags;
+            if ((flags & @as(c_uint, @intCast(c.IFF_LOOPBACK))) != 0) continue;
+            if ((flags & @as(c_uint, @intCast(c.IFF_UP))) == 0) continue;
+
+            const sin = @as(*const c.sockaddr_in, @ptrCast(@alignCast(ifa.ifa_addr)));
+            var buf: [c.INET_ADDRSTRLEN]u8 = undefined;
+            if (c.inet_ntop(c.AF_INET, &sin.sin_addr, &buf, @intCast(buf.len))) |str| {
+                const len = std.mem.sliceTo(str, 0).len;
+                if (len > 0) {
+                    return try allocator.dupe(u8, str[0..len]);
+                }
+            }
+        }
+    }
+    return null;
 }
 
 /// Handles the media stream endpoint (/stream).
@@ -165,6 +232,19 @@ pub fn handleStream(
     working_folder: []const u8,
     resp_buf: []u8,
 ) !void {
+    if (request.head.method == .OPTIONS) {
+        try request.respond("", .{
+            .status = .no_content,
+            .extra_headers = &.{
+                .{ .name = "access-control-allow-origin", .value = "*" },
+                .{ .name = "access-control-allow-methods", .value = "GET, OPTIONS, HEAD" },
+                .{ .name = "access-control-allow-headers", .value = "Range, Content-Type, Authorization" },
+                .{ .name = "access-control-max-age", .value = "86400" },
+            },
+        });
+        return;
+    }
+
     const target = request.head.target;
     const movie_id = parseQueryInt(i64, target, "id");
     const episode_id = parseQueryInt(i64, target, "episode_id");
@@ -201,6 +281,7 @@ pub fn handleStream(
             .extra_headers = &.{
                 .{ .name = "content-type", .value = "video/mp4" },
                 .{ .name = "access-control-allow-origin", .value = "*" },
+                .{ .name = "accept-ranges", .value = "bytes" },
             },
         },
     });

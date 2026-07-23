@@ -3,28 +3,74 @@
 <head>
     <meta charset="utf-8">
     <title>Sratim Stream</title>
+    <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
     <style>
         body { margin: 0; background: #000; height: 100vh; font-family: sans-serif; color: white; overflow: hidden; }
-        .player-wrapper { display: flex; flex-direction: column; height: 100%; width: 100%; }
+        .player-wrapper { display: flex; flex-direction: column; height: 100%; width: 100%; position: relative; }
         video { width: 100%; flex: 1; min-height: 0; background: #000; display: block; object-fit: contain; }
-        .controls { display: flex; align-items: center; padding: 10px; background: #222; flex-shrink: 0; }
-        button { background: #444; color: white; border: none; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; padding: 0; }
+        .controls { display: flex; align-items: center; padding: 10px; background: #222; flex-shrink: 0; z-index: 10; }
+        button { background: #444; color: white; border: none; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s, color 0.2s; padding: 0; }
         button:hover { background: #555; }
         #playpause { margin-right: 15px; }
         #fullscreen { margin-left: 15px; }
+        #castbtn { margin-left: 15px; }
+        #castbtn.active { background: #3b82f6; color: #ffffff; box-shadow: 0 0 10px rgba(59, 130, 246, 0.5); }
         .seek-bar { flex: 1; margin: 0 10px; cursor: pointer; height: 10px; background: #444; position: relative; border-radius: 5px; overflow: hidden; }
         .seek-fill { background: #f00; height: 100%; width: 0%; pointer-events: none; }
         .time { font-variant-numeric: tabular-nums; }
-        #audio-menu { position: absolute; bottom: 65px; right: 15px; background: rgba(30,30,30,0.9); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 5px; }
+        #audio-menu { position: absolute; bottom: 65px; right: 15px; background: rgba(30,30,30,0.9); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 5px; z-index: 20; }
         .hidden { display: none !important; }
         .audio-track-btn { background: transparent; color: white; border: none; padding: 8px 12px; text-align: left; cursor: pointer; border-radius: 4px; width: auto; height: auto; display: block; white-space: nowrap; }
         .audio-track-btn:hover { background: #444; }
         .audio-track-btn.active { background: #666; font-weight: bold; }
+
+        .casting-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 60px;
+            background: #050508;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            z-index: 5;
+        }
+        .casting-overlay svg { color: #3b82f6; animation: pulse 2s infinite; }
+        .casting-title { font-size: 1.4rem; font-weight: 600; color: #f3f4f6; text-align: center; max-width: 80%; }
+        .casting-sub { font-size: 1rem; color: #9ca3af; }
+        .stop-cast-btn {
+            background: rgba(239, 68, 68, 0.2);
+            color: #fca5a5;
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            border-radius: 20px;
+            width: auto;
+            height: auto;
+            padding: 8px 20px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            margin-top: 10px;
+        }
+        .stop-cast-btn:hover { background: rgba(239, 68, 68, 0.35); color: #ffffff; }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 0.9; }
+            50% { transform: scale(1.08); opacity: 1; }
+            100% { transform: scale(1); opacity: 0.9; }
+        }
     </style>
 </head>
 <body>
     <div class="player-wrapper">
         <video id="video" playsinline></video>
+        <div id="casting-overlay" class="casting-overlay hidden">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="64" height="64">
+                <path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2c4.97 0 9 4.03 9 9h2c0-6.08-4.92-11-11-11zm20-7H3c-1.1 0-2 .9-2 2v3h2V5h18v14h-7v2h7c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/>
+            </svg>
+            <div class="casting-title" id="casting-media-title">Sratim Stream</div>
+            <div class="casting-sub">Casting to <strong id="casting-device-name" style="color: #60a5fa;">TV Device</strong></div>
+            <button id="stopcastbtn" class="stop-cast-btn">Disconnect Cast</button>
+        </div>
+
         <div class="controls">
             <button id="playpause">
                 <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
@@ -36,6 +82,11 @@
             <div class="time" id="time-total">__TIME_STR__</div>
             <button id="audiobtn" style="display: none; margin-left: 15px;">
                 <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+            </button>
+            <button id="castbtn" title="Cast to TV">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                    <path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2c4.97 0 9 4.03 9 9h2c0-6.08-4.92-11-11-11zm20-7H3c-1.1 0-2 .9-2 2v3h2V5h18v14h-7v2h7c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/>
+                </svg>
             </button>
             <button id="fullscreen">
                 <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
@@ -50,13 +101,20 @@
         const seekfill = document.getElementById('seekfill');
         const timeCurrent = document.getElementById('time-current');
         const btnFullscreen = document.getElementById('fullscreen');
+        const btnCast = document.getElementById('castbtn');
+        const btnStopCast = document.getElementById('stopcastbtn');
+        const castingOverlay = document.getElementById('casting-overlay');
+        const castingDeviceName = document.getElementById('casting-device-name');
+        const castingMediaTitle = document.getElementById('casting-media-title');
         const playerWrapper = document.querySelector('.player-wrapper');
         
-        const DURATION = __DURATION__; // Real duration
+        const DURATION = __DURATION__; // Real duration in seconds
         const MEDIA_QUERY = '__MEDIA_QUERY__';
         const codecStr = '__CODEC_STR__';
         const AUDIO_TRACKS = __AUDIO_TRACKS_JSON__;
         const START_POSITION = __START_POSITION__;
+        const MEDIA_TITLE = '__MEDIA_TITLE__';
+        const SERVER_LAN_IP = '__SERVER_LAN_IP__';
         let currentSeekTime = 0;
         let currentAudioIdx = -1;
         let abortController = null;
@@ -124,8 +182,22 @@
                     btn.classList.add('active');
                     
                     // Seamless switch
-                    const resumeTime = getAbsoluteTime();
-                    loadVideo(resumeTime);
+                    if (isCasting && castSession) {
+                        const resumeTime = getCastPosition();
+                        startCastAbsoluteTime = resumeTime;
+                        const mediaUrl = getCastStreamUrl(resumeTime);
+                        const mediaInfo = new chrome.cast.media.MediaInfo(mediaUrl, 'video/mp4');
+                        mediaInfo.streamType = chrome.cast.media.StreamType.BUFFERED;
+                        mediaInfo.duration = DURATION;
+                        mediaInfo.metadata = new chrome.cast.media.GenericMediaMetadata();
+                        mediaInfo.metadata.title = MEDIA_TITLE;
+                        const request = new chrome.cast.media.LoadRequest(mediaInfo);
+                        request.currentTime = 0;
+                        castSession.loadMedia(request).catch(e => console.error("Cast audio switch failed:", e));
+                    } else {
+                        const resumeTime = getAbsoluteTime();
+                        loadVideo(resumeTime);
+                    }
                 };
                 audioMenu.appendChild(btn);
             });
@@ -295,13 +367,203 @@
             }
         });
 
-        playpause.addEventListener('click', () => {
-            if (video.paused) {
-                video.play();
-                playpause.innerHTML = svgPause;
+        let isCasting = false;
+        let castSession = null;
+        let remotePlayer = null;
+        let remotePlayerController = null;
+        let startCastAbsoluteTime = 0;
+        let disconnectHandled = false;
+
+        function getCastPosition() {
+            if (isCasting && remotePlayer && typeof remotePlayer.currentTime === 'number') {
+                return startCastAbsoluteTime + remotePlayer.currentTime;
+            }
+            return getAbsoluteTime();
+        }
+
+        // Initialize Google Cast SDK
+        window.__onGCastApiAvailable = function(isAvailable) {
+            if (isAvailable && window.cast && window.cast.framework) {
+                const castContext = cast.framework.CastContext.getInstance();
+                castContext.setOptions({
+                    receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+                    autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
+                });
+
+                remotePlayer = new cast.framework.RemotePlayer();
+                remotePlayerController = new cast.framework.RemotePlayerController(remotePlayer);
+
+                remotePlayerController.addEventListener(
+                    cast.framework.RemotePlayerEventType.IS_CONNECTED_CHANGED,
+                    () => {
+                        if (remotePlayer.isConnected) {
+                            onCastConnected();
+                        } else if (!disconnectHandled) {
+                            onCastDisconnected();
+                        }
+                    }
+                );
+
+                remotePlayerController.addEventListener(
+                    cast.framework.RemotePlayerEventType.CURRENT_TIME_CHANGED,
+                    () => {
+                        if (isCasting && typeof remotePlayer.currentTime === 'number') {
+                            const actualTime = startCastAbsoluteTime + remotePlayer.currentTime;
+                            const percentage = (actualTime / DURATION) * 100;
+                            seekfill.style.width = percentage + '%';
+                            timeCurrent.innerText = formatTime(actualTime);
+                            if (Math.abs(actualTime - lastReportedPosition) >= 10) {
+                                lastReportedPosition = actualTime;
+                                sendWatchEvent('progress', actualTime);
+                            }
+                        }
+                    }
+                );
+
+                remotePlayerController.addEventListener(
+                    cast.framework.RemotePlayerEventType.IS_PAUSED_CHANGED,
+                    () => {
+                        if (isCasting) {
+                            playpause.innerHTML = remotePlayer.isPaused ? svgPlay : svgPause;
+                        }
+                    }
+                );
+            }
+        };
+
+        function getCastStreamUrl(castPosition) {
+            let host = window.location.origin;
+            if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                if (SERVER_LAN_IP && SERVER_LAN_IP.length > 0) {
+                    const portStr = window.location.port ? (':' + window.location.port) : '';
+                    host = 'http://' + SERVER_LAN_IP + portStr;
+                } else {
+                    let savedIp = localStorage.getItem('sratim_cast_ip');
+                    if (!savedIp) {
+                        savedIp = prompt('Casting from localhost requires your PC\'s local IP address on your Wi-Fi network (e.g. 192.168.1.100):', '');
+                        if (savedIp) {
+                            localStorage.setItem('sratim_cast_ip', savedIp.trim());
+                        }
+                    }
+                    if (savedIp) {
+                        const portStr = window.location.port ? (':' + window.location.port) : '';
+                        host = 'http://' + savedIp.trim() + portStr;
+                    }
+                }
+            }
+            let url = host + '/stream?' + MEDIA_QUERY + '&start=' + Math.floor(castPosition);
+            if (currentAudioIdx >= 0) {
+                url += '&audio=' + currentAudioIdx;
+            }
+            return url;
+        }
+
+        function detachLocalVideo() {
+            video.pause();
+            video.src = '';
+            video.removeAttribute('src');
+            video.load();
+            if (currentObjectUrl) {
+                URL.revokeObjectURL(currentObjectUrl);
+                currentObjectUrl = null;
+            }
+            if (abortController) {
+                abortController.abort();
+                abortController = null;
+            }
+        }
+
+        async function startCasting() {
+            const castPosition = getAbsoluteTime();
+            startCastAbsoluteTime = castPosition;
+
+            if (window.cast && window.cast.framework) {
+                const castContext = cast.framework.CastContext.getInstance();
+                try {
+                    await castContext.requestSession();
+                    castSession = castContext.getCurrentSession();
+                    
+                    const deviceName = (castSession.getCastDevice() && castSession.getCastDevice().friendlyName) || 'TV Device';
+                    castingDeviceName.innerText = deviceName;
+                    castingMediaTitle.innerText = MEDIA_TITLE;
+
+                    const mediaUrl = getCastStreamUrl(castPosition);
+                    console.log('Sending Cast Stream URL to TV:', mediaUrl);
+
+                    const mediaInfo = new chrome.cast.media.MediaInfo(mediaUrl, 'video/mp4');
+                    mediaInfo.streamType = chrome.cast.media.StreamType.BUFFERED;
+                    mediaInfo.duration = DURATION;
+                    mediaInfo.metadata = new chrome.cast.media.GenericMediaMetadata();
+                    mediaInfo.metadata.title = MEDIA_TITLE;
+
+                    const request = new chrome.cast.media.LoadRequest(mediaInfo);
+                    request.currentTime = 0;
+                    await castSession.loadMedia(request);
+
+                    onCastConnected();
+                    sendWatchEvent('start', castPosition);
+                } catch (e) {
+                    console.error('Google Cast failed or cancelled:', e);
+                    if (video.remote && typeof video.remote.prompt === 'function') {
+                        video.remote.prompt().catch(err => console.log('Remote playback prompt cancelled:', err));
+                    }
+                }
+            } else if (video.remote && typeof video.remote.prompt === 'function') {
+                video.remote.prompt().catch(err => console.log('Remote playback prompt cancelled:', err));
             } else {
-                video.pause();
-                playpause.innerHTML = svgPlay;
+                alert('Casting is not supported on this browser/device. Make sure you are using Chrome or Edge on the same Wi-Fi network as your TV.');
+            }
+        }
+
+        function stopCasting() {
+            let lastCastTime = getCastPosition();
+            disconnectHandled = true;
+            if (window.cast && window.cast.framework) {
+                const castContext = cast.framework.CastContext.getInstance();
+                castContext.endCurrentSession(true);
+            }
+            onCastDisconnected(lastCastTime);
+            setTimeout(() => { disconnectHandled = false; }, 500);
+        }
+
+        function onCastConnected() {
+            isCasting = true;
+            disconnectHandled = false;
+            detachLocalVideo();
+            btnCast.classList.add('active');
+            castingOverlay.classList.remove('hidden');
+        }
+
+        function onCastDisconnected(resumeTime) {
+            isCasting = false;
+            btnCast.classList.remove('active');
+            castingOverlay.classList.add('hidden');
+            
+            const targetTime = (typeof resumeTime === 'number') ? resumeTime : getCastPosition();
+            loadVideo(targetTime);
+        }
+
+        btnCast.addEventListener('click', () => {
+            if (isCasting) {
+                stopCasting();
+            } else {
+                startCasting();
+            }
+        });
+
+        btnStopCast.addEventListener('click', stopCasting);
+
+        playpause.addEventListener('click', () => {
+            if (isCasting && remotePlayerController) {
+                remotePlayerController.playOrPause();
+            } else {
+                if (video.paused) {
+                    video.play();
+                    playpause.innerHTML = svgPause;
+                } else {
+                    video.pause();
+                    playpause.innerHTML = svgPlay;
+                }
             }
         });
 
@@ -310,7 +572,23 @@
             const percentage = (e.clientX - rect.left) / rect.width;
             const seekTo = Math.max(0, Math.floor(percentage * DURATION));
             sendWatchEvent('seek', seekTo);
-            loadVideo(seekTo);
+
+            if (isCasting && castSession) {
+                startCastAbsoluteTime = seekTo;
+                seekfill.style.width = (percentage * 100) + '%';
+                timeCurrent.innerText = formatTime(seekTo);
+                const mediaUrl = getCastStreamUrl(seekTo);
+                const mediaInfo = new chrome.cast.media.MediaInfo(mediaUrl, 'video/mp4');
+                mediaInfo.streamType = chrome.cast.media.StreamType.BUFFERED;
+                mediaInfo.duration = DURATION;
+                mediaInfo.metadata = new chrome.cast.media.GenericMediaMetadata();
+                mediaInfo.metadata.title = MEDIA_TITLE;
+                const request = new chrome.cast.media.LoadRequest(mediaInfo);
+                request.currentTime = 0;
+                castSession.loadMedia(request).catch(e => console.error("Cast seek failed:", e));
+            } else {
+                loadVideo(seekTo);
+            }
         });
 
         btnFullscreen.addEventListener('click', () => {

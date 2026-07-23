@@ -79,6 +79,14 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             continue;
         }
 
+        // Route: Media Streamer (Public for Cast receivers & media elements)
+        if (std.mem.startsWith(u8, target, "/stream")) {
+            player_handler.handleStream(&request, allocator, database, working_folder, &resp_buf) catch |err| {
+                std.debug.print("Stream handler error: {}\n", .{err});
+            };
+            continue;
+        }
+
         // Static assets handler (/style.css, /favicon.ico, /fonts/*, /images/*)
         const served_static = static_handler.serveStaticAsset(&request, allocator, io) catch |err| {
             std.debug.print("Static asset error: {}\n", .{err});
@@ -339,12 +347,6 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             player_handler.handlePlayer(&request, allocator, database, logs_database, session_info.?.username, working_folder) catch |err| {
                 std.debug.print("Player handler error: {}\n", .{err});
                 request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-            };
-
-        // Route: Media Streamer
-        } else if (std.mem.startsWith(u8, target, "/stream")) {
-            player_handler.handleStream(&request, allocator, database, working_folder, &resp_buf) catch |err| {
-                std.debug.print("Stream handler error: {}\n", .{err});
             };
         } else {
             request.respond("Not found", .{ .status = .not_found }) catch return;
