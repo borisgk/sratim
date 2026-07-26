@@ -249,6 +249,9 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
     }
 }
 
+const subtitles_mod = @import("subtitles.zig");
+pub const SubtitleTrack = subtitles_mod.SubtitleTrack;
+
 pub const AudioTrack = struct {
     id: usize,
     label: []const u8,
@@ -259,6 +262,7 @@ pub const MediaInfo = struct {
     codec_str: []const u8,
     dynamic_codec_str: ?[]const u8 = null,
     audio_tracks: []AudioTrack,
+    subtitle_tracks: []SubtitleTrack,
 
     pub fn deinit(self: *const MediaInfo, allocator: std.mem.Allocator) void {
         for (self.audio_tracks) |track| {
@@ -267,14 +271,21 @@ pub const MediaInfo = struct {
         if (self.audio_tracks.len > 0) {
             allocator.free(self.audio_tracks);
         }
+        for (self.subtitle_tracks) |track| {
+            allocator.free(track.label);
+            allocator.free(track.language);
+        }
+        if (self.subtitle_tracks.len > 0) {
+            allocator.free(self.subtitle_tracks);
+        }
         if (self.dynamic_codec_str) |s| {
             allocator.free(s);
         }
     }
 };
 
-/// Retrieves the duration, codec info, and available audio tracks of a media file.
-pub fn getMediaInfo(allocator: std.mem.Allocator, file_path: [:0]const u8) !MediaInfo {
+/// Retrieves the duration, codec info, and available audio/subtitle tracks of a media file.
+pub fn getMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8) !MediaInfo {
     var fmt_ctx: ?*c.AVFormatContext = null;
     if (c.avformat_open_input(@ptrCast(&fmt_ctx), file_path.ptr, null, null) < 0) return error.OpenFailed;
     defer c.avformat_close_input(@ptrCast(&fmt_ctx));
@@ -286,9 +297,15 @@ pub fn getMediaInfo(allocator: std.mem.Allocator, file_path: [:0]const u8) !Medi
     var dynamic_codec_str: ?[]const u8 = null;
 
     var audio_tracks: std.ArrayList(AudioTrack) = .empty;
+    var subtitle_tracks: std.ArrayList(SubtitleTrack) = .empty;
     errdefer {
         for (audio_tracks.items) |track| allocator.free(track.label);
         audio_tracks.deinit(allocator);
+        for (subtitle_tracks.items) |track| {
+            allocator.free(track.label);
+            allocator.free(track.language);
+        }
+        subtitle_tracks.deinit(allocator);
         if (dynamic_codec_str) |s| allocator.free(s);
     }
 
@@ -364,6 +381,35 @@ pub fn getMediaInfo(allocator: std.mem.Allocator, file_path: [:0]const u8) !Medi
 
             const label_dup = try allocator.dupe(u8, label);
             try audio_tracks.append(allocator, .{ .id = i, .label = label_dup });
+        } else if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_SUBTITLE) {
+            var label: []const u8 = "";
+            var lang: []const u8 = "";
+
+            const title_entry = c.av_dict_get(stream.*.metadata, "title", null, 0);
+            const lang_entry = c.av_dict_get(stream.*.metadata, "language", null, 0);
+
+            if (title_entry != null) {
+                label = std.mem.span(title_entry.*.value);
+            }
+            if (lang_entry != null) {
+                lang = std.mem.span(lang_entry.*.value);
+                if (label.len == 0) label = lang;
+            }
+            if (label.len == 0) {
+                label = "Subtitle Track";
+            }
+
+            const label_dup = try allocator.dupe(u8, label);
+            const lang_dup = try allocator.dupe(u8, lang);
+            try subtitle_tracks.append(allocator, .{ .id = i, .label = label_dup, .language = lang_dup });
+        }
+    }
+
+    // Also scan for external subtitle files in the same directory (.srt, .vtt, .ass)
+    if (subtitles_mod.scanExternalSubtitles(allocator, io, file_path) catch null) |ext_subs| {
+        defer allocator.free(ext_subs);
+        for (ext_subs) |ext_tr| {
+            try subtitle_tracks.append(allocator, ext_tr);
         }
     }
 
@@ -372,5 +418,6 @@ pub fn getMediaInfo(allocator: std.mem.Allocator, file_path: [:0]const u8) !Medi
         .codec_str = codec_str,
         .dynamic_codec_str = dynamic_codec_str,
         .audio_tracks = try audio_tracks.toOwnedSlice(allocator),
+        .subtitle_tracks = try subtitle_tracks.toOwnedSlice(allocator),
     };
 }

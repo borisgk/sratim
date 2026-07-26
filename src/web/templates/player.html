@@ -19,10 +19,23 @@
         .seek-fill { background: #f00; height: 100%; width: 0%; pointer-events: none; }
         .time { font-variant-numeric: tabular-nums; }
         #audio-menu { position: absolute; bottom: 65px; right: 15px; background: rgba(30,30,30,0.9); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 5px; z-index: 20; }
+        #subtitles-menu { position: absolute; bottom: 65px; right: 65px; background: rgba(30,30,30,0.95); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 5px; z-index: 20; max-height: 250px; overflow-y: auto; }
         .hidden { display: none !important; }
-        .audio-track-btn { background: transparent; color: white; border: none; padding: 8px 12px; text-align: left; cursor: pointer; border-radius: 4px; width: auto; height: auto; display: block; white-space: nowrap; }
-        .audio-track-btn:hover { background: #444; }
-        .audio-track-btn.active { background: #666; font-weight: bold; }
+        .audio-track-btn, .sub-track-btn { background: transparent; color: white; border: none; padding: 8px 12px; text-align: left; cursor: pointer; border-radius: 4px; width: auto; height: auto; display: block; white-space: nowrap; }
+        .audio-track-btn:hover, .sub-track-btn:hover { background: #444; }
+        .audio-track-btn.active, .sub-track-btn.active { background: #666; font-weight: bold; }
+        #subtitlesbtn.active { background: #3b82f6; color: #ffffff; box-shadow: 0 0 10px rgba(59, 130, 246, 0.5); }
+
+        video::cue {
+            background: rgba(0, 0, 0, 0.75);
+            color: #ffffff;
+            font-family: system-ui, -apple-system, sans-serif;
+            font-size: 1.2rem;
+            font-weight: 500;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+            border-radius: 4px;
+            padding: 2px 8px;
+        }
 
         .casting-overlay {
             position: absolute;
@@ -80,8 +93,13 @@
                 <div class="seek-fill" id="seekfill"></div>
             </div>
             <div class="time" id="time-total">__TIME_STR__</div>
-            <button id="audiobtn" style="display: none; margin-left: 15px;">
+            <button id="audiobtn" style="display: none; margin-left: 15px;" title="Audio Tracks">
                 <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+            </button>
+            <button id="subtitlesbtn" style="display: none; margin-left: 15px;" title="Subtitles">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                    <path d="M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H7.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H6c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h4c.55 0 1 .45 1 1v1zm8 0h-3.5v-.5h-2v3h2V13H19v1c0 .55-.45 1-1 1h-4c-.55 0-1-.45-1-1v-4c0-.55 1 .45 1 1v1z"/>
+                </svg>
             </button>
             <button id="castbtn" title="Cast to TV">
                 <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
@@ -93,6 +111,7 @@
             </button>
         </div>
         <div id="audio-menu" class="hidden"></div>
+        <div id="subtitles-menu" class="hidden"></div>
     </div>
     <script>
         const video = document.getElementById('video');
@@ -112,11 +131,13 @@
         const MEDIA_QUERY = '__MEDIA_QUERY__';
         const codecStr = '__CODEC_STR__';
         const AUDIO_TRACKS = __AUDIO_TRACKS_JSON__;
+        const SUBTITLE_TRACKS = __SUBTITLE_TRACKS_JSON__;
         const START_POSITION = __START_POSITION__;
         const MEDIA_TITLE = '__MEDIA_TITLE__';
         const SERVER_LAN_IP = '__SERVER_LAN_IP__';
         let currentSeekTime = 0;
         let currentAudioIdx = -1;
+        let currentSubtitleIdx = -1;
         let abortController = null;
         let currentObjectUrl = null;
         let lastReportedPosition = -100;
@@ -205,6 +226,7 @@
 
             btnAudio.addEventListener('click', (e) => {
                 e.stopPropagation();
+                if (typeof subtitlesMenu !== 'undefined') subtitlesMenu.classList.add('hidden');
                 audioMenu.classList.toggle('hidden');
             });
 
@@ -215,6 +237,92 @@
                 }
             });
         }
+
+        // Setup Subtitles Menu
+        const btnSubtitles = document.getElementById('subtitlesbtn');
+        const subtitlesMenu = document.getElementById('subtitles-menu');
+
+        function setSubtitleTrack(trackId) {
+            currentSubtitleIdx = trackId;
+
+            // Clear old HTML track elements
+            const existingTracks = video.querySelectorAll('track');
+            existingTracks.forEach(t => t.remove());
+
+            if (trackId === -1) {
+                btnSubtitles.classList.remove('active');
+                return;
+            }
+
+            btnSubtitles.classList.add('active');
+
+            const trInfo = SUBTITLE_TRACKS.find(t => t.id === trackId);
+            const subUrl = `/subtitles?${MEDIA_QUERY}&track=${trackId}&start=${currentSeekTime}`;
+
+            const trackEl = document.createElement('track');
+            trackEl.kind = 'subtitles';
+            trackEl.label = trInfo ? trInfo.label : 'Subtitles';
+            trackEl.srclang = (trInfo && trInfo.language && trInfo.language.length > 0) ? trInfo.language : 'en';
+            trackEl.src = subUrl;
+            trackEl.default = true;
+
+            video.appendChild(trackEl);
+
+            if (video.textTracks && video.textTracks.length > 0) {
+                for (let i = 0; i < video.textTracks.length; i++) {
+                    video.textTracks[i].mode = (i === video.textTracks.length - 1) ? 'showing' : 'disabled';
+                }
+            }
+        }
+
+        btnSubtitles.style.display = 'flex';
+
+        if (SUBTITLE_TRACKS && SUBTITLE_TRACKS.length > 0) {
+            // Option "Off"
+            const offBtn = document.createElement('button');
+            offBtn.className = 'sub-track-btn active';
+            offBtn.innerText = 'Off';
+            offBtn.onclick = () => {
+                setSubtitleTrack(-1);
+                subtitlesMenu.classList.add('hidden');
+                document.querySelectorAll('.sub-track-btn').forEach(b => b.classList.remove('active'));
+                offBtn.classList.add('active');
+            };
+            subtitlesMenu.appendChild(offBtn);
+
+            SUBTITLE_TRACKS.forEach((track) => {
+                const btn = document.createElement('button');
+                btn.className = 'sub-track-btn';
+                btn.innerText = track.label || `Subtitle ${track.id}`;
+
+                btn.onclick = () => {
+                    setSubtitleTrack(track.id);
+                    subtitlesMenu.classList.add('hidden');
+                    document.querySelectorAll('.sub-track-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                };
+                subtitlesMenu.appendChild(btn);
+            });
+        } else {
+            const noSubBtn = document.createElement('button');
+            noSubBtn.className = 'sub-track-btn';
+            noSubBtn.style.opacity = '0.5';
+            noSubBtn.style.cursor = 'default';
+            noSubBtn.innerText = 'No subtitles found';
+            subtitlesMenu.appendChild(noSubBtn);
+        }
+
+        btnSubtitles.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (typeof audioMenu !== 'undefined') audioMenu.classList.add('hidden');
+            subtitlesMenu.classList.toggle('hidden');
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!subtitlesMenu.contains(e.target) && e.target !== btnSubtitles) {
+                subtitlesMenu.classList.add('hidden');
+            }
+        });
 
         function formatTime(seconds) {
             const m = Math.floor(seconds / 60);
@@ -312,6 +420,10 @@
         function loadVideo(startTime, retryCount) {
             currentSeekTime = startTime;
             retryCount = retryCount || 0;
+            
+            if (currentSubtitleIdx !== -1) {
+                setSubtitleTrack(currentSubtitleIdx);
+            }
             
             if (abortController) abortController.abort();
             abortController = new AbortController();

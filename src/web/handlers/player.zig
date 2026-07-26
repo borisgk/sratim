@@ -4,6 +4,7 @@ const library_mod = @import("../../db/library.zig");
 const metadata_mod = @import("../../db/metadata.zig");
 const logging_mod = @import("../../db/logging.zig");
 const streamer = @import("../../media/streamer.zig");
+const subtitles_mod = @import("../../media/subtitles.zig");
 const html = @import("../../core/html.zig");
 
 /// Parse an integer query parameter by name from a URL target string.
@@ -78,6 +79,7 @@ pub fn handlePlayer(
     logs_database: *db_mod.Database,
     username: []const u8,
     working_folder: []const u8,
+    io: std.Io,
 ) !void {
     const target = request.head.target;
     const movie_id = parseQueryInt(i64, target, "id");
@@ -107,11 +109,13 @@ pub fn handlePlayer(
     }
 
     const c_full_path = try allocator.dupeZ(u8, resolved.?.resolved_path);
+    defer allocator.free(c_full_path);
 
-    const media_info = streamer.getMediaInfo(allocator, c_full_path) catch streamer.MediaInfo{
+    const media_info = streamer.getMediaInfo(allocator, io, c_full_path) catch streamer.MediaInfo{
         .duration = 2799.0,
         .codec_str = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\"",
         .audio_tracks = &[_]streamer.AudioTrack{},
+        .subtitle_tracks = &[_]streamer.SubtitleTrack{},
     };
     defer media_info.deinit(allocator);
 
@@ -134,6 +138,35 @@ pub fn handlePlayer(
         try json_out.appendSlice(allocator, track_str);
     }
     try json_out.appendSlice(allocator, "]");
+
+    var sub_json_out: std.ArrayList(u8) = .empty;
+    defer sub_json_out.deinit(allocator);
+    try sub_json_out.appendSlice(allocator, "[");
+    for (media_info.subtitle_tracks, 0..) |track, i| {
+        if (i > 0) try sub_json_out.appendSlice(allocator, ",");
+
+        var safe_label: std.ArrayList(u8) = .empty;
+        defer safe_label.deinit(allocator);
+        for (track.label) |ch| {
+            if (ch == '"' or ch == '\\') {
+                try safe_label.append(allocator, '\\');
+            }
+            try safe_label.append(allocator, ch);
+        }
+
+        var safe_lang: std.ArrayList(u8) = .empty;
+        defer safe_lang.deinit(allocator);
+        for (track.language) |ch| {
+            if (ch == '"' or ch == '\\') {
+                try safe_lang.append(allocator, '\\');
+            }
+            try safe_lang.append(allocator, ch);
+        }
+
+        const track_str = try std.fmt.allocPrint(allocator, "{{\"id\":{},\"label\":\"{s}\",\"language\":\"{s}\"}}", .{ track.id, safe_label.items, safe_lang.items });
+        try sub_json_out.appendSlice(allocator, track_str);
+    }
+    try sub_json_out.appendSlice(allocator, "]");
 
     const start_opt = parseQueryFloat(target, "start");
     const resume_pos = if (start_opt) |s| s else if (movie_id != null)
@@ -184,7 +217,7 @@ pub fn handlePlayer(
     const lan_ip = lan_ip_opt orelse "";
     defer if (lan_ip_opt) |ip| allocator.free(ip);
 
-    const html_content = try html.generatePlayerHtml(allocator, media_query, media_info.duration, media_info.codec_str, json_out.items, resume_pos, media_title, lan_ip);
+    const html_content = try html.generatePlayerHtml(allocator, media_query, media_info.duration, media_info.codec_str, json_out.items, sub_json_out.items, resume_pos, media_title, lan_ip);
 
     try request.respond(html_content, .{
         .status = .ok,
@@ -295,4 +328,79 @@ pub fn handleStream(
     };
 
     try resp.end();
+}
+
+/// Handles the subtitle endpoint (/subtitles).
+pub fn handleSubtitles(
+    request: *std.http.Server.Request,
+    allocator: std.mem.Allocator,
+    database: *db_mod.Database,
+    working_folder: []const u8,
+    io: std.Io,
+) !void {
+    if (request.head.method == .OPTIONS) {
+        try request.respond("", .{
+            .status = .no_content,
+            .extra_headers = &.{
+                .{ .name = "access-control-allow-origin", .value = "*" },
+                .{ .name = "access-control-allow-methods", .value = "GET, OPTIONS, HEAD" },
+                .{ .name = "access-control-allow-headers", .value = "Range, Content-Type, Authorization" },
+                .{ .name = "access-control-max-age", .value = "86400" },
+            },
+        });
+        return;
+    }
+
+    const target = request.head.target;
+    const movie_id = parseQueryInt(i64, target, "id");
+    const episode_id = parseQueryInt(i64, target, "episode_id");
+    const track_idx = parseQueryInt(usize, target, "track");
+    const start_offset = parseQueryFloat(target, "start") orelse parseQueryFloat(target, "offset") orelse 0.0;
+
+    if ((movie_id == null and episode_id == null) or track_idx == null) {
+        try request.respond("Missing parameters", .{ .status = .bad_request });
+        return;
+    }
+
+    const media_info_opt = if (movie_id != null)
+        metadata_mod.getMovieInfoById(database, allocator, movie_id.?) catch null
+    else
+        metadata_mod.getEpisodeInfoById(database, allocator, episode_id.?) catch null;
+
+    const resolved = resolveMediaPath(database, allocator, media_info_opt, working_folder) catch |err| {
+        if (err == error.PathTraversal) {
+            try request.respond("Forbidden", .{ .status = .forbidden });
+        } else {
+            try request.respond("Internal Server Error", .{ .status = .internal_server_error });
+        }
+        return;
+    };
+    if (resolved == null) {
+        try request.respond("Media not found", .{ .status = .not_found });
+        return;
+    }
+
+    const c_full_path = try allocator.dupeZ(u8, resolved.?.resolved_path);
+    defer allocator.free(c_full_path);
+
+    const vtt_content = subtitles_mod.extractSubtitlesVtt(allocator, io, c_full_path, track_idx.?, start_offset) catch |err| {
+        std.debug.print("Subtitle extraction error: {}\n", .{err});
+        try request.respond("WEBVTT\n\n", .{
+            .status = .ok,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "text/vtt; charset=utf-8" },
+                .{ .name = "access-control-allow-origin", .value = "*" },
+            },
+        });
+        return;
+    };
+    defer allocator.free(vtt_content);
+
+    try request.respond(vtt_content, .{
+        .status = .ok,
+        .extra_headers = &.{
+            .{ .name = "content-type", .value = "text/vtt; charset=utf-8" },
+            .{ .name = "access-control-allow-origin", .value = "*" },
+        },
+    });
 }
