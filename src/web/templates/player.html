@@ -120,6 +120,7 @@
         let abortController = null;
         let currentObjectUrl = null;
         let lastReportedPosition = -100;
+        let currentSourceBuffer = null;
 
         function getAbsoluteTime() {
             if (video.readyState < 1) {
@@ -221,6 +222,20 @@
             return m + ':' + (s < 10 ? '0' : '') + s;
         }
 
+        // Checks whether a relative time offset falls within any buffered range
+        function isTimeInBuffer(relativeTime) {
+            if (!currentSourceBuffer || relativeTime < 0) return false;
+            try {
+                for (let i = 0; i < currentSourceBuffer.buffered.length; i++) {
+                    if (relativeTime >= currentSourceBuffer.buffered.start(i) &&
+                        relativeTime <= currentSourceBuffer.buffered.end(i)) {
+                        return true;
+                    }
+                }
+            } catch (e) {}
+            return false;
+        }
+
         async function fetchAndAppend(sourceBuffer, startTime, signal) {
             try {
                 const audioParam = currentAudioIdx >= 0 ? `&audio=${currentAudioIdx}` : '';
@@ -304,10 +319,8 @@
 
             // Probe codec support before doing anything
             const supported = MediaSource.isTypeSupported(codecStr);
-            // console.log('Codec probe:', codecStr, 'supported:', supported);
             if (!supported) {
                 console.error('Browser does not support codec via MSE:', codecStr);
-                // Try fallback without specific level
                 const fallbacks = [
                     'video/mp4; codecs="hvc1.2.4.L120.B0, mp4a.40.2"',
                     'video/mp4; codecs="hvc1.2.4.L150.B0, mp4a.40.2"',
@@ -330,7 +343,6 @@
             // Register sourceopen BEFORE setting video.src to avoid race
             ms.addEventListener('sourceopen', () => {
                 if (signal.aborted) return;
-                // console.log('sourceopen fired, readyState:', ms.readyState);
                 if (ms.readyState !== 'open') {
                     console.error('MediaSource readyState is', ms.readyState, '- retrying');
                     if (retryCount < 3) {
@@ -338,8 +350,9 @@
                     }
                     return;
                 }
-                const sourceBuffer = ms.addSourceBuffer(codecStr);
-                fetchAndAppend(sourceBuffer, startTime, signal);
+                const sb = ms.addSourceBuffer(codecStr);
+                currentSourceBuffer = sb;
+                fetchAndAppend(sb, startTime, signal);
                 video.play().catch(e => console.error("Play failed:", e));
             });
 
@@ -471,6 +484,7 @@
                 abortController.abort();
                 abortController = null;
             }
+            currentSourceBuffer = null;
         }
 
         async function startCasting() {
@@ -587,7 +601,13 @@
                 request.currentTime = 0;
                 castSession.loadMedia(request).catch(e => console.error("Cast seek failed:", e));
             } else {
-                loadVideo(seekTo);
+                // Fast path: if target is within already-buffered data, seek locally
+                const relativeTime = seekTo - currentSeekTime;
+                if (relativeTime >= 0 && isTimeInBuffer(relativeTime)) {
+                    video.currentTime = relativeTime;
+                } else {
+                    loadVideo(seekTo);
+                }
             }
         });
 
@@ -596,6 +616,59 @@
                 playerWrapper.requestFullscreen().catch(err => console.error(err));
             } else {
                 document.exitFullscreen();
+            }
+        });
+
+        // Keyboard shortcuts: arrow keys ±10s, space play/pause
+        document.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+            if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                e.preventDefault();
+                const delta = e.key === 'ArrowRight' ? 10 : -10;
+                const seekTo = Math.max(0, Math.min(DURATION, Math.floor(getAbsoluteTime() + delta)));
+                sendWatchEvent('seek', seekTo);
+
+                if (isCasting && castSession) {
+                    startCastAbsoluteTime = seekTo;
+                    seekfill.style.width = ((seekTo / DURATION) * 100) + '%';
+                    timeCurrent.innerText = formatTime(seekTo);
+                    const mediaUrl = getCastStreamUrl(seekTo);
+                    const mediaInfo = new chrome.cast.media.MediaInfo(mediaUrl, 'video/mp4');
+                    mediaInfo.streamType = chrome.cast.media.StreamType.BUFFERED;
+                    mediaInfo.duration = DURATION;
+                    mediaInfo.metadata = new chrome.cast.media.GenericMediaMetadata();
+                    mediaInfo.metadata.title = MEDIA_TITLE;
+                    const request = new chrome.cast.media.LoadRequest(mediaInfo);
+                    request.currentTime = 0;
+                    castSession.loadMedia(request).catch(e => console.error("Cast seek failed:", e));
+                } else {
+                    const relativeTime = seekTo - currentSeekTime;
+                    if (relativeTime >= 0 && isTimeInBuffer(relativeTime)) {
+                        video.currentTime = relativeTime;
+                    } else {
+                        loadVideo(seekTo);
+                    }
+                }
+            } else if (e.key === ' ') {
+                e.preventDefault();
+                if (isCasting && remotePlayerController) {
+                    remotePlayerController.playOrPause();
+                } else {
+                    if (video.paused) {
+                        video.play();
+                        playpause.innerHTML = svgPause;
+                    } else {
+                        video.pause();
+                        playpause.innerHTML = svgPlay;
+                    }
+                }
+            } else if (e.key === 'f' || e.key === 'F') {
+                if (!document.fullscreenElement) {
+                    playerWrapper.requestFullscreen().catch(err => console.error(err));
+                } else {
+                    document.exitFullscreen();
+                }
             }
         });
 
