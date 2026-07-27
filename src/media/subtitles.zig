@@ -7,6 +7,17 @@ pub const SubtitleTrack = struct {
     language: []const u8,
 };
 
+const VttWriteContext = struct {
+    allocator: std.mem.Allocator,
+    buffer: std.ArrayList(u8),
+};
+
+fn write_vtt_packet(ptr: ?*anyopaque, buf: [*c]const u8, buf_size: c_int) callconv(.c) c_int {
+    var ctx = @as(*VttWriteContext, @ptrCast(@alignCast(ptr.?)));
+    ctx.buffer.appendSlice(ctx.allocator, buf[0..@intCast(buf_size)]) catch return -1;
+    return buf_size;
+}
+
 fn formatVttTime(out: *std.ArrayList(u8), allocator: std.mem.Allocator, total_seconds: f64) !void {
     const sec_val = if (total_seconds < 0) 0.0 else total_seconds;
     const total_ms: u64 = @intFromFloat(sec_val * 1000.0);
@@ -444,14 +455,103 @@ pub fn extractSubtitlesVttLibav(allocator: std.mem.Allocator, io: std.Io, file_p
     return vtt.toOwnedSlice(allocator);
 }
 
+/// Native libavformat in-memory WebVTT muxer subtitle extraction.
+/// Allocates an in-memory "webvtt" AVFormatContext with custom AVIOContext,
+/// seeks to start_offset, and streams/muxes subtitle packets into an in-memory WebVTT string.
+pub fn extractSubtitlesVttNative(allocator: std.mem.Allocator, file_path: [:0]const u8, stream_idx: usize, start_offset: f64) ![]u8 {
+    var in_fmt_ctx: ?*c.AVFormatContext = null;
+    if (c.avformat_open_input(@ptrCast(&in_fmt_ctx), file_path.ptr, null, null) < 0) return error.OpenFailed;
+    defer c.avformat_close_input(@ptrCast(&in_fmt_ctx));
+
+    in_fmt_ctx.?.max_analyze_duration = 500000;
+    in_fmt_ctx.?.fps_probe_size = 0;
+
+    for (0..in_fmt_ctx.?.nb_streams) |i| {
+        if (i != stream_idx) {
+            in_fmt_ctx.?.streams[i].*.discard = c.AVDISCARD_ALL;
+        } else {
+            in_fmt_ctx.?.streams[i].*.discard = c.AVDISCARD_NONE;
+        }
+    }
+
+    if (c.avformat_find_stream_info(in_fmt_ctx.?, null) < 0) return error.StreamInfoFailed;
+
+    if (stream_idx >= in_fmt_ctx.?.nb_streams) return error.InvalidStreamIndex;
+    const in_stream = in_fmt_ctx.?.streams[stream_idx];
+    if (in_stream.*.codecpar.*.codec_type != c.AVMEDIA_TYPE_SUBTITLE) return error.NotASubtitleStream;
+
+    var out_fmt_ctx: ?*c.AVFormatContext = null;
+    if (c.avformat_alloc_output_context2(@ptrCast(&out_fmt_ctx), null, "webvtt", null) < 0 or out_fmt_ctx == null) {
+        return error.AllocOutputContextFailed;
+    }
+    defer c.avformat_free_context(out_fmt_ctx.?);
+
+    const out_stream = c.avformat_new_stream(out_fmt_ctx.?, null) orelse return error.NewStreamFailed;
+    if (c.avcodec_parameters_copy(out_stream.*.codecpar, in_stream.*.codecpar) < 0) return error.CodecCopyFailed;
+    out_stream.*.codecpar.*.codec_tag = 0;
+
+    var vtt_ctx = VttWriteContext{
+        .allocator = allocator,
+        .buffer = .empty,
+    };
+    errdefer vtt_ctx.buffer.deinit(allocator);
+
+    const avio_buf_size = 32768;
+    const avio_buf = c.av_malloc(avio_buf_size) orelse return error.OutOfMemory;
+
+    out_fmt_ctx.?.pb = c.avio_alloc_context(
+        @ptrCast(avio_buf),
+        avio_buf_size,
+        1,
+        @ptrCast(&vtt_ctx),
+        null,
+        write_vtt_packet,
+        null,
+    ) orelse return error.AvioAllocFailed;
+
+    if (start_offset > 0) {
+        const start_ts = @as(i64, @intFromFloat(start_offset * c.AV_TIME_BASE));
+        _ = c.av_seek_frame(in_fmt_ctx.?, -1, start_ts, c.AVSEEK_FLAG_BACKWARD);
+    }
+
+    if (c.avformat_write_header(out_fmt_ctx.?, null) < 0) return error.WriteHeaderFailed;
+
+    var pkt = c.av_packet_alloc() orelse return error.OutOfMemory;
+    defer c.av_packet_free(@ptrCast(&pkt));
+
+    while (c.av_read_frame(in_fmt_ctx.?, pkt) >= 0) {
+        defer c.av_packet_unref(pkt);
+        if (@as(usize, @intCast(pkt.*.stream_index)) != stream_idx) continue;
+
+        c.av_packet_rescale_ts(pkt, in_stream.*.time_base, out_stream.*.time_base);
+        pkt.*.stream_index = 0;
+
+        _ = c.av_interleaved_write_frame(out_fmt_ctx.?, pkt);
+    }
+
+    _ = c.av_write_trailer(out_fmt_ctx.?);
+
+    if (vtt_ctx.buffer.items.len > 0 and std.mem.startsWith(u8, vtt_ctx.buffer.items, "WEBVTT")) {
+        return vtt_ctx.buffer.toOwnedSlice(allocator);
+    }
+
+    return error.NativeMuxerFailed;
+}
+
 /// Extracts a subtitle stream from a media file and converts it into WebVTT text format.
-/// Uses ffmpeg process execution first (fastest, 100% compliant with standard WebVTT),
-/// falling back to native libavcodec extraction if needed.
+/// Uses native libavformat in-memory WebVTT muxer first (0 sub-processes, 0 disk I/O),
+/// falling back to ffmpeg CLI or native libavcodec decoding if needed.
 pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8, stream_idx: usize, start_offset: f64) ![]u8 {
     if (stream_idx >= 1000) {
         return extractExternalSubtitleVtt(allocator, io, file_path, stream_idx, start_offset);
     }
 
+    // Tier 1: Try native libavformat in-memory WebVTT muxer (0 sub-processes)
+    if (extractSubtitlesVttNative(allocator, file_path, stream_idx, start_offset)) |vtt| {
+        return vtt;
+    } else |_| {}
+
+    // Tier 2: Try ffmpeg CLI fallback
     var map_buf: [32]u8 = undefined;
     const map_arg = std.fmt.bufPrint(&map_buf, "0:{d}", .{stream_idx}) catch "";
 
@@ -511,5 +611,6 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, file_path: 
         allocator.free(result.stdout);
     }
 
+    // Tier 3: Native libavcodec packet decoder fallback
     return extractSubtitlesVttLibav(allocator, io, file_path, stream_idx, start_offset);
 }
