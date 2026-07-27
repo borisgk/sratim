@@ -201,8 +201,40 @@ pub fn scanExternalSubtitles(allocator: std.mem.Allocator, io: std.Io, file_path
     return tracks.toOwnedSlice(allocator);
 }
 
+fn getActualKeyframePts(file_path: [:0]const u8, start_offset: f64) f64 {
+    if (start_offset <= 0) return 0.0;
+
+    var fmt_ctx: ?*c.AVFormatContext = null;
+    if (c.avformat_open_input(@ptrCast(&fmt_ctx), file_path.ptr, null, null) < 0) return start_offset;
+    defer c.avformat_close_input(@ptrCast(&fmt_ctx));
+
+    if (c.avformat_find_stream_info(fmt_ctx.?, null) < 0) return start_offset;
+
+    const start_ts = @as(i64, @intFromFloat(start_offset * @as(f64, @floatFromInt(c.AV_TIME_BASE))));
+    if (c.av_seek_frame(fmt_ctx.?, -1, start_ts, c.AVSEEK_FLAG_BACKWARD) < 0) return start_offset;
+
+    var pkt = c.av_packet_alloc() orelse return start_offset;
+    defer c.av_packet_free(@ptrCast(&pkt));
+
+    while (c.av_read_frame(fmt_ctx.?, pkt) >= 0) {
+        defer c.av_packet_unref(pkt);
+        const stream = fmt_ctx.?.streams[@intCast(pkt.*.stream_index)];
+        if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_VIDEO) {
+            const pts_val = if (pkt.*.pts != c.AV_NOPTS_VALUE) pkt.*.pts else pkt.*.dts;
+            if (pts_val != c.AV_NOPTS_VALUE) {
+                const tb_sec = c.av_q2d(stream.*.time_base);
+                return @as(f64, @floatFromInt(pts_val)) * tb_sec;
+            }
+            break;
+        }
+    }
+
+    return start_offset;
+}
+
 /// Reads an external subtitle file (.srt, .vtt, .ass) and converts it to WebVTT format offset by start_offset.
-pub fn extractExternalSubtitleVtt(allocator: std.mem.Allocator, io: std.Io, file_path: []const u8, target_ext_idx: usize, start_offset: f64) ![]u8 {
+pub fn extractExternalSubtitleVtt(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8, target_ext_idx: usize, start_offset: f64) ![]u8 {
+    const effective_offset = getActualKeyframePts(file_path, start_offset);
     const dir_path = std.fs.path.dirname(file_path) orelse return error.FileNotFound;
     const stem = std.fs.path.stem(file_path);
 
@@ -240,9 +272,9 @@ pub fn extractExternalSubtitleVtt(allocator: std.mem.Allocator, io: std.Io, file
                 while (line_it.next()) |line| {
                     const trimmed = std.mem.trim(u8, line, " \r\t");
                     if (std.mem.indexOf(u8, trimmed, "-->")) |arrow_idx| {
-                        if (in_cue and cue_end > start_offset and cue_text.items.len > 0) {
-                            const rel_start = @max(0.0, cue_start - start_offset);
-                            const rel_end = cue_end - start_offset;
+                        if (in_cue and cue_end > effective_offset and cue_text.items.len > 0) {
+                            const rel_start = @max(0.0, cue_start - effective_offset);
+                            const rel_end = cue_end - effective_offset;
                             try formatVttTime(&vtt, allocator, rel_start);
                             try vtt.appendSlice(allocator, " --> ");
                             try formatVttTime(&vtt, allocator, rel_end);
@@ -262,9 +294,9 @@ pub fn extractExternalSubtitleVtt(allocator: std.mem.Allocator, io: std.Io, file
                             }
                         }
                     } else if (trimmed.len == 0 and in_cue) {
-                        if (cue_end > start_offset and cue_text.items.len > 0) {
-                            const rel_start = @max(0.0, cue_start - start_offset);
-                            const rel_end = cue_end - start_offset;
+                        if (cue_end > effective_offset and cue_text.items.len > 0) {
+                            const rel_start = @max(0.0, cue_start - effective_offset);
+                            const rel_end = cue_end - effective_offset;
 
                             try formatVttTime(&vtt, allocator, rel_start);
                             try vtt.appendSlice(allocator, " --> ");
@@ -280,9 +312,9 @@ pub fn extractExternalSubtitleVtt(allocator: std.mem.Allocator, io: std.Io, file
                     }
                 }
 
-                if (in_cue and cue_end > start_offset and cue_text.items.len > 0) {
-                    const rel_start = @max(0.0, cue_start - start_offset);
-                    const rel_end = cue_end - start_offset;
+                if (in_cue and cue_end > effective_offset and cue_text.items.len > 0) {
+                    const rel_start = @max(0.0, cue_start - effective_offset);
+                    const rel_end = cue_end - effective_offset;
 
                     try formatVttTime(&vtt, allocator, rel_start);
                     try vtt.appendSlice(allocator, " --> ");
@@ -307,6 +339,8 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, file_path: 
         return extractExternalSubtitleVtt(allocator, io, file_path, stream_idx, start_offset);
     }
 
+    const effective_offset = getActualKeyframePts(file_path, start_offset);
+
     var fmt_ctx: ?*c.AVFormatContext = null;
     if (c.avformat_open_input(@ptrCast(&fmt_ctx), file_path.ptr, null, null) < 0) return error.OpenFailed;
     defer c.avformat_close_input(@ptrCast(&fmt_ctx));
@@ -316,6 +350,18 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, file_path: 
     if (stream_idx >= fmt_ctx.?.nb_streams) return error.InvalidStreamIndex;
     const stream = fmt_ctx.?.streams[stream_idx];
     if (stream.*.codecpar.*.codec_type != c.AVMEDIA_TYPE_SUBTITLE) return error.NotASubtitleStream;
+
+    // Tell FFmpeg demuxer to DISCARD all video and audio streams.
+    // This prevents FFmpeg from reading gigabytes of video/audio packets from disk,
+    // reducing extraction time from 30+ seconds down to milliseconds, while
+    // reading all subtitle packets from start to finish without missing sparse cues.
+    for (0..fmt_ctx.?.nb_streams) |i| {
+        if (i != stream_idx) {
+            fmt_ctx.?.streams[i].*.discard = c.AVDISCARD_ALL;
+        } else {
+            fmt_ctx.?.streams[i].*.discard = c.AVDISCARD_NONE;
+        }
+    }
 
     var vtt: std.ArrayList(u8) = .empty;
     errdefer vtt.deinit(allocator);
@@ -373,9 +419,9 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, file_path: 
                     cue_end = cue_start + duration_sec;
                 }
 
-                if (cue_end > start_offset) {
-                    const rel_start = @max(0.0, cue_start - start_offset);
-                    const rel_end = cue_end - start_offset;
+                if (cue_end > effective_offset) {
+                    const rel_start = @max(0.0, cue_start - effective_offset);
+                    const rel_end = cue_end - effective_offset;
 
                     var text_buf: std.ArrayList(u8) = .empty;
                     defer text_buf.deinit(allocator);
@@ -410,9 +456,9 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, file_path: 
             const cue_start = start_pts_sec;
             const cue_end = start_pts_sec + duration_sec;
 
-            if (cue_end > start_offset) {
-                const rel_start = @max(0.0, cue_start - start_offset);
-                const rel_end = cue_end - start_offset;
+            if (cue_end > effective_offset) {
+                const rel_start = @max(0.0, cue_start - effective_offset);
+                const rel_end = cue_end - effective_offset;
 
                 var text_buf: std.ArrayList(u8) = .empty;
                 defer text_buf.deinit(allocator);

@@ -266,6 +266,10 @@
             trackEl.src = subUrl;
             trackEl.default = true;
 
+            trackEl.onload = () => {
+                if (trackEl.track) trackEl.track.mode = 'showing';
+            };
+
             video.appendChild(trackEl);
 
             if (video.textTracks && video.textTracks.length > 0) {
