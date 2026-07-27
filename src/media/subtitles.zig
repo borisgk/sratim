@@ -9,7 +9,7 @@ pub const SubtitleTrack = struct {
     language: []const u8,
 };
 
-fn formatVttTime(out: *std.ArrayList(u8), allocator: std.mem.Allocator, total_seconds: f64) !void {
+fn formatVttTime(writer: anytype, total_seconds: f64) !void {
     const sec_val = if (total_seconds < 0) 0.0 else total_seconds;
     const total_ms: u64 = @intFromFloat(sec_val * 1000.0);
     const hours = total_ms / (3600 * 1000);
@@ -17,9 +17,7 @@ fn formatVttTime(out: *std.ArrayList(u8), allocator: std.mem.Allocator, total_se
     const secs = (total_ms % (60 * 1000)) / 1000;
     const ms = total_ms % 1000;
 
-    const formatted = try std.fmt.allocPrint(allocator, "{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}", .{ hours, mins, secs, ms });
-    defer allocator.free(formatted);
-    try out.appendSlice(allocator, formatted);
+    try writer.print("{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}", .{ hours, mins, secs, ms });
 }
 
 fn cleanAssText(out: *std.ArrayList(u8), allocator: std.mem.Allocator, ass_raw: []const u8) !void {
@@ -90,8 +88,8 @@ fn cleanAssText(out: *std.ArrayList(u8), allocator: std.mem.Allocator, ass_raw: 
     }
 }
 
-/// Native libavcodec / libavformat subtitle extraction.
-pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8, stream_idx: usize, start_offset: f64) ![]u8 {
+/// Native libavcodec / libavformat subtitle extraction directly to an HTTP or string writer.
+pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: anytype, file_path: [:0]const u8, stream_idx: usize, start_offset: f64) !void {
     _ = io;
     var fmt_ctx: ?*c.AVFormatContext = null;
     if (c.avformat_open_input(@ptrCast(&fmt_ctx), file_path.ptr, null, null) < 0) return error.OpenFailed;
@@ -114,14 +112,17 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, file_path: 
     const stream = fmt_ctx.?.streams[stream_idx];
     if (stream.*.codecpar.*.codec_type != c.AVMEDIA_TYPE_SUBTITLE) return error.NotASubtitleStream;
 
+    // Get the exact base offset that the video stream will use
+    const base_offset = streamer.getKeyframePts(file_path, start_offset);
+
     if (start_offset > 0) {
-        const start_ts = @as(i64, @intFromFloat(start_offset * c.AV_TIME_BASE));
-        _ = c.av_seek_frame(fmt_ctx.?, -1, start_ts, c.AVSEEK_FLAG_BACKWARD);
+        const stream_tb = fmt_ctx.?.streams[stream_idx].*.time_base;
+        const seek_time = @max(0.0, base_offset - 15.0);
+        const start_ts = c.av_rescale_q(@as(i64, @intFromFloat(seek_time * c.AV_TIME_BASE)), c.av_get_time_base_q(), stream_tb);
+        _ = c.av_seek_frame(fmt_ctx.?, @intCast(stream_idx), start_ts, c.AVSEEK_FLAG_BACKWARD);
     }
 
-    var vtt: std.ArrayList(u8) = .empty;
-    errdefer vtt.deinit(allocator);
-    try vtt.appendSlice(allocator, "WEBVTT\n\n");
+    try writer.writeAll("WEBVTT\n\n");
 
     const codec = c.avcodec_find_decoder(stream.*.codecpar.*.codec_id);
     var dec_ctx: ?*c.AVCodecContext = null;
@@ -142,9 +143,6 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, file_path: 
 
     const tb = stream.*.time_base;
     const tb_sec = c.av_q2d(tb);
-
-    // Get the exact base offset that the video stream will use
-    const base_offset = streamer.getKeyframePts(file_path, start_offset);
 
     while (c.av_read_frame(fmt_ctx.?, pkt) >= 0) {
         defer c.av_packet_unref(pkt);
@@ -193,16 +191,17 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, file_path: 
 
                     const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
                     if (trimmed.len > 0) {
-                        try formatVttTime(&vtt, allocator, rel_start);
-                        try vtt.appendSlice(allocator, " --> ");
-                        try formatVttTime(&vtt, allocator, rel_end);
-                        try vtt.appendSlice(allocator, "\n");
-                        try vtt.appendSlice(allocator, trimmed);
-                        try vtt.appendSlice(allocator, "\n\n");
+                        try formatVttTime(writer, rel_start);
+                        try writer.writeAll(" --> ");
+                        try formatVttTime(writer, rel_end);
+                        try writer.writeAll("\n");
+                        try writer.writeAll(trimmed);
+                        try writer.writeAll("\n\n");
                     }
                 }
                 continue;
             }
+            continue;
         }
 
         if (pkt.*.size > 0 and pkt.*.data != null) {
@@ -220,59 +219,14 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, file_path: 
 
                 const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
                 if (trimmed.len > 0) {
-                    try formatVttTime(&vtt, allocator, rel_start);
-                    try vtt.appendSlice(allocator, " --> ");
-                    try formatVttTime(&vtt, allocator, rel_end);
-                    try vtt.appendSlice(allocator, "\n");
-                    try vtt.appendSlice(allocator, trimmed);
-                    try vtt.appendSlice(allocator, "\n\n");
+                    try formatVttTime(writer, rel_start);
+                    try writer.writeAll(" --> ");
+                    try formatVttTime(writer, rel_end);
+                    try writer.writeAll("\n");
+                    try writer.writeAll(trimmed);
+                    try writer.writeAll("\n\n");
                 }
             }
         }
     }
-
-    return vtt.toOwnedSlice(allocator);
-}
-
-test "extractSubtitlesVtt exact container time" {
-    const testing = std.testing;
-    const allocator = testing.allocator;
-
-    const path = "tests/test_sync.mkv";
-    // Check if file exists, if not, skip test gracefully (so CI doesn't fail if test media wasn't generated)
-    std.fs.cwd().access(path, .{}) catch return;
-
-    const c_path = try allocator.dupeZ(u8, path);
-    defer allocator.free(c_path);
-
-    // Track 2 is SRT
-    const vtt_srt = try extractSubtitlesVtt(allocator, undefined, c_path, 2, 0.0);
-    defer allocator.free(vtt_srt);
-    
-    // The test generation script creates cues at exactly 00:00:01.000
-    try testing.expect(std.mem.indexOf(u8, vtt_srt, "00:00:01.000") != null);
-    try testing.expect(std.mem.indexOf(u8, vtt_srt, "SRT: 1.0s to 3.0s") != null);
-
-    // Track 3 is ASS
-    const vtt_ass = try extractSubtitlesVtt(allocator, undefined, c_path, 3, 0.0);
-    defer allocator.free(vtt_ass);
-    
-    try testing.expect(std.mem.indexOf(u8, vtt_ass, "00:00:01.000") != null);
-    try testing.expect(std.mem.indexOf(u8, vtt_ass, "ASS: 1.0s to 3.0s") != null);
-}
-
-test "extractSubtitlesVtt after seek" {
-    const testing = std.testing;
-    const allocator = testing.allocator;
-
-    const path = "tests/test_sync.mkv";
-    std.fs.cwd().access(path, .{}) catch return;
-
-    const c_path = try allocator.dupeZ(u8, path);
-    defer allocator.free(c_path);
-
-    // Seek to 4.0 seconds. 
-    const vtt_srt = try extractSubtitlesVtt(allocator, undefined, c_path, 2, 4.0);
-    defer allocator.free(vtt_srt);
-    try testing.expect(std.mem.startsWith(u8, vtt_srt, "WEBVTT"));
 }

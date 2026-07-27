@@ -64,3 +64,7 @@ pub fn main() !void {
         thread.detach();
     }
 }
+
+test {
+    _ = @import("media/subtitles.zig");
+}

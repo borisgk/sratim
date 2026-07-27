@@ -31,26 +31,28 @@ pub fn write_packet(ptr: ?*anyopaque, buf: [*c]const u8, buf_size: c_int) callco
 /// reads one packet, and returns its DTS/PTS in seconds.
 /// This is lightweight: no avformat_find_stream_info, just header + seek + one read.
 pub fn getKeyframePts(file_path: []const u8, start_time: f64) f64 {
-    if (start_time <= 0) return 0.0;
-
     const c_path = std.heap.c_allocator.dupeZ(u8, file_path) catch return start_time;
     defer std.heap.c_allocator.free(c_path);
 
-    var fmt_ctx: ?*c.AVFormatContext = null;
+    var fmt_ctx: ?*c.AVFormatContext = c.avformat_alloc_context();
+    if (fmt_ctx != null) {
+        fmt_ctx.?.flags |= c.AVFMT_FLAG_GENPTS;
+    }
     if (c.avformat_open_input(@ptrCast(&fmt_ctx), c_path.ptr, null, null) < 0) return start_time;
     defer c.avformat_close_input(@ptrCast(&fmt_ctx));
 
-    // Skip full stream probing — MKV/MP4 headers contain enough info for seeking.
-    // This avoids the multi-second avformat_find_stream_info overhead.
+    _ = c.avformat_find_stream_info(fmt_ctx.?, null);
 
-    const start_ts = @as(i64, @intFromFloat(start_time * c.AV_TIME_BASE));
-    if (c.av_seek_frame(fmt_ctx.?, -1, start_ts, c.AVSEEK_FLAG_BACKWARD) < 0) return start_time;
+    if (start_time > 0) {
+        const start_ts = @as(i64, @intFromFloat(start_time * c.AV_TIME_BASE));
+        _ = c.av_seek_frame(fmt_ctx.?, -1, start_ts, c.AVSEEK_FLAG_BACKWARD);
+    }
 
     var pkt: ?*c.AVPacket = c.av_packet_alloc();
     if (pkt == null) return start_time;
     defer c.av_packet_free(&pkt);
 
-    if (c.av_read_frame(fmt_ctx.?, pkt.?) >= 0) {
+    while (c.av_read_frame(fmt_ctx.?, pkt.?) >= 0) {
         defer c.av_packet_unref(pkt.?);
         const in_tb = fmt_ctx.?.streams[@intCast(pkt.?.stream_index)].*.time_base;
         const dts = if (pkt.?.dts != c.AV_NOPTS_VALUE) pkt.?.dts else pkt.?.pts;

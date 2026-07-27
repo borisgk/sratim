@@ -385,24 +385,24 @@ pub fn handleSubtitles(
     const c_full_path = try allocator.dupeZ(u8, resolved.?.resolved_path);
     defer allocator.free(c_full_path);
 
-    const vtt_content = subtitles_mod.extractSubtitlesVtt(allocator, io, c_full_path, track_idx.?, start_offset) catch |err| {
-        std.debug.print("Subtitle extraction error: {}\n", .{err});
-        try request.respond("WEBVTT\n\n", .{
+    const resp_buf = try allocator.alloc(u8, 8192);
+    defer allocator.free(resp_buf);
+
+    var resp = try request.respondStreaming(resp_buf, .{
+        .respond_options = .{
             .status = .ok,
             .extra_headers = &.{
                 .{ .name = "content-type", .value = "text/vtt; charset=utf-8" },
                 .{ .name = "access-control-allow-origin", .value = "*" },
+                .{ .name = "x-accel-buffering", .value = "no" },
+                .{ .name = "cache-control", .value = "no-cache" },
             },
-        });
-        return;
-    };
-    defer allocator.free(vtt_content);
-
-    try request.respond(vtt_content, .{
-        .status = .ok,
-        .extra_headers = &.{
-            .{ .name = "content-type", .value = "text/vtt; charset=utf-8" },
-            .{ .name = "access-control-allow-origin", .value = "*" },
         },
     });
+
+    subtitles_mod.extractSubtitlesVtt(allocator, io, &resp.writer, c_full_path, track_idx.?, start_offset) catch |err| {
+        std.debug.print("Subtitle extraction error: {}\n", .{err});
+    };
+
+    resp.end() catch {};
 }
