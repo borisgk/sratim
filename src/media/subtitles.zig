@@ -1,5 +1,7 @@
 const std = @import("std");
 const c = @import("../core/c.zig").c;
+const streamer = @import("streamer.zig");
+
 
 pub const SubtitleTrack = struct {
     id: usize,
@@ -141,22 +143,11 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, file_path: 
     const tb = stream.*.time_base;
     const tb_sec = c.av_q2d(tb);
 
-    var global_start_time: f64 = std.math.nan(f64);
+    // Get the exact base offset that the video stream will use
+    const base_offset = streamer.getKeyframePts(file_path, start_offset);
 
     while (c.av_read_frame(fmt_ctx.?, pkt) >= 0) {
         defer c.av_packet_unref(pkt);
-
-        if (std.math.isNan(global_start_time)) {
-            const p_dts = if (pkt.*.dts != c.AV_NOPTS_VALUE) pkt.*.dts else pkt.*.pts;
-            if (p_dts != c.AV_NOPTS_VALUE) {
-                const p_tb = fmt_ctx.?.streams[@intCast(pkt.*.stream_index)].*.time_base;
-                global_start_time = @as(f64, @floatFromInt(p_dts)) * c.av_q2d(p_tb);
-            } else {
-                global_start_time = 0.0; // fallback if no pts/dts
-            }
-        }
-
-        const base_offset = if (std.math.isNan(global_start_time)) 0.0 else global_start_time;
 
         if (@as(usize, @intCast(pkt.*.stream_index)) != stream_idx) continue;
 
@@ -241,4 +232,47 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, file_path: 
     }
 
     return vtt.toOwnedSlice(allocator);
+}
+
+test "extractSubtitlesVtt exact container time" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const path = "tests/test_sync.mkv";
+    // Check if file exists, if not, skip test gracefully (so CI doesn't fail if test media wasn't generated)
+    std.fs.cwd().access(path, .{}) catch return;
+
+    const c_path = try allocator.dupeZ(u8, path);
+    defer allocator.free(c_path);
+
+    // Track 2 is SRT
+    const vtt_srt = try extractSubtitlesVtt(allocator, undefined, c_path, 2, 0.0);
+    defer allocator.free(vtt_srt);
+    
+    // The test generation script creates cues at exactly 00:00:01.000
+    try testing.expect(std.mem.indexOf(u8, vtt_srt, "00:00:01.000") != null);
+    try testing.expect(std.mem.indexOf(u8, vtt_srt, "SRT: 1.0s to 3.0s") != null);
+
+    // Track 3 is ASS
+    const vtt_ass = try extractSubtitlesVtt(allocator, undefined, c_path, 3, 0.0);
+    defer allocator.free(vtt_ass);
+    
+    try testing.expect(std.mem.indexOf(u8, vtt_ass, "00:00:01.000") != null);
+    try testing.expect(std.mem.indexOf(u8, vtt_ass, "ASS: 1.0s to 3.0s") != null);
+}
+
+test "extractSubtitlesVtt after seek" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const path = "tests/test_sync.mkv";
+    std.fs.cwd().access(path, .{}) catch return;
+
+    const c_path = try allocator.dupeZ(u8, path);
+    defer allocator.free(c_path);
+
+    // Seek to 4.0 seconds. 
+    const vtt_srt = try extractSubtitlesVtt(allocator, undefined, c_path, 2, 4.0);
+    defer allocator.free(vtt_srt);
+    try testing.expect(std.mem.startsWith(u8, vtt_srt, "WEBVTT"));
 }

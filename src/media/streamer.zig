@@ -463,3 +463,20 @@ pub fn getMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]con
         .subtitle_tracks = try subtitle_tracks.toOwnedSlice(allocator),
     };
 }
+
+test "getKeyframePts offset accuracy" {
+    const testing = std.testing;
+
+    const path = "tests/test_sync.mkv";
+    std.fs.cwd().access(path, .{}) catch return;
+
+    // Test zero offset
+    const start_0 = getKeyframePts(path, 0.0);
+    try testing.expect(start_0 == 0.0);
+
+    // Test a mid-play offset
+    // The keyframe returned should be valid (between 0 and file duration)
+    const start_5 = getKeyframePts(path, 5.0);
+    try testing.expect(start_5 >= 0.0);
+    try testing.expect(start_5 <= 10.0);
+}

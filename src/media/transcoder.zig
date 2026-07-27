@@ -161,3 +161,61 @@ pub const AudioTranscoder = struct {
         }
     }
 };
+
+test "AudioTranscoder preserves initial PTS" {
+    const testing = std.testing;
+
+    const path = "tests/test_sync.mkv";
+    std.fs.cwd().access(path, .{}) catch return;
+
+    const c_path = try std.heap.c_allocator.dupeZ(u8, path);
+    defer std.heap.c_allocator.free(c_path);
+
+    var in_fmt_ctx: ?*c.AVFormatContext = null;
+    if (c.avformat_open_input(@ptrCast(&in_fmt_ctx), c_path.ptr, null, null) < 0) return error.OpenFailed;
+    defer c.avformat_close_input(@ptrCast(&in_fmt_ctx));
+
+    if (c.avformat_find_stream_info(in_fmt_ctx.?, null) < 0) return error.StreamInfoFailed;
+
+    var audio_stream_idx: usize = 0;
+    var audio_stream: [*c]c.AVStream = undefined;
+    for (0..in_fmt_ctx.?.nb_streams) |i| {
+        if (in_fmt_ctx.?.streams[i].*.codecpar.*.codec_type == c.AVMEDIA_TYPE_AUDIO) {
+            audio_stream_idx = i;
+            audio_stream = in_fmt_ctx.?.streams[i];
+            break;
+        }
+    }
+
+    const out_fmt = c.av_guess_format("mp4", null, null);
+    var out_fmt_ctx: ?*c.AVFormatContext = null;
+    if (c.avformat_alloc_output_context2(@ptrCast(&out_fmt_ctx), out_fmt, null, null) < 0) return error.AllocFailed;
+    defer c.avformat_free_context(out_fmt_ctx);
+
+    const out_stream = c.avformat_new_stream(out_fmt_ctx.?, null);
+
+    var transcoder = try AudioTranscoder.init(audio_stream, out_stream, 0.0);
+    defer transcoder.deinit();
+
+    try testing.expect(transcoder.pts_counter == c.AV_NOPTS_VALUE);
+
+    var pkt = c.av_packet_alloc() orelse return error.OutOfMemory;
+    defer c.av_packet_free(@ptrCast(&pkt));
+
+    var found_audio = false;
+    while (c.av_read_frame(in_fmt_ctx.?, pkt) >= 0) {
+        if (pkt.*.stream_index == audio_stream_idx) {
+            pkt.*.pts = 5000;
+            
+            transcoder.transcodePacket(pkt, out_fmt_ctx.?, @intCast(out_stream.*.index)) catch |err| {
+                if (err != error.WriteError) return err;
+            };
+            found_audio = true;
+            break;
+        }
+        c.av_packet_unref(pkt);
+    }
+    
+    try testing.expect(found_audio);
+    try testing.expect(transcoder.pts_counter > 0);
+}
