@@ -298,7 +298,12 @@
             SUBTITLE_TRACKS.forEach((track) => {
                 const btn = document.createElement('button');
                 btn.className = 'sub-track-btn';
-                btn.innerText = track.label || `Subtitle ${track.id}`;
+                
+                let btnText = track.label || `Subtitle ${track.id}`;
+                if (track.language && track.language !== 'und' && track.label !== track.language) {
+                    btnText = `[${track.language.toUpperCase()}] ${btnText}`;
+                }
+                btn.innerText = btnText;
 
                 btn.onclick = () => {
                     setSubtitleTrack(track.id);
@@ -803,7 +808,13 @@
         window.addEventListener('beforeunload', handleStop);
         window.addEventListener('pagehide', handleStop);
 
-        // Initial load
+        // Initial load: Auto-select Forced subtitle track if one exists
+        if (SUBTITLE_TRACKS && SUBTITLE_TRACKS.length > 0) {
+            const forcedTrack = SUBTITLE_TRACKS.find(t => (t.label && t.label.toLowerCase().includes('forced')));
+            if (forcedTrack) {
+                currentSubtitleIdx = forcedTrack.id;
+            }
+        }
         loadVideo(START_POSITION);
     </script>
 </body>

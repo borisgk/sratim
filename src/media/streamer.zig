@@ -420,6 +420,14 @@ pub fn getMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]con
             const label_dup = try allocator.dupe(u8, label);
             try audio_tracks.append(allocator, .{ .id = i, .label = label_dup });
         } else if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_SUBTITLE) {
+            const codec_id = stream.*.codecpar.*.codec_id;
+            if (codec_id == c.AV_CODEC_ID_HDMV_PGS_SUBTITLE or
+                codec_id == c.AV_CODEC_ID_DVD_SUBTITLE or
+                codec_id == c.AV_CODEC_ID_DVB_SUBTITLE or
+                codec_id == c.AV_CODEC_ID_XSUB) {
+                continue; // Ignore bitmap subtitle formats
+            }
+
             var label: []const u8 = "";
             var lang: []const u8 = "";
 
