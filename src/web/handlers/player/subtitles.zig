@@ -13,7 +13,7 @@ fn DualWriter(comptime W1: type, comptime W2: type) type {
         pub const Error = anyerror;
 
         pub fn writeAll(self: *@This(), bytes: []const u8) !void {
-            self.w1.writeAll(bytes) catch {};
+            try self.w1.writeAll(bytes);
             try self.w2.writeAll(bytes);
         }
 
@@ -125,14 +125,18 @@ pub fn handleSubtitles(
         .w2 = &vtt_allocating.writer,
     };
 
+    var success = true;
     subtitles_mod.extractSubtitlesVtt(allocator, io, &dual_writer, c_full_path, track_idx.?, start_offset) catch |err| {
-        std.debug.print("Subtitle extraction error: {}\n", .{err});
+        std.debug.print("Subtitle extraction stopped: {}\n", .{err});
+        success = false;
     };
 
     resp.end() catch {};
 
-    const vtt_bytes = vtt_allocating.written();
-    if (vtt_bytes.len > 0 and start_offset == 0.0) {
-        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = cache_filename, .data = vtt_bytes }) catch {};
+    if (success) {
+        const vtt_bytes = vtt_allocating.written();
+        if (vtt_bytes.len > 0 and start_offset == 0.0) {
+            std.Io.Dir.cwd().writeFile(io, .{ .sub_path = cache_filename, .data = vtt_bytes }) catch {};
+        }
     }
 }
