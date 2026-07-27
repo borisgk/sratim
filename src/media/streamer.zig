@@ -8,6 +8,7 @@ const transcoder = @import("transcoder.zig");
 pub const HttpStreamContext = struct {
     writer: *std.http.BodyWriter,
     has_error: bool = false,
+    keyframe_pts: f64 = 0.0,
 };
 
 /// Custom I/O callback for FFmpeg.
@@ -23,6 +24,44 @@ pub fn write_packet(ptr: ?*anyopaque, buf: [*c]const u8, buf_size: c_int) callco
         return -1; // Notify FFmpeg that writing failed
     };
     return buf_size;
+}
+
+/// Returns the actual keyframe PTS for a given seek position.
+/// Opens the file, seeks to start_time with AVSEEK_FLAG_BACKWARD,
+/// reads one packet, and returns its DTS/PTS in seconds.
+/// This is lightweight: no avformat_find_stream_info, just header + seek + one read.
+pub fn getKeyframePts(file_path: []const u8, start_time: f64) f64 {
+    if (start_time <= 0) return 0.0;
+
+    const c_path = std.heap.c_allocator.dupeZ(u8, file_path) catch return start_time;
+    defer std.heap.c_allocator.free(c_path);
+
+    var fmt_ctx: ?*c.AVFormatContext = null;
+    if (c.avformat_open_input(@ptrCast(&fmt_ctx), c_path.ptr, null, null) < 0) return start_time;
+    defer c.avformat_close_input(@ptrCast(&fmt_ctx));
+
+    // Skip full stream probing — MKV/MP4 headers contain enough info for seeking.
+    // This avoids the multi-second avformat_find_stream_info overhead.
+
+    const start_ts = @as(i64, @intFromFloat(start_time * c.AV_TIME_BASE));
+    if (c.av_seek_frame(fmt_ctx.?, -1, start_ts, c.AVSEEK_FLAG_BACKWARD) < 0) return start_time;
+
+    var pkt: ?*c.AVPacket = c.av_packet_alloc();
+    if (pkt == null) return start_time;
+    defer c.av_packet_free(&pkt);
+
+    if (c.av_read_frame(fmt_ctx.?, pkt.?) >= 0) {
+        defer c.av_packet_unref(pkt.?);
+        const in_tb = fmt_ctx.?.streams[@intCast(pkt.?.stream_index)].*.time_base;
+        const dts = if (pkt.?.dts != c.AV_NOPTS_VALUE) pkt.?.dts else pkt.?.pts;
+        if (dts != c.AV_NOPTS_VALUE) {
+            const av_tb = c.AVRational{ .num = 1, .den = c.AV_TIME_BASE };
+            const pts_us = c.av_rescale_q(dts, in_tb, av_tb);
+            return @as(f64, @floatFromInt(pts_us)) / @as(f64, @floatFromInt(c.AV_TIME_BASE));
+        }
+    }
+
+    return start_time;
 }
 
 /// The main streaming pipeline.
@@ -165,15 +204,13 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
     _ = c.av_dict_set(&dict, "avoid_negative_ts", "make_non_negative", 0);
     defer c.av_dict_free(@ptrCast(&dict));
 
-    if (c.avformat_write_header(out_ctx, &dict) < 0) return error.WriteHeaderFailed;
-
     // Fast-seek to requested timestamp
     if (start_time > 0) {
         const start_ts = @as(i64, @intFromFloat(start_time * c.AV_TIME_BASE));
-        if (c.av_seek_frame(in_ctx, -1, start_ts, c.AVSEEK_FLAG_BACKWARD) < 0) {
-            // Seek failed, but we can just start from beginning.
-        }
+        _ = c.av_seek_frame(in_ctx, -1, start_ts, c.AVSEEK_FLAG_BACKWARD);
     }
+
+    if (c.avformat_write_header(out_ctx, &dict) < 0) return error.WriteHeaderFailed;
 
     var packet = c.av_packet_alloc() orelse return error.OutOfMemory;
     defer c.av_packet_free(@ptrCast(&packet));

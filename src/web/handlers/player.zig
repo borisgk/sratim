@@ -327,7 +327,9 @@ pub fn handleStream(
         return;
     };
 
-    try resp.end();
+    if (!stream_ctx.has_error) {
+        resp.end() catch {};
+    }
 }
 
 /// Handles the subtitle endpoint (/subtitles).
