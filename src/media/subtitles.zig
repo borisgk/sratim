@@ -89,7 +89,7 @@ fn cleanAssText(out: *std.ArrayList(u8), allocator: std.mem.Allocator, ass_raw: 
 }
 
 /// Native libavcodec / libavformat subtitle extraction directly to an HTTP or string writer.
-pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: anytype, file_path: [:0]const u8, stream_idx: usize, start_offset: f64) !void {
+pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: anytype, file_path: [:0]const u8, stream_idx: usize) !void {
     _ = io;
     var fmt_ctx: ?*c.AVFormatContext = null;
     if (c.avformat_open_input(@ptrCast(&fmt_ctx), file_path.ptr, null, null) < 0) return error.OpenFailed;
@@ -111,16 +111,6 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: any
     if (stream_idx >= fmt_ctx.?.nb_streams) return error.InvalidStreamIndex;
     const stream = fmt_ctx.?.streams[stream_idx];
     if (stream.*.codecpar.*.codec_type != c.AVMEDIA_TYPE_SUBTITLE) return error.NotASubtitleStream;
-
-    // Get the exact base offset that the video stream will use
-    const base_offset = streamer.getKeyframePts(file_path, start_offset);
-
-    if (start_offset > 0) {
-        const stream_tb = fmt_ctx.?.streams[stream_idx].*.time_base;
-        const seek_time = @max(0.0, base_offset - 15.0);
-        const start_ts = c.av_rescale_q(@as(i64, @intFromFloat(seek_time * c.AV_TIME_BASE)), c.av_get_time_base_q(), stream_tb);
-        _ = c.av_seek_frame(fmt_ctx.?, @intCast(stream_idx), start_ts, c.AVSEEK_FLAG_BACKWARD);
-    }
 
     try writer.writeAll("WEBVTT\n\n");
 
@@ -171,33 +161,28 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: any
                     cue_end = cue_start + duration_sec;
                 }
 
-                if (cue_end > base_offset) {
-                    const rel_start = @max(0.0, cue_start - base_offset);
-                    const rel_end = cue_end - base_offset;
+                var text_buf: std.ArrayList(u8) = .empty;
+                defer text_buf.deinit(allocator);
 
-                    var text_buf: std.ArrayList(u8) = .empty;
-                    defer text_buf.deinit(allocator);
-
-                    for (0..sub.num_rects) |r| {
-                        const rect = sub.rects[r].*;
-                        if (rect.text != null) {
-                            const raw_str = std.mem.span(rect.text);
-                            try cleanAssText(&text_buf, allocator, raw_str);
-                        } else if (rect.ass != null) {
-                            const raw_str = std.mem.span(rect.ass);
-                            try cleanAssText(&text_buf, allocator, raw_str);
-                        }
+                for (0..sub.num_rects) |r| {
+                    const rect = sub.rects[r].*;
+                    if (rect.text != null) {
+                        const raw_str = std.mem.span(rect.text);
+                        try cleanAssText(&text_buf, allocator, raw_str);
+                    } else if (rect.ass != null) {
+                        const raw_str = std.mem.span(rect.ass);
+                        try cleanAssText(&text_buf, allocator, raw_str);
                     }
+                }
 
-                    const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
-                    if (trimmed.len > 0) {
-                        try formatVttTime(writer, rel_start);
-                        try writer.writeAll(" --> ");
-                        try formatVttTime(writer, rel_end);
-                        try writer.writeAll("\n");
-                        try writer.writeAll(trimmed);
-                        try writer.writeAll("\n\n");
-                    }
+                const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
+                if (trimmed.len > 0) {
+                    try formatVttTime(writer, cue_start);
+                    try writer.writeAll(" --> ");
+                    try formatVttTime(writer, cue_end);
+                    try writer.writeAll("\n");
+                    try writer.writeAll(trimmed);
+                    try writer.writeAll("\n\n");
                 }
                 continue;
             }
@@ -209,23 +194,18 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: any
             const cue_start = start_pts_sec;
             const cue_end = start_pts_sec + duration_sec;
 
-            if (cue_end > base_offset) {
-                const rel_start = @max(0.0, cue_start - base_offset);
-                const rel_end = cue_end - base_offset;
+            var text_buf: std.ArrayList(u8) = .empty;
+            defer text_buf.deinit(allocator);
+            try cleanAssText(&text_buf, allocator, raw_pkt_slice);
 
-                var text_buf: std.ArrayList(u8) = .empty;
-                defer text_buf.deinit(allocator);
-                try cleanAssText(&text_buf, allocator, raw_pkt_slice);
-
-                const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
-                if (trimmed.len > 0) {
-                    try formatVttTime(writer, rel_start);
-                    try writer.writeAll(" --> ");
-                    try formatVttTime(writer, rel_end);
-                    try writer.writeAll("\n");
-                    try writer.writeAll(trimmed);
-                    try writer.writeAll("\n\n");
-                }
+            const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
+            if (trimmed.len > 0) {
+                try formatVttTime(writer, cue_start);
+                try writer.writeAll(" --> ");
+                try formatVttTime(writer, cue_end);
+                try writer.writeAll("\n");
+                try writer.writeAll(trimmed);
+                try writer.writeAll("\n\n");
             }
         }
     }

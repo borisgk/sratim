@@ -308,13 +308,19 @@ pub fn handleStream(
     const start_time = parseQueryFloat(target, "start") orelse 0;
     const audio_idx = parseQueryInt(c_int, target, "audio") orelse -1;
 
+    const actual_start = streamer.getKeyframePts(resolved.?.resolved_path, start_time);
+    var actual_start_buf: [32]u8 = undefined;
+    const actual_start_str = try std.fmt.bufPrint(&actual_start_buf, "{d:.3}", .{actual_start});
+
     var resp = try request.respondStreaming(resp_buf, .{
         .respond_options = .{
             .status = .ok,
             .extra_headers = &.{
                 .{ .name = "content-type", .value = "video/mp4" },
                 .{ .name = "access-control-allow-origin", .value = "*" },
+                .{ .name = "access-control-expose-headers", .value = "x-actual-start-time" },
                 .{ .name = "accept-ranges", .value = "bytes" },
+                .{ .name = "x-actual-start-time", .value = actual_start_str },
             },
         },
     });
@@ -357,7 +363,6 @@ pub fn handleSubtitles(
     const movie_id = parseQueryInt(i64, target, "id");
     const episode_id = parseQueryInt(i64, target, "episode_id");
     const track_idx = parseQueryInt(usize, target, "track");
-    const start_offset = parseQueryFloat(target, "start") orelse parseQueryFloat(target, "offset") orelse 0.0;
 
     if ((movie_id == null and episode_id == null) or track_idx == null) {
         try request.respond("Missing parameters", .{ .status = .bad_request });
@@ -382,27 +387,53 @@ pub fn handleSubtitles(
         return;
     }
 
+    // Ensure cache directory exists
+    std.Io.Dir.cwd().createDirPath(io, ".sratim/cache/subs") catch {};
+
+    const cache_filename = if (movie_id != null)
+        try std.fmt.allocPrint(allocator, ".sratim/cache/subs/m_{d}_{d}.vtt", .{ movie_id.?, track_idx.? })
+    else
+        try std.fmt.allocPrint(allocator, ".sratim/cache/subs/e_{d}_{d}.vtt", .{ episode_id.?, track_idx.? });
+    defer allocator.free(cache_filename);
+
+    const cached_vtt = std.Io.Dir.cwd().readFileAlloc(io, cache_filename, allocator, std.Io.Limit.limited(10 * 1024 * 1024)) catch null;
+    if (cached_vtt) |vtt_data| {
+        defer allocator.free(vtt_data);
+        if (vtt_data.len > 0) {
+            try request.respond(vtt_data, .{
+                .status = .ok,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "text/vtt; charset=utf-8" },
+                    .{ .name = "access-control-allow-origin", .value = "*" },
+                    .{ .name = "cache-control", .value = "public, max-age=86400" },
+                },
+            });
+            return;
+        }
+    }
+
     const c_full_path = try allocator.dupeZ(u8, resolved.?.resolved_path);
     defer allocator.free(c_full_path);
 
-    const resp_buf = try allocator.alloc(u8, 8192);
-    defer allocator.free(resp_buf);
+    var vtt_allocating = std.Io.Writer.Allocating.init(allocator);
+    defer vtt_allocating.deinit();
 
-    var resp = try request.respondStreaming(resp_buf, .{
-        .respond_options = .{
-            .status = .ok,
-            .extra_headers = &.{
-                .{ .name = "content-type", .value = "text/vtt; charset=utf-8" },
-                .{ .name = "access-control-allow-origin", .value = "*" },
-                .{ .name = "x-accel-buffering", .value = "no" },
-                .{ .name = "cache-control", .value = "no-cache" },
-            },
-        },
-    });
-
-    subtitles_mod.extractSubtitlesVtt(allocator, io, &resp.writer, c_full_path, track_idx.?, start_offset) catch |err| {
+    subtitles_mod.extractSubtitlesVtt(allocator, io, &vtt_allocating.writer, c_full_path, track_idx.?) catch |err| {
         std.debug.print("Subtitle extraction error: {}\n", .{err});
     };
 
-    resp.end() catch {};
+    const vtt_bytes = vtt_allocating.written();
+
+    if (vtt_bytes.len > 0) {
+        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = cache_filename, .data = vtt_bytes }) catch {};
+    }
+
+    try request.respond(vtt_bytes, .{
+        .status = .ok,
+        .extra_headers = &.{
+            .{ .name = "content-type", .value = "text/vtt; charset=utf-8" },
+            .{ .name = "access-control-allow-origin", .value = "*" },
+            .{ .name = "cache-control", .value = "public, max-age=86400" },
+        },
+    });
 }

@@ -26,6 +26,28 @@
         .audio-track-btn.active, .sub-track-btn.active { background: #666; font-weight: bold; }
         #subtitlesbtn.active { background: #3b82f6; color: #ffffff; box-shadow: 0 0 10px rgba(59, 130, 246, 0.5); }
 
+        .subtitle-overlay {
+            position: absolute;
+            bottom: 75px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(4px);
+            color: #ffffff;
+            font-family: system-ui, -apple-system, sans-serif;
+            font-size: 1.35rem;
+            font-weight: 500;
+            text-align: center;
+            padding: 6px 16px;
+            border-radius: 6px;
+            pointer-events: none;
+            z-index: 15;
+            max-width: 80%;
+            white-space: pre-line;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+            text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+        }
+
         video::cue {
             background: rgba(0, 0, 0, 0.75);
             color: #ffffff;
@@ -112,6 +134,7 @@
         </div>
         <div id="audio-menu" class="hidden"></div>
         <div id="subtitles-menu" class="hidden"></div>
+        <div id="subtitle-overlay" class="subtitle-overlay hidden"></div>
     </div>
     <script>
         const video = document.getElementById('video');
@@ -242,42 +265,85 @@
         // Setup Subtitles Menu
         const btnSubtitles = document.getElementById('subtitlesbtn');
         const subtitlesMenu = document.getElementById('subtitles-menu');
+        const subtitleOverlay = document.getElementById('subtitle-overlay');
+        let activeSubtitleCues = [];
+
+        function parseVttTime(timeStr) {
+            if (!timeStr) return 0;
+            const parts = timeStr.trim().split(':');
+            let hours = 0, mins = 0, secs = 0;
+            if (parts.length === 3) {
+                hours = parseFloat(parts[0]);
+                mins = parseFloat(parts[1]);
+                secs = parseFloat(parts[2]);
+            } else if (parts.length === 2) {
+                mins = parseFloat(parts[0]);
+                secs = parseFloat(parts[1]);
+            }
+            return (hours * 3600) + (mins * 60) + secs;
+        }
+
+        function parseWebVTT(vttText) {
+            const cues = [];
+            const blocks = vttText.split(/\r?\n\r?\n/);
+            for (const block of blocks) {
+                const lines = block.trim().split(/\r?\n/);
+                for (let i = 0; i < lines.length; i++) {
+                    if (lines[i].includes('-->')) {
+                        const times = lines[i].split('-->');
+                        const start = parseVttTime(times[0]);
+                        const end = parseVttTime(times[1]);
+                        const text = lines.slice(i + 1).join('\n').trim();
+                        if (text) {
+                            cues.push({ start, end, text });
+                        }
+                        break;
+                    }
+                }
+            }
+            return cues;
+        }
+
+        function updateSubtitleOverlay() {
+            if (!subtitleOverlay) return;
+            if (currentSubtitleIdx === -1 || !activeSubtitleCues || activeSubtitleCues.length === 0) {
+                subtitleOverlay.classList.add('hidden');
+                subtitleOverlay.innerText = '';
+                return;
+            }
+
+            const absTime = getAbsoluteTime();
+            const activeCue = activeSubtitleCues.find(c => absTime >= c.start && absTime <= c.end);
+
+            if (activeCue) {
+                subtitleOverlay.innerText = activeCue.text;
+                subtitleOverlay.classList.remove('hidden');
+            } else {
+                subtitleOverlay.classList.add('hidden');
+                subtitleOverlay.innerText = '';
+            }
+        }
 
         function setSubtitleTrack(trackId) {
             currentSubtitleIdx = trackId;
 
-            // Clear old HTML track elements
-            const existingTracks = video.querySelectorAll('track');
-            existingTracks.forEach(t => t.remove());
-
             if (trackId === -1) {
+                activeSubtitleCues = [];
+                updateSubtitleOverlay();
                 btnSubtitles.classList.remove('active');
                 return;
             }
 
             btnSubtitles.classList.add('active');
 
-            const trInfo = SUBTITLE_TRACKS.find(t => t.id === trackId);
-            const subUrl = `/subtitles?${MEDIA_QUERY}&track=${trackId}&start=${currentSeekTime}`;
-
-            const trackEl = document.createElement('track');
-            trackEl.kind = 'subtitles';
-            trackEl.label = trInfo ? trInfo.label : 'Subtitles';
-            trackEl.srclang = (trInfo && trInfo.language && trInfo.language.length > 0) ? trInfo.language : 'en';
-            trackEl.src = subUrl;
-            trackEl.default = true;
-
-            trackEl.onload = () => {
-                if (trackEl.track) trackEl.track.mode = 'showing';
-            };
-
-            video.appendChild(trackEl);
-
-            if (video.textTracks && video.textTracks.length > 0) {
-                for (let i = 0; i < video.textTracks.length; i++) {
-                    video.textTracks[i].mode = (i === video.textTracks.length - 1) ? 'showing' : 'disabled';
-                }
-            }
+            const subUrl = `/subtitles?${MEDIA_QUERY}&track=${trackId}`;
+            fetch(subUrl)
+                .then(r => r.text())
+                .then(vttText => {
+                    activeSubtitleCues = parseWebVTT(vttText);
+                    updateSubtitleOverlay();
+                })
+                .catch(e => console.error("Subtitle fetch error:", e));
         }
 
         btnSubtitles.style.display = 'flex';
@@ -358,6 +424,11 @@
             try {
                 const audioParam = currentAudioIdx >= 0 ? `&audio=${currentAudioIdx}` : '';
                 const response = await fetch(`/stream?${MEDIA_QUERY}&start=${startTime}${audioParam}`, { signal });
+                const actualStartHeader = response.headers.get('x-actual-start-time');
+                if (actualStartHeader) {
+                    currentSeekTime = parseFloat(actualStartHeader);
+                    updateSubtitleOverlay();
+                }
                 const reader = response.body.getReader();
 
                 let queue = [];
@@ -495,6 +566,7 @@
             const percentage = (actualTime / DURATION) * 100;
             seekfill.style.width = percentage + '%';
             timeCurrent.innerText = formatTime(actualTime);
+            updateSubtitleOverlay();
 
             if (Math.abs(actualTime - lastReportedPosition) >= 10) {
                 lastReportedPosition = actualTime;
