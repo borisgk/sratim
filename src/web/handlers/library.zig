@@ -1,8 +1,9 @@
 const std = @import("std");
 const db_mod = @import("../../db/db.zig");
 const library_mod = @import("../../db/library.zig");
-const player_handler = @import("player.zig");
+const scanner_mod = @import("../../db/scanner.zig");
 const browse_handler = @import("browse.zig");
+const utils = @import("../utils.zig");
 
 /// Handles POST /libraries/add — validates library config and inserts to DB.
 pub fn handleLibraryAdd(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database, body_buf: *[8192]u8) !void {
@@ -97,7 +98,7 @@ pub fn handleLibraryRescan(request: *std.http.Server.Request, allocator: std.mem
     };
     defer parsed.deinit();
 
-    library_mod.scanLibraryById(database, allocator, io, parsed.value.library_id) catch |err| {
+    scanner_mod.scanLibraryById(database, allocator, io, parsed.value.library_id) catch |err| {
         std.debug.print("Failed to rescan library {d}: {}\n", .{ parsed.value.library_id, err });
         request.respond("Error rescanning library.", .{ .status = .internal_server_error }) catch return;
         return;
@@ -108,7 +109,7 @@ pub fn handleLibraryRescan(request: *std.http.Server.Request, allocator: std.mem
 
 /// Handles GET /api/library/updates — returns JSON diff of items and remaining pending count for library.
 pub fn handleApiLibraryUpdates(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database) !void {
-    const lib_id = player_handler.parseQueryInt(i64, request.head.target, "id") orelse {
+    const lib_id = utils.parseQueryInt(i64, request.head.target, "id") orelse {
         request.respond("Missing library id", .{ .status = .bad_request }) catch return;
         return;
     };

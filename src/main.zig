@@ -5,6 +5,7 @@ const db_mod = @import("db/db.zig");
 const users_mod = @import("db/users.zig");
 const logging_mod = @import("db/logging.zig");
 const library_mod = @import("db/library.zig");
+const scanner_mod = @import("db/scanner.zig");
 const fetcher = @import("media/fetcher.zig");
 const c = @import("core/c.zig").c;
 
@@ -34,7 +35,7 @@ pub fn main() !void {
     try users_mod.ensureAdminExists(&database, io);
     
     std.debug.print("Scanning libraries for files...\n", .{});
-    library_mod.scanLibraryFiles(&database, std.heap.c_allocator, io) catch |err| {
+    scanner_mod.scanLibraryFiles(&database, std.heap.c_allocator, io) catch |err| {
         std.debug.print("Error scanning libraries: {}\n", .{err});
     };
     std.debug.print("Library scan complete.\n", .{});

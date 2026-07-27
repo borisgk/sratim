@@ -1,5 +1,7 @@
 const std = @import("std");
-const catalog = @import("catalog.zig");
+const catalog_index = @import("catalog/index.zig");
+const catalog_library = @import("catalog/library.zig");
+const catalog_details = @import("catalog/details.zig");
 const db_mod = @import("../db/db.zig");
 const session_mod = @import("../db/session.zig");
 const config_mod = @import("../config.zig");
@@ -9,12 +11,15 @@ const library_handler = @import("handlers/library.zig");
 const browse_handler = @import("handlers/browse.zig");
 const watch_handler = @import("handlers/watch.zig");
 const metadata_handler = @import("handlers/metadata.zig");
-const show_handler = @import("handlers/show.zig");
-const static_handler = @import("handlers/static.zig");
-const player_handler = @import("handlers/player.zig");
 const admin_handler = @import("handlers/admin.zig");
+const player_html = @import("handlers/player/html.zig");
+const player_stream = @import("handlers/player/stream.zig");
+const player_subtitles = @import("handlers/player/subtitles.zig");
+const utils = @import("utils.zig");
 const users_admin_handler = @import("handlers/users_admin.zig");
 const unmatched_admin_handler = @import("handlers/unmatched_admin.zig");
+const show_handler = @import("handlers/show.zig");
+const static_handler = @import("handlers/static.zig");
 
 /// Handles an incoming HTTP connection from a client.
 /// This function runs inside an isolated OS thread spawned specifically for this connection.
@@ -80,16 +85,12 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
         }
 
         // Route: Media Streamer (Public for Cast receivers & media elements)
-        if (std.mem.startsWith(u8, target, "/stream")) {
-            player_handler.handleStream(&request, allocator, database, working_folder, &resp_buf) catch |err| {
-                std.debug.print("Stream handler error: {}\n", .{err});
-            };
+        if (std.mem.startsWith(u8, target, "/stream?")) {
+            var stream_resp_buf: [8192]u8 = undefined;
+            player_stream.handleStream(&request, allocator, database, working_folder, &stream_resp_buf) catch return;
             continue;
-        }
-
-        // Route: Subtitles (Public for web player & Cast receivers)
-        if (std.mem.startsWith(u8, target, "/subtitles")) {
-            player_handler.handleSubtitles(&request, allocator, database, working_folder, io) catch |err| {
+        } else if (std.mem.startsWith(u8, target, "/subtitles?")) {
+            player_subtitles.handleSubtitles(&request, allocator, database, working_folder, io) catch |err| {
                 std.debug.print("Subtitles handler error: {}\n", .{err});
             };
             continue;
@@ -119,9 +120,15 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             continue;
         }
 
+        // Route: HTML Player
+        if (std.mem.startsWith(u8, target, "/player?")) {
+            player_html.handlePlayer(&request, allocator, database, logs_database, session_info.?.username, working_folder, io) catch return;
+            continue;
+        }
+
         // Route: Catalog (Libraries Home Page)
         if (std.mem.eql(u8, target, "/")) {
-            const html_content = catalog.generateHtml(allocator, database, session_info.?.is_admin) catch |err| {
+            const html_content = catalog_index.generateHtml(allocator, database, session_info.?.is_admin) catch |err| {
                 std.debug.print("Catalog error: {}\n", .{err});
                 request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
                 return;
@@ -247,8 +254,6 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             };
             continue;
 
-
-
         // Route: API Metadata Search
         } else if (std.mem.startsWith(u8, target, "/api/metadata/search") and method == .GET) {
             metadata_handler.handleApiMetadataSearch(&request, allocator, io, config) catch |err| {
@@ -287,12 +292,12 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
 
         // Route: Browse Specific Library
         } else if (std.mem.startsWith(u8, target, "/library")) {
-            const lib_id = player_handler.parseQueryInt(i64, target, "id") orelse {
+            const lib_id = utils.parseQueryInt(i64, target, "id") orelse {
                 request.respond("Missing library id", .{ .status = .bad_request }) catch return;
                 continue;
             };
 
-            const html_content_opt = catalog.generateLibraryContentHtml(allocator, io, database, logs_database, lib_id, session_info.?.username, session_info.?.is_admin) catch |err| {
+            const html_content_opt = catalog_library.generateLibraryContentHtml(allocator, io, database, logs_database, lib_id, session_info.?.username, session_info.?.is_admin) catch |err| {
                 std.debug.print("Browse Library content error: {}\n", .{err});
                 if (err == error.LibraryPathNotFound) {
                     request.respond("Library path not found or inaccessible.", .{ .status = .not_found }) catch return;
@@ -315,12 +320,12 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
 
         // Route: Movie Details View
         } else if (std.mem.startsWith(u8, target, "/details")) {
-            const movie_id = player_handler.parseQueryInt(i64, target, "id") orelse {
+            const movie_id = utils.parseQueryInt(i64, target, "id") orelse {
                 request.respond("Missing movie id", .{ .status = .bad_request }) catch return;
                 continue;
             };
 
-            const html_content = catalog.generateDetailsHtml(allocator, database, logs_database, movie_id, session_info.?.username) catch |err| {
+            const html_content = catalog_details.generateDetailsHtml(allocator, database, logs_database, movie_id, session_info.?.username) catch |err| {
                 std.debug.print("Details view error: {}\n", .{err});
                 if (err == error.MovieNotFound) {
                     request.respond("Movie not found", .{ .status = .not_found }) catch return;
@@ -339,7 +344,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
 
         // Route: Show Details View
         } else if (std.mem.startsWith(u8, target, "/show")) {
-            const show_id = player_handler.parseQueryInt(i64, target, "id") orelse {
+            const show_id = utils.parseQueryInt(i64, target, "id") orelse {
                 request.respond("Missing show id", .{ .status = .bad_request }) catch return;
                 continue;
             };
@@ -350,12 +355,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                 continue;
             };
 
-        // Route: Web UI (Player)
-        } else if (std.mem.startsWith(u8, target, "/player")) {
-            player_handler.handlePlayer(&request, allocator, database, logs_database, session_info.?.username, working_folder, io) catch |err| {
-                std.debug.print("Player handler error: {}\n", .{err});
-                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-            };
+        // Unknown route
         } else {
             request.respond("Not found", .{ .status = .not_found }) catch return;
         }

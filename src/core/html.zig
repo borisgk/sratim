@@ -39,6 +39,8 @@ pub fn generatePlayerHtml(
     try escapeForJs(&title_escaped, allocator, media_title);
 
     return template_engine.render(allocator, @embedFile("../web/templates/player.html"), .{
+        .PLAYER_CSS = @as([]const u8, @embedFile("../web/templates/player.css")),
+        .PLAYER_JS = @as([]const u8, @embedFile("../web/templates/player.js")),
         .TIME_STR = time_str,
         .DURATION = duration,
         .MEDIA_QUERY = media_query,
