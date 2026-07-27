@@ -338,6 +338,26 @@ pub fn handleStream(
     }
 }
 
+fn DualWriter(comptime W1: type, comptime W2: type) type {
+    return struct {
+        w1: W1,
+        w2: W2,
+
+        pub const Error = anyerror;
+
+        pub fn writeAll(self: *@This(), bytes: []const u8) !void {
+            self.w1.writeAll(bytes) catch {};
+            try self.w2.writeAll(bytes);
+        }
+
+        pub fn print(self: *@This(), comptime format: []const u8, args: anytype) !void {
+            var buf: [256]u8 = undefined;
+            const formatted = try std.fmt.bufPrint(&buf, format, args);
+            try self.writeAll(formatted);
+        }
+    };
+}
+
 /// Handles the subtitle endpoint (/subtitles).
 pub fn handleSubtitles(
     request: *std.http.Server.Request,
@@ -351,9 +371,8 @@ pub fn handleSubtitles(
             .status = .no_content,
             .extra_headers = &.{
                 .{ .name = "access-control-allow-origin", .value = "*" },
-                .{ .name = "access-control-allow-methods", .value = "GET, OPTIONS, HEAD" },
-                .{ .name = "access-control-allow-headers", .value = "Range, Content-Type, Authorization" },
-                .{ .name = "access-control-max-age", .value = "86400" },
+                .{ .name = "access-control-allow-methods", .value = "GET, OPTIONS" },
+                .{ .name = "access-control-allow-headers", .value = "content-type" },
             },
         });
         return;
@@ -363,6 +382,7 @@ pub fn handleSubtitles(
     const movie_id = parseQueryInt(i64, target, "id");
     const episode_id = parseQueryInt(i64, target, "episode_id");
     const track_idx = parseQueryInt(usize, target, "track");
+    const start_offset = parseQueryFloat(target, "start") orelse parseQueryFloat(target, "offset") orelse 0.0;
 
     if ((movie_id == null and episode_id == null) or track_idx == null) {
         try request.respond("Missing parameters", .{ .status = .bad_request });
@@ -415,25 +435,37 @@ pub fn handleSubtitles(
     const c_full_path = try allocator.dupeZ(u8, resolved.?.resolved_path);
     defer allocator.free(c_full_path);
 
+    const resp_buf = try allocator.alloc(u8, 8192);
+    defer allocator.free(resp_buf);
+
+    var resp = try request.respondStreaming(resp_buf, .{
+        .respond_options = .{
+            .status = .ok,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "text/vtt; charset=utf-8" },
+                .{ .name = "access-control-allow-origin", .value = "*" },
+                .{ .name = "x-accel-buffering", .value = "no" },
+                .{ .name = "cache-control", .value = "public, max-age=86400" },
+            },
+        },
+    });
+
     var vtt_allocating = std.Io.Writer.Allocating.init(allocator);
     defer vtt_allocating.deinit();
 
-    subtitles_mod.extractSubtitlesVtt(allocator, io, &vtt_allocating.writer, c_full_path, track_idx.?) catch |err| {
+    var dual_writer = DualWriter(@TypeOf(&resp.writer), @TypeOf(&vtt_allocating.writer)){
+        .w1 = &resp.writer,
+        .w2 = &vtt_allocating.writer,
+    };
+
+    subtitles_mod.extractSubtitlesVtt(allocator, io, &dual_writer, c_full_path, track_idx.?, start_offset) catch |err| {
         std.debug.print("Subtitle extraction error: {}\n", .{err});
     };
 
-    const vtt_bytes = vtt_allocating.written();
+    resp.end() catch {};
 
-    if (vtt_bytes.len > 0) {
+    const vtt_bytes = vtt_allocating.written();
+    if (vtt_bytes.len > 0 and start_offset == 0.0) {
         std.Io.Dir.cwd().writeFile(io, .{ .sub_path = cache_filename, .data = vtt_bytes }) catch {};
     }
-
-    try request.respond(vtt_bytes, .{
-        .status = .ok,
-        .extra_headers = &.{
-            .{ .name = "content-type", .value = "text/vtt; charset=utf-8" },
-            .{ .name = "access-control-allow-origin", .value = "*" },
-            .{ .name = "cache-control", .value = "public, max-age=86400" },
-        },
-    });
 }

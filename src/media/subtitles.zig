@@ -89,8 +89,14 @@ fn cleanAssText(out: *std.ArrayList(u8), allocator: std.mem.Allocator, ass_raw: 
 }
 
 /// Native libavcodec / libavformat subtitle extraction directly to an HTTP or string writer.
-pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: anytype, file_path: [:0]const u8, stream_idx: usize) !void {
+pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: anytype, file_path: [:0]const u8, stream_idx: usize, start_offset: f64) !void {
     _ = io;
+    
+    const t0 = c.av_gettime();
+    var packet_count: usize = 0;
+    var cue_count: usize = 0;
+    std.debug.print("Starting subtitle extraction for {s}, stream_idx: {}, start_offset: {d}\n", .{file_path, stream_idx, start_offset});
+
     var opts: ?*c.AVDictionary = null;
     _ = c.av_dict_set(&opts, "buffer_size", "524288", 0);
     _ = c.av_dict_set(&opts, "probesize", "1048576", 0);
@@ -101,7 +107,6 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: any
     if (c.avformat_open_input(@ptrCast(&fmt_ctx), file_path.ptr, null, &opts) < 0) return error.OpenFailed;
     defer c.avformat_close_input(@ptrCast(&fmt_ctx));
 
-    fmt_ctx.?.flags |= c.AVFMT_FLAG_NOBUFFER;
     fmt_ctx.?.max_analyze_duration = 1000000;
     fmt_ctx.?.fps_probe_size = 0;
 
@@ -118,6 +123,11 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: any
     if (stream_idx >= fmt_ctx.?.nb_streams) return error.InvalidStreamIndex;
     const stream = fmt_ctx.?.streams[stream_idx];
     if (stream.*.codecpar.*.codec_type != c.AVMEDIA_TYPE_SUBTITLE) return error.NotASubtitleStream;
+
+    if (start_offset > 0.0) {
+        const seek_pts = @as(i64, @intFromFloat(@max(0.0, start_offset - 30.0) * c.AV_TIME_BASE));
+        _ = c.av_seek_frame(fmt_ctx.?, -1, seek_pts, c.AVSEEK_FLAG_BACKWARD);
+    }
 
     try writer.writeAll("WEBVTT\n\n");
 
@@ -143,6 +153,8 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: any
 
     while (c.av_read_frame(fmt_ctx.?, pkt) >= 0) {
         defer c.av_packet_unref(pkt);
+        packet_count += 1;
+        std.Thread.yield() catch {};
 
         if (@as(usize, @intCast(pkt.*.stream_index)) != stream_idx) continue;
 
@@ -190,6 +202,7 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: any
                     try writer.writeAll("\n");
                     try writer.writeAll(trimmed);
                     try writer.writeAll("\n\n");
+                    cue_count += 1;
                 }
                 continue;
             }
@@ -213,7 +226,11 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: any
                 try writer.writeAll("\n");
                 try writer.writeAll(trimmed);
                 try writer.writeAll("\n\n");
+                cue_count += 1;
             }
         }
     }
+    const t1 = c.av_gettime();
+    const diff_ms = @as(f64, @floatFromInt(t1 - t0)) / 1000.0;
+    std.debug.print("Subtitle extraction completed in {d:.2}ms. Demuxed {} packets, output {} cues.\n", .{diff_ms, packet_count, cue_count});
 }

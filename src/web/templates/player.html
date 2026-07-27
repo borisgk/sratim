@@ -335,13 +335,41 @@
             }
 
             btnSubtitles.classList.add('active');
+            activeSubtitleCues = [];
 
-            const subUrl = `/subtitles?${MEDIA_QUERY}&track=${trackId}`;
+            const currentPos = getAbsoluteTime();
+            const subUrl = `/subtitles?${MEDIA_QUERY}&track=${trackId}&start=${currentPos}`;
             fetch(subUrl)
-                .then(r => r.text())
-                .then(vttText => {
-                    activeSubtitleCues = parseWebVTT(vttText);
-                    updateSubtitleOverlay();
+                .then(async r => {
+                    const reader = r.body.getReader();
+                    const decoder = new TextDecoder("utf-8");
+                    let buffer = "";
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (value) {
+                            buffer += decoder.decode(value, { stream: true });
+                            const blocks = buffer.split(/\r?\n\r?\n/);
+                            buffer = blocks.pop(); // Keep the last incomplete block
+                            
+                            for (const block of blocks) {
+                                const lines = block.trim().split(/\r?\n/);
+                                for (let i = 0; i < lines.length; i++) {
+                                    if (lines[i].includes('-->')) {
+                                        const times = lines[i].split('-->');
+                                        const start = parseVttTime(times[0]);
+                                        const end = parseVttTime(times[1]);
+                                        const text = lines.slice(i + 1).join('\n').trim();
+                                        if (text) {
+                                            activeSubtitleCues.push({ start, end, text });
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                            updateSubtitleOverlay();
+                        }
+                        if (done) break;
+                    }
                 })
                 .catch(e => console.error("Subtitle fetch error:", e));
         }

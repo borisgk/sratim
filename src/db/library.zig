@@ -1,5 +1,8 @@
 const std = @import("std");
 const db_mod = @import("db.zig");
+const metadata_mod = @import("metadata.zig");
+const subtitles_mod = @import("../media/subtitles.zig");
+const streamer = @import("../media/streamer.zig");
 const c = @import("../core/c.zig").c;
 
 pub const LibraryType = enum {
@@ -456,3 +459,4 @@ pub fn scanLibraryFiles(database: *db_mod.Database, allocator: std.mem.Allocator
         try scanSingleLibraryInternal(database, allocator, io, &lib, &insert_stmt, &insert_show_stmt, &insert_ep_stmt);
     }
 }
+
