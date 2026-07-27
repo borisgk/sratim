@@ -171,19 +171,13 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, file_path: 
         if (dec_ctx != null) {
             var sub: c.AVSubtitle = undefined;
             @memset(std.mem.asBytes(&sub), 0);
-            sub.pts = c.AV_NOPTS_VALUE; // Explicitly set to NOPTS to detect if decoder sets it
             var got_sub: c_int = 0;
 
             if (c.avcodec_decode_subtitle2(dec_ctx.?, &sub, &got_sub, pkt) >= 0 and got_sub != 0) {
                 defer c.avsubtitle_free(&sub);
 
-                var exact_pts_sec = start_pts_sec;
-                if (sub.pts != c.AV_NOPTS_VALUE) {
-                    exact_pts_sec = @as(f64, @floatFromInt(sub.pts)) / @as(f64, @floatFromInt(c.AV_TIME_BASE));
-                }
-
-                const cue_start = exact_pts_sec + (@as(f64, @floatFromInt(sub.start_display_time)) / 1000.0);
-                var cue_end = exact_pts_sec + (@as(f64, @floatFromInt(sub.end_display_time)) / 1000.0);
+                const cue_start = start_pts_sec + (@as(f64, @floatFromInt(sub.start_display_time)) / 1000.0);
+                var cue_end = start_pts_sec + (@as(f64, @floatFromInt(sub.end_display_time)) / 1000.0);
                 if (cue_end <= cue_start) {
                     cue_end = cue_start + duration_sec;
                 }
