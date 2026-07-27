@@ -5,7 +5,7 @@ const c = @import("../core/c.zig").c;
 /// Opens the file, seeks to start_time with AVSEEK_FLAG_BACKWARD,
 /// reads one packet, and returns its DTS/PTS in seconds.
 /// This is lightweight: no avformat_find_stream_info, just header + seek + one read.
-pub fn getKeyframePts(file_path: []const u8, start_time: f64) f64 {
+pub fn getKeyframePts(file_path: []const u8, start_time: f64, audio_idx_requested: c_int) f64 {
     const c_path = std.heap.c_allocator.dupeZ(u8, file_path) catch return start_time;
     defer std.heap.c_allocator.free(c_path);
 
@@ -27,16 +27,50 @@ pub fn getKeyframePts(file_path: []const u8, start_time: f64) f64 {
     if (pkt == null) return start_time;
     defer c.av_packet_free(&pkt);
 
+    var video_in_idx: c_int = -1;
+    var audio_in_idx: c_int = -1;
+
+    for (0..fmt_ctx.?.nb_streams) |i| {
+        const stream = fmt_ctx.?.streams[i];
+        if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_VIDEO and video_in_idx < 0) {
+            video_in_idx = @intCast(i);
+        } else if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_AUDIO) {
+            if (audio_idx_requested < 0 and audio_in_idx < 0) {
+                audio_in_idx = @intCast(i);
+            } else if (audio_idx_requested == @as(c_int, @intCast(i))) {
+                audio_in_idx = @intCast(i);
+            }
+        }
+    }
+
+    var min_dts_sec: f64 = -1.0;
+    var packets_read: usize = 0;
+
     while (c.av_read_frame(fmt_ctx.?, pkt.?) >= 0) {
         defer c.av_packet_unref(pkt.?);
-        const in_tb = fmt_ctx.?.streams[@intCast(pkt.?.stream_index)].*.time_base;
+        const stream_idx = @as(c_int, @intCast(pkt.?.stream_index));
+        
+        if (stream_idx != video_in_idx and stream_idx != audio_in_idx) {
+            continue;
+        }
+
+        const stream = fmt_ctx.?.streams[@intCast(pkt.?.stream_index)];
+        const in_tb = stream.*.time_base;
         const dts = if (pkt.?.dts != c.AV_NOPTS_VALUE) pkt.?.dts else pkt.?.pts;
         if (dts != c.AV_NOPTS_VALUE) {
             const av_tb = c.AVRational{ .num = 1, .den = c.AV_TIME_BASE };
             const pts_us = c.av_rescale_q(dts, in_tb, av_tb);
-            return @as(f64, @floatFromInt(pts_us)) / @as(f64, @floatFromInt(c.AV_TIME_BASE));
+            const ts_sec = @as(f64, @floatFromInt(pts_us)) / @as(f64, @floatFromInt(c.AV_TIME_BASE));
+            if (min_dts_sec < 0 or ts_sec < min_dts_sec) {
+                min_dts_sec = ts_sec;
+            }
         }
+        packets_read += 1;
+        if (packets_read >= 50) break;
     }
 
+    if (min_dts_sec >= 0) {
+        return min_dts_sec;
+    }
     return start_time;
 }

@@ -174,10 +174,10 @@
             }
 
             const absTime = getAbsoluteTime();
-            const activeCue = activeSubtitleCues.find(c => absTime >= c.start && absTime <= c.end);
+            const activeCues = activeSubtitleCues.filter(c => absTime >= c.start && absTime <= c.end);
 
-            if (activeCue) {
-                subtitleOverlay.innerText = activeCue.text;
+            if (activeCues.length > 0) {
+                subtitleOverlay.innerText = activeCues.map(c => c.text).join('\n');
                 subtitleOverlay.classList.remove('hidden');
             } else {
                 subtitleOverlay.classList.add('hidden');
@@ -185,7 +185,9 @@
             }
         }
 
-        function setSubtitleTrack(trackId) {
+        let subtitleAbortController = null;
+
+        function setSubtitleTrack(trackId, explicitStart) {
             currentSubtitleIdx = trackId;
 
             if (trackId === -1) {
@@ -198,9 +200,13 @@
             btnSubtitles.classList.add('active');
             activeSubtitleCues = [];
 
-            const currentPos = getAbsoluteTime();
+            const currentPos = explicitStart !== undefined ? explicitStart : getAbsoluteTime();
+            
+            if (subtitleAbortController) subtitleAbortController.abort();
+            subtitleAbortController = new AbortController();
+            
             const subUrl = `/subtitles?${MEDIA_QUERY}&track=${trackId}&start=${currentPos}`;
-            fetch(subUrl)
+            fetch(subUrl, { signal: subtitleAbortController.signal })
                 .then(async r => {
                     const reader = r.body.getReader();
                     const decoder = new TextDecoder("utf-8");
@@ -232,7 +238,9 @@
                         if (done) break;
                     }
                 })
-                .catch(e => console.error("Subtitle fetch error:", e));
+                .catch(e => {
+                    if (e.name !== 'AbortError') console.error("Subtitle fetch error:", e);
+                });
         }
 
         btnSubtitles.style.display = 'flex';
@@ -392,7 +400,7 @@
             retryCount = retryCount || 0;
             
             if (currentSubtitleIdx !== -1) {
-                setSubtitleTrack(currentSubtitleIdx);
+                setSubtitleTrack(currentSubtitleIdx, startTime);
             }
             
             if (abortController) abortController.abort();

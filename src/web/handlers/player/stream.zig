@@ -57,7 +57,7 @@ pub fn handleStream(
     const start_time = utils.parseQueryFloat(target, "start") orelse 0;
     const audio_idx = utils.parseQueryInt(c_int, target, "audio") orelse -1;
 
-    const actual_start = media_metadata.getKeyframePts(resolved.?.resolved_path, start_time);
+    const actual_start = media_metadata.getKeyframePts(resolved.?.resolved_path, start_time, audio_idx);
     var actual_start_buf: [32]u8 = undefined;
     const actual_start_str = try std.fmt.bufPrint(&actual_start_buf, "{d:.3}", .{actual_start});
 

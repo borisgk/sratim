@@ -38,10 +38,7 @@ pub fn generatePlayerHtml(
     defer title_escaped.deinit(allocator);
     try escapeForJs(&title_escaped, allocator, media_title);
 
-    return template_engine.render(allocator, @embedFile("../web/templates/player.html"), .{
-        .PLAYER_CSS = @as([]const u8, @embedFile("../web/templates/player.css")),
-        .PLAYER_JS = @as([]const u8, @embedFile("../web/templates/player.js")),
-        .TIME_STR = time_str,
+    const rendered_js = try template_engine.render(allocator, @embedFile("../web/templates/player.js"), .{
         .DURATION = duration,
         .MEDIA_QUERY = media_query,
         .CODEC_STR = codec_str,
@@ -50,5 +47,12 @@ pub fn generatePlayerHtml(
         .START_POSITION = start_position,
         .MEDIA_TITLE = title_escaped.items,
         .SERVER_LAN_IP = server_lan_ip,
+    });
+    defer allocator.free(rendered_js);
+
+    return template_engine.render(allocator, @embedFile("../web/templates/player.html"), .{
+        .PLAYER_CSS = @as([]const u8, @embedFile("../web/templates/player.css")),
+        .PLAYER_JS = rendered_js,
+        .TIME_STR = time_str,
     });
 }

@@ -7,19 +7,14 @@ const session_mod = @import("../db/session.zig");
 const config_mod = @import("../config.zig");
 
 const auth_handler = @import("handlers/auth.zig");
-const library_handler = @import("handlers/library.zig");
-const browse_handler = @import("handlers/browse.zig");
-const watch_handler = @import("handlers/watch.zig");
-const metadata_handler = @import("handlers/metadata.zig");
-const admin_handler = @import("handlers/admin.zig");
+const static_handler = @import("handlers/static.zig");
 const player_html = @import("handlers/player/html.zig");
 const player_stream = @import("handlers/player/stream.zig");
 const player_subtitles = @import("handlers/player/subtitles.zig");
-const utils = @import("utils.zig");
-const users_admin_handler = @import("handlers/users_admin.zig");
-const unmatched_admin_handler = @import("handlers/unmatched_admin.zig");
-const show_handler = @import("handlers/show.zig");
-const static_handler = @import("handlers/static.zig");
+
+const admin_router = @import("routers/admin.zig");
+const api_router = @import("routers/api.zig");
+const catalog_router = @import("routers/catalog.zig");
 
 /// Handles an incoming HTTP connection from a client.
 /// This function runs inside an isolated OS thread spawned specifically for this connection.
@@ -126,238 +121,19 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             continue;
         }
 
-        // Route: Catalog (Libraries Home Page)
-        if (std.mem.eql(u8, target, "/")) {
-            const html_content = catalog_index.generateHtml(allocator, database, session_info.?.is_admin) catch |err| {
-                std.debug.print("Catalog error: {}\n", .{err});
-                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-                return;
-            };
-            
-            request.respond(html_content, .{
-                .status = .ok,
-                .extra_headers = &.{
-                    .{ .name = "content-type", .value = "text/html; charset=utf-8" },
-                },
-            }) catch return;
-
-        // Route: Admin Dashboard
-        } else if (std.mem.eql(u8, target, "/admin")) {
-            if (!session_info.?.is_admin) {
-                request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden }) catch return;
-                continue;
-            }
-            admin_handler.serveAdminPage(&request, allocator, database) catch |err| {
-                std.debug.print("Admin handler error: {}\n", .{err});
-                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-            };
+        if (api_router.route(&request, allocator, io, config, database, logs_database, session_info, &resp_buf) catch return) {
             continue;
+        }
 
-        // Route: User Management Page
-        } else if (std.mem.eql(u8, target, "/admin/users")) {
-            if (!session_info.?.is_admin) {
-                request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden }) catch return;
-                continue;
-            }
-            users_admin_handler.serveUserManagementPage(&request, allocator, database, session_info.?.username, "") catch |err| {
-                std.debug.print("User management handler error: {}\n", .{err});
-                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-            };
+        if (admin_router.route(&request, allocator, io, database, session_info, &resp_buf) catch return) {
             continue;
+        }
 
-        // Route: Unmatched Metadata Resolution Page
-        } else if (std.mem.eql(u8, target, "/admin/unmatched")) {
-            if (!session_info.?.is_admin) {
-                request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden }) catch return;
-                continue;
-            }
-            unmatched_admin_handler.serveUnmatchedPage(&request, allocator, database) catch |err| {
-                std.debug.print("Unmatched page handler error: {}\n", .{err});
-                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-            };
+        if (catalog_router.route(&request, allocator, io, database, logs_database, session_info) catch return) {
             continue;
-
-        // Route: Admin Create User
-        } else if (std.mem.eql(u8, target, "/admin/users/create") and method == .POST) {
-            if (!session_info.?.is_admin) {
-                request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden }) catch return;
-                continue;
-            }
-            users_admin_handler.handleCreateUserPost(&request, allocator, database, io, &resp_buf) catch return;
-            continue;
-
-        // Route: Admin Delete User
-        } else if (std.mem.eql(u8, target, "/admin/users/delete") and method == .POST) {
-            if (!session_info.?.is_admin) {
-                request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden }) catch return;
-                continue;
-            }
-            users_admin_handler.handleDeleteUserPost(&request, allocator, database, session_info.?.username, &resp_buf) catch return;
-            continue;
-
-        // Route: Admin Toggle User Role
-        } else if (std.mem.eql(u8, target, "/admin/users/toggle-role") and method == .POST) {
-            if (!session_info.?.is_admin) {
-                request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden }) catch return;
-                continue;
-            }
-            users_admin_handler.handleToggleRolePost(&request, allocator, database, session_info.?.username, &resp_buf) catch return;
-            continue;
-
-        // Route: Admin Reset User Password
-        } else if (std.mem.eql(u8, target, "/admin/users/reset-password") and method == .POST) {
-            if (!session_info.?.is_admin) {
-                request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden }) catch return;
-                continue;
-            }
-            users_admin_handler.handleResetPasswordPost(&request, allocator, database, io, &resp_buf) catch return;
-            continue;
-
-        // Route: Add Library
-        } else if (std.mem.startsWith(u8, target, "/libraries/add") and method == .POST) {
-            library_handler.handleLibraryAdd(&request, allocator, database, &resp_buf) catch return;
-            continue;
-
-        // Route: Rescan Library
-        } else if (std.mem.startsWith(u8, target, "/api/library/rescan") and method == .POST) {
-            library_handler.handleLibraryRescan(&request, allocator, io, database, session_info.?.is_admin, &resp_buf) catch |err| {
-                std.debug.print("API Library Rescan error: {}\n", .{err});
-                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-                return;
-            };
-            continue;
-
-        // Route: Library Updates (Live Poster Polling)
-        } else if (std.mem.startsWith(u8, target, "/api/library/updates") and method == .GET) {
-            library_handler.handleApiLibraryUpdates(&request, allocator, database) catch |err| {
-                std.debug.print("API Library Updates error: {}\n", .{err});
-                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-                return;
-            };
-            continue;
-
-        // Route: API Filesystem Browser
-        } else if (std.mem.startsWith(u8, target, "/api/browse")) {
-            browse_handler.handleApiBrowse(&request, allocator, io) catch |err| {
-                std.debug.print("API Browse error: {}\n", .{err});
-                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-                return;
-            };
-            continue;
-
-        // Route: API Playback Log / Progress Event
-        } else if (std.mem.startsWith(u8, target, "/api/watch/event") and method == .POST) {
-            watch_handler.handleApiWatchEvent(&request, allocator, logs_database, session_info.?.username, &resp_buf) catch |err| {
-                std.debug.print("API Watch Event error: {}\n", .{err});
-                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-                return;
-            };
-            continue;
-
-        // Route: API Metadata Search
-        } else if (std.mem.startsWith(u8, target, "/api/metadata/search") and method == .GET) {
-            metadata_handler.handleApiMetadataSearch(&request, allocator, io, config) catch |err| {
-                std.debug.print("API Metadata Search error: {}\n", .{err});
-                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-                return;
-            };
-            continue;
-
-        // Route: API Metadata Link
-        } else if (std.mem.startsWith(u8, target, "/api/metadata/link") and method == .POST) {
-            metadata_handler.handleApiMetadataLink(&request, allocator, io, database, config, &resp_buf) catch |err| {
-                std.debug.print("API Metadata Link error: {}\n", .{err});
-                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-                return;
-            };
-            continue;
-
-        // Route: API Metadata Auto Link
-        } else if (std.mem.startsWith(u8, target, "/api/metadata/auto-link") and method == .POST) {
-            metadata_handler.handleApiMetadataAutoLink(&request, allocator, io, database, config, &resp_buf) catch |err| {
-                std.debug.print("API Metadata Auto Link error: {}\n", .{err});
-                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-                return;
-            };
-            continue;
-
-        // Route: API Metadata Manual Link
-        } else if (std.mem.startsWith(u8, target, "/api/metadata/manual-link") and method == .POST) {
-            metadata_handler.handleApiMetadataManualLink(&request, allocator, io, database, config, &resp_buf) catch |err| {
-                std.debug.print("API Metadata Manual Link error: {}\n", .{err});
-                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-                return;
-            };
-            continue;
-
-        // Route: Browse Specific Library
-        } else if (std.mem.startsWith(u8, target, "/library")) {
-            const lib_id = utils.parseQueryInt(i64, target, "id") orelse {
-                request.respond("Missing library id", .{ .status = .bad_request }) catch return;
-                continue;
-            };
-
-            const html_content_opt = catalog_library.generateLibraryContentHtml(allocator, io, database, logs_database, lib_id, session_info.?.username, session_info.?.is_admin) catch |err| {
-                std.debug.print("Browse Library content error: {}\n", .{err});
-                if (err == error.LibraryPathNotFound) {
-                    request.respond("Library path not found or inaccessible.", .{ .status = .not_found }) catch return;
-                } else {
-                    request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-                }
-                continue;
-            };
-
-            if (html_content_opt) |html_content| {
-                request.respond(html_content, .{
-                    .status = .ok,
-                    .extra_headers = &.{
-                        .{ .name = "content-type", .value = "text/html; charset=utf-8" },
-                    },
-                }) catch return;
-            } else {
-                request.respond("Library not found", .{ .status = .not_found }) catch return;
-            }
-
-        // Route: Movie Details View
-        } else if (std.mem.startsWith(u8, target, "/details")) {
-            const movie_id = utils.parseQueryInt(i64, target, "id") orelse {
-                request.respond("Missing movie id", .{ .status = .bad_request }) catch return;
-                continue;
-            };
-
-            const html_content = catalog_details.generateDetailsHtml(allocator, database, logs_database, movie_id, session_info.?.username) catch |err| {
-                std.debug.print("Details view error: {}\n", .{err});
-                if (err == error.MovieNotFound) {
-                    request.respond("Movie not found", .{ .status = .not_found }) catch return;
-                } else {
-                    request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-                }
-                continue;
-            };
-
-            request.respond(html_content, .{
-                .status = .ok,
-                .extra_headers = &.{
-                    .{ .name = "content-type", .value = "text/html; charset=utf-8" },
-                },
-            }) catch return;
-
-        // Route: Show Details View
-        } else if (std.mem.startsWith(u8, target, "/show")) {
-            const show_id = utils.parseQueryInt(i64, target, "id") orelse {
-                request.respond("Missing show id", .{ .status = .bad_request }) catch return;
-                continue;
-            };
-
-            show_handler.handleShow(allocator, &request, database, logs_database, session_info.?.username, show_id) catch |err| {
-                std.debug.print("Show view error: {}\n", .{err});
-                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch return;
-                continue;
-            };
+        }
 
         // Unknown route
-        } else {
-            request.respond("Not found", .{ .status = .not_found }) catch return;
-        }
+        request.respond("Not found", .{ .status = .not_found }) catch return;
     }
 }
