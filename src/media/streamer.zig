@@ -323,6 +323,7 @@ pub const MediaInfo = struct {
 
 /// Retrieves the duration, codec info, and available audio/subtitle tracks of a media file.
 pub fn getMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8) !MediaInfo {
+    _ = io;
     var fmt_ctx: ?*c.AVFormatContext = null;
     if (c.avformat_open_input(@ptrCast(&fmt_ctx), file_path.ptr, null, null) < 0) return error.OpenFailed;
     defer c.avformat_close_input(@ptrCast(&fmt_ctx));
@@ -436,17 +437,21 @@ pub fn getMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]con
                 label = "Subtitle Track";
             }
 
-            const label_dup = try allocator.dupe(u8, label);
+            const is_forced = (stream.*.disposition & c.AV_DISPOSITION_FORCED) != 0 or
+                (std.ascii.indexOfIgnoreCase(label, "forced") != null);
+
+            var final_label: []const u8 = label;
+            var free_final = false;
+
+            if (is_forced and std.ascii.indexOfIgnoreCase(label, "forced") == null) {
+                final_label = try std.fmt.allocPrint(allocator, "{s} (Forced)", .{label});
+                free_final = true;
+            }
+            defer if (free_final) allocator.free(final_label);
+
+            const label_dup = try allocator.dupe(u8, final_label);
             const lang_dup = try allocator.dupe(u8, lang);
             try subtitle_tracks.append(allocator, .{ .id = i, .label = label_dup, .language = lang_dup });
-        }
-    }
-
-    // Also scan for external subtitle files in the same directory (.srt, .vtt, .ass)
-    if (subtitles_mod.scanExternalSubtitles(allocator, io, file_path) catch null) |ext_subs| {
-        defer allocator.free(ext_subs);
-        for (ext_subs) |ext_tr| {
-            try subtitle_tracks.append(allocator, ext_tr);
         }
     }
 
