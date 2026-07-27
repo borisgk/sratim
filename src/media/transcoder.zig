@@ -11,7 +11,8 @@ pub const AudioTranscoder = struct {
     fifo: *c.AVAudioFifo,
     frame_in: *c.AVFrame,
     frame_out: *c.AVFrame,
-    pts_counter: i64 = 0,
+    in_tb: c.AVRational,
+    pts_counter: i64 = c.AV_NOPTS_VALUE,
 
     /// Initializes a new AudioTranscoder instance.
     /// Allocates decoder, encoder, resampler, and internal frames/buffers.
@@ -76,7 +77,8 @@ pub const AudioTranscoder = struct {
         if (c.av_frame_get_buffer(self.frame_out, 0) < 0) return error.OutOfMemory;
 
         _ = start_time;
-        self.pts_counter = 0;
+        self.in_tb = in_stream.*.time_base;
+        self.pts_counter = c.AV_NOPTS_VALUE;
         return self;
     }
 
@@ -104,6 +106,16 @@ pub const AudioTranscoder = struct {
     /// Transcodes a single encoded input packet and writes it into the output context.
     /// Manages the FFmpeg send/receive decode loop, resampling, FIFO buffering, and encoding loop.
     pub fn transcodePacket(self: *AudioTranscoder, in_packet: *c.AVPacket, out_fmt_ctx: *c.AVFormatContext, stream_idx: c_int) !void {
+        if (self.pts_counter == c.AV_NOPTS_VALUE) {
+            if (in_packet.*.pts != c.AV_NOPTS_VALUE) {
+                self.pts_counter = c.av_rescale_q(in_packet.*.pts, self.in_tb, self.encode_ctx.*.time_base);
+            } else if (in_packet.*.dts != c.AV_NOPTS_VALUE) {
+                self.pts_counter = c.av_rescale_q(in_packet.*.dts, self.in_tb, self.encode_ctx.*.time_base);
+            } else {
+                self.pts_counter = 0;
+            }
+        }
+
         if (c.avcodec_send_packet(self.decode_ctx, in_packet) < 0) return;
 
         while (c.avcodec_receive_frame(self.decode_ctx, self.frame_in) >= 0) {
