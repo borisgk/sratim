@@ -91,11 +91,18 @@ fn cleanAssText(out: *std.ArrayList(u8), allocator: std.mem.Allocator, ass_raw: 
 /// Native libavcodec / libavformat subtitle extraction directly to an HTTP or string writer.
 pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: anytype, file_path: [:0]const u8, stream_idx: usize) !void {
     _ = io;
+    var opts: ?*c.AVDictionary = null;
+    _ = c.av_dict_set(&opts, "buffer_size", "524288", 0);
+    _ = c.av_dict_set(&opts, "probesize", "1048576", 0);
+    _ = c.av_dict_set(&opts, "analyzeduration", "1000000", 0);
+    defer c.av_dict_free(@ptrCast(&opts));
+
     var fmt_ctx: ?*c.AVFormatContext = null;
-    if (c.avformat_open_input(@ptrCast(&fmt_ctx), file_path.ptr, null, null) < 0) return error.OpenFailed;
+    if (c.avformat_open_input(@ptrCast(&fmt_ctx), file_path.ptr, null, &opts) < 0) return error.OpenFailed;
     defer c.avformat_close_input(@ptrCast(&fmt_ctx));
 
-    fmt_ctx.?.max_analyze_duration = 500000;
+    fmt_ctx.?.flags |= c.AVFMT_FLAG_NOBUFFER;
+    fmt_ctx.?.max_analyze_duration = 1000000;
     fmt_ctx.?.fps_probe_size = 0;
 
     for (0..fmt_ctx.?.nb_streams) |i| {
