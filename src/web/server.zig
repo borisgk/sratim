@@ -15,6 +15,7 @@ const player_subtitles = @import("handlers/player/subtitles.zig");
 const admin_router = @import("routers/admin.zig");
 const api_router = @import("routers/api.zig");
 const catalog_router = @import("routers/catalog.zig");
+const api_v1_router = @import("routers/api_v1.zig");
 
 /// Handles an incoming HTTP connection from a client.
 /// This function runs inside an isolated OS thread spawned specifically for this connection.
@@ -62,6 +63,12 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
         const method = request.head.method;
 
         // --- Public routes (no auth required) ---
+
+        // Route: API v1 Login
+        if (std.mem.eql(u8, target, "/api/v1/login")) {
+            api_v1_router.handleLogin(&request, allocator, database, logs_database, &resp_buf, io) catch return;
+            continue;
+        }
 
         // Route: Login Page
         if (std.mem.startsWith(u8, target, "/login")) {
@@ -112,6 +119,18 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                     .{ .name = "location", .value = "/login" },
                 },
             }) catch return;
+            continue;
+        }
+
+        // Route: API v1 Libraries (Protected)
+        if (std.mem.eql(u8, target, "/api/v1/libraries")) {
+            api_v1_router.handleGetLibraries(&request, allocator, database) catch return;
+            continue;
+        }
+
+        // Route: API v1 Library Items (Protected)
+        if (std.mem.startsWith(u8, target, "/api/v1/library?")) {
+            api_v1_router.handleGetLibraryItems(&request, allocator, database) catch return;
             continue;
         }
 
