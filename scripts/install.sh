@@ -37,6 +37,7 @@ fi
 
 . /etc/os-release
 OS=$ID
+OS_VERSION=${VERSION_ID:-"unknown"}
 log_info "Detected OS: $PRETTY_NAME"
 
 case "$OS" in
@@ -68,9 +69,22 @@ log_info "Fetching latest release from GitHub..."
 REPO="borisgk/sratim"
 API_URL="https://api.github.com/repos/${REPO}/releases/latest"
 
-# Get the download URL based on architecture
+# Get the download URL based on architecture and OS
 if [ "$ARCH" = "x86_64" ]; then
-  DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-archlinux-x86_64-silvermont" | cut -d '"' -f 4)
+  if [ "$OS" = "debian" ]; then
+    case "$OS_VERSION" in
+      "11") DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-debian11-x86_64-baseline" | cut -d '"' -f 4) ;;
+      "12") DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-debian12-x86_64-baseline" | cut -d '"' -f 4) ;;
+      "13") DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-debian13-x86_64-baseline" | cut -d '"' -f 4) ;;
+      *)
+        log_warn "Debian version $OS_VERSION not explicitly supported. Falling back to Debian 12 binary."
+        DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-debian12-x86_64-baseline" | cut -d '"' -f 4)
+        ;;
+    esac
+  else
+    # Fallback to Arch Linux Silvermont for padre server or unknown x86_64
+    DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-archlinux-x86_64-silvermont" | cut -d '"' -f 4)
+  fi
 elif [ "$ARCH" = "aarch64" ]; then
   DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-ubuntu-aarch64-neoverse_n1" | cut -d '"' -f 4)
 fi
