@@ -11,6 +11,7 @@ const static_handler = @import("handlers/static.zig");
 const player_html = @import("handlers/player/html.zig");
 const player_stream = @import("handlers/player/stream.zig");
 const player_subtitles = @import("handlers/player/subtitles.zig");
+const player_raw = @import("handlers/player/raw.zig");
 
 const admin_router = @import("routers/admin.zig");
 const api_router = @import("routers/api.zig");
@@ -96,6 +97,10 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
                 std.debug.print("Subtitles handler error: {}\n", .{err});
             };
             continue;
+        } else if (std.mem.startsWith(u8, target, "/api/v1/play?")) {
+            var stream_resp_buf: [8192]u8 = undefined;
+            player_raw.handleRawPlay(&request, allocator, database, working_folder, &stream_resp_buf, io) catch return;
+            continue;
         }
 
         // Static assets handler (/style.css, /favicon.ico, /fonts/*, /images/*)
@@ -131,6 +136,18 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
         // Route: API v1 Library Items (Protected)
         if (std.mem.startsWith(u8, target, "/api/v1/library?")) {
             api_v1_router.handleGetLibraryItems(&request, allocator, database) catch return;
+            continue;
+        }
+        
+        // Route: API v1 Movie Details (Protected)
+        if (std.mem.startsWith(u8, target, "/api/v1/movie?")) {
+            api_v1_router.handleGetMovie(&request, allocator, database) catch return;
+            continue;
+        }
+
+        // Route: API v1 Show Details (Protected)
+        if (std.mem.startsWith(u8, target, "/api/v1/show?")) {
+            api_v1_router.handleGetShow(&request, allocator, database) catch return;
             continue;
         }
 
