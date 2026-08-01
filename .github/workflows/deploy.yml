@@ -1,13 +1,16 @@
 name: Deploy to Production
 
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["Build & Semantic Release Arch Binary"]
+    types:
+      - completed
 
 jobs:
   deploy:
     name: Deploy to padre.rus9n.com
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     
     steps:
       - name: Trigger Remote Installation
