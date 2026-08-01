@@ -116,7 +116,8 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
                 audio_in_idx = @intCast(i);
                 const out_stream = c.avformat_new_stream(out_ctx, null);
                 
-                if (stream.*.codecpar.*.codec_id != c.AV_CODEC_ID_AAC or stream.*.codecpar.*.ch_layout.nb_channels > 2) {
+                const channels = if (@hasField(@TypeOf(stream.*.codecpar.*), "ch_layout")) stream.*.codecpar.*.ch_layout.nb_channels else stream.*.codecpar.*.channels;
+                if (stream.*.codecpar.*.codec_id != c.AV_CODEC_ID_AAC or channels > 2) {
                     // Not AAC or > 2 channels, spin up the transcoder to downmix/encode to stereo AAC
                     audio_tr = try transcoder.AudioTranscoder.init(stream, out_stream, start_time);
                 } else {
@@ -137,7 +138,8 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
                 audio_in_idx = @intCast(i);
                 const out_stream = c.avformat_new_stream(out_ctx, null);
                 
-                if (stream.*.codecpar.*.codec_id != c.AV_CODEC_ID_AAC or stream.*.codecpar.*.ch_layout.nb_channels > 2) {
+                const channels = if (@hasField(@TypeOf(stream.*.codecpar.*), "ch_layout")) stream.*.codecpar.*.ch_layout.nb_channels else stream.*.codecpar.*.channels;
+                if (stream.*.codecpar.*.codec_id != c.AV_CODEC_ID_AAC or channels > 2) {
                     audio_tr = try transcoder.AudioTranscoder.init(stream, out_stream, start_time);
                 } else {
                     if (c.avcodec_parameters_copy(out_stream.*.codecpar, stream.*.codecpar) < 0) return error.CodecCopyFailed;

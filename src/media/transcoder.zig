@@ -35,7 +35,12 @@ pub const AudioTranscoder = struct {
         self.encode_ctx = c.avcodec_alloc_context3(enc) orelse return error.OutOfMemory;
         errdefer c.avcodec_free_context(@ptrCast(&self.encode_ctx));
 
-        c.av_channel_layout_default(&self.encode_ctx.*.ch_layout, 2);
+        if (@hasDecl(c, "av_channel_layout_default")) {
+            c.av_channel_layout_default(&self.encode_ctx.*.ch_layout, 2);
+        } else {
+            self.encode_ctx.*.channel_layout = c.AV_CH_LAYOUT_STEREO;
+            self.encode_ctx.*.channels = 2;
+        }
         self.encode_ctx.*.sample_rate = 48000;
         self.encode_ctx.*.sample_fmt = enc.*.sample_fmts[0];
         self.encode_ctx.*.bit_rate = 192000;
@@ -46,22 +51,40 @@ pub const AudioTranscoder = struct {
 
         // SwrContext
         self.swr_ctx = null;
-        if (c.swr_alloc_set_opts2(
-            @ptrCast(&self.swr_ctx),
-            &self.encode_ctx.*.ch_layout,
-            self.encode_ctx.*.sample_fmt,
-            self.encode_ctx.*.sample_rate,
-            &self.decode_ctx.*.ch_layout,
-            self.decode_ctx.*.sample_fmt,
-            self.decode_ctx.*.sample_rate,
-            0,
-            null,
-        ) < 0) return error.SwrInitError;
+        if (@hasDecl(c, "swr_alloc_set_opts2")) {
+            if (c.swr_alloc_set_opts2(
+                @ptrCast(&self.swr_ctx),
+                &self.encode_ctx.*.ch_layout,
+                self.encode_ctx.*.sample_fmt,
+                self.encode_ctx.*.sample_rate,
+                &self.decode_ctx.*.ch_layout,
+                self.decode_ctx.*.sample_fmt,
+                self.decode_ctx.*.sample_rate,
+                0,
+                null,
+            ) < 0) return error.SwrInitError;
+        } else {
+            const encode_cl = if (self.encode_ctx.*.channel_layout == 0) c.av_get_default_channel_layout(self.encode_ctx.*.channels) else self.encode_ctx.*.channel_layout;
+            const decode_cl = if (self.decode_ctx.*.channel_layout == 0) c.av_get_default_channel_layout(self.decode_ctx.*.channels) else self.decode_ctx.*.channel_layout;
+            self.swr_ctx = c.swr_alloc_set_opts(
+                null,
+                encode_cl,
+                self.encode_ctx.*.sample_fmt,
+                self.encode_ctx.*.sample_rate,
+                decode_cl,
+                self.decode_ctx.*.sample_fmt,
+                self.decode_ctx.*.sample_rate,
+                0,
+                null,
+            );
+            if (self.swr_ctx == null) return error.SwrInitError;
+        }
         errdefer c.swr_free(@ptrCast(&self.swr_ctx));
         if (c.swr_init(self.swr_ctx.?) < 0) return error.SwrInitError;
 
         // Fifo
-        self.fifo = c.av_audio_fifo_alloc(self.encode_ctx.*.sample_fmt, self.encode_ctx.*.ch_layout.nb_channels, 1) orelse return error.OutOfMemory;
+        const enc_channels = if (@hasDecl(c, "av_channel_layout_default")) self.encode_ctx.*.ch_layout.nb_channels else self.encode_ctx.*.channels;
+        self.fifo = c.av_audio_fifo_alloc(self.encode_ctx.*.sample_fmt, enc_channels, 1) orelse return error.OutOfMemory;
         errdefer c.av_audio_fifo_free(self.fifo);
         
         self.frame_in = c.av_frame_alloc() orelse return error.OutOfMemory;
@@ -71,7 +94,12 @@ pub const AudioTranscoder = struct {
         errdefer c.av_frame_free(@ptrCast(&self.frame_out));
 
         self.frame_out.*.nb_samples = self.encode_ctx.*.frame_size;
-        _ = c.av_channel_layout_copy(&self.frame_out.*.ch_layout, &self.encode_ctx.*.ch_layout);
+        if (@hasDecl(c, "av_channel_layout_copy")) {
+            _ = c.av_channel_layout_copy(&self.frame_out.*.ch_layout, &self.encode_ctx.*.ch_layout);
+        } else {
+            self.frame_out.*.channel_layout = self.encode_ctx.*.channel_layout;
+            self.frame_out.*.channels = self.encode_ctx.*.channels;
+        }
         self.frame_out.*.format = self.encode_ctx.*.sample_fmt;
         self.frame_out.*.sample_rate = self.encode_ctx.*.sample_rate;
         if (c.av_frame_get_buffer(self.frame_out, 0) < 0) return error.OutOfMemory;
@@ -128,7 +156,12 @@ pub const AudioTranscoder = struct {
             
             var converted_frame = c.av_frame_alloc() orelse return error.OutOfMemory;
             defer c.av_frame_free(@ptrCast(&converted_frame));
-            _ = c.av_channel_layout_copy(&converted_frame.*.ch_layout, &self.encode_ctx.*.ch_layout);
+            if (@hasDecl(c, "av_channel_layout_copy")) {
+                _ = c.av_channel_layout_copy(&converted_frame.*.ch_layout, &self.encode_ctx.*.ch_layout);
+            } else {
+                converted_frame.*.channel_layout = self.encode_ctx.*.channel_layout;
+                converted_frame.*.channels = self.encode_ctx.*.channels;
+            }
             converted_frame.*.sample_rate = self.encode_ctx.*.sample_rate;
             converted_frame.*.format = self.encode_ctx.*.sample_fmt;
             converted_frame.*.nb_samples = @intCast(out_samples);
