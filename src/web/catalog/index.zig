@@ -3,6 +3,7 @@ const template_engine = @import("../../core/template.zig");
 const db_mod = @import("../../db/db.zig");
 const library_mod = @import("../../db/library.zig");
 const utils = @import("../utils.zig");
+const build_options = @import("build_options");
 
 const global_css: []const u8 = @embedFile("../style.css");
 
@@ -86,5 +87,6 @@ pub fn generateHtml(allocator: std.mem.Allocator, database: *db_mod.Database, is
         .INLINE_CSS = global_css,
         .LIBRARY_CARDS = cards_buf.items,
         .ADMIN_LINK = admin_link_html,
+        .APP_VERSION = build_options.version,
     });
 }

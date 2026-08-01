@@ -51,10 +51,18 @@ jobs:
           restore-keys: |
             zig-build-${{ runner.os }}-
 
-      - name: Build Binary (-Doptimize=ReleaseFast -Dcpu=silvermont)
-        # Executes the actual compilation targeting your N3150 processor
+      - name: Calculate Version (Dry Run)
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: patch
+          dry_run: true
+
+      - name: Build Binary (-Doptimize=ReleaseFast -Dcpu=silvermont -Dversion=...)
+        # Executes the actual compilation targeting your N3150 processor, injecting the version
         run: |
-          zig build -Doptimize=ReleaseFast -Dcpu=silvermont
+          zig build -Doptimize=ReleaseFast -Dcpu=silvermont -Dversion=${{ steps.tag_version.outputs.new_tag }}
 
       - name: Upload Binary Artifact
         # Temporarily saves the compiled binary to GitHub's artifact storage

@@ -20,6 +20,9 @@ pub fn build(b: *std.Build) void {
     // of this build script using `b.option()`. All defined flags (including
     // target and optimize options) will be listed when running `zig build --help`
     // in this directory.
+    const version = b.option([]const u8, "version", "Application version") orelse "development";
+    const options = b.addOptions();
+    options.addOption([]const u8, "version", version);
 
 
     // Here we define an executable. An executable needs to have a root module
@@ -60,6 +63,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe.root_module.addImport("httpx", httpx_dep.module("httpx"));
+    exe.root_module.addOptions("build_options", options);
 
     if (optimize != .Debug) {
         exe.root_module.strip = true;
