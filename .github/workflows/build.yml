@@ -1,72 +1,112 @@
-name: Build Arch Linux Binary
+name: Build & Semantic Release Arch Binary
 
 on:
+  # Triggers the workflow every time you push code to the main branch
   push:
     branches: [ "main" ]
 
 env:
+  # Suppresses warnings from older GitHub Actions running on newer Node versions
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   ACTIONS_NO_DEPRECATED_NODE_WARNINGS: "true"
+
+# Explicitly grant the workflow permission to write to the repository
+# This is absolutely required so the release job can push a new tag and create the GitHub Release
+permissions:
+  contents: write
 
 jobs:
   build:
     name: Build Arch Linux x86_64 Executable
+    # We run on GitHub's provided Ubuntu server...
     runs-on: ubuntu-latest
+    # ...but we immediately launch an Arch Linux container inside it.
+    # All steps in this job will execute inside this Arch environment.
     container:
       image: archlinux:base-devel
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v7
-
-      - name: Cache Pacman Packages
-        uses: actions/cache@v6
-        with:
-          path: /var/cache/pacman/pkg
-          key: pacman-cache-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
-          restore-keys: |
-            pacman-cache-${{ runner.os }}-
-
       - name: Update Pacman & Install System Dependencies
+        # Install git first so actions/checkout can use it properly inside the Arch container
         run: |
           pacman -Syu --needed --noconfirm git sqlite ffmpeg curl tar xz pkgconf
 
-      - name: Cache Zig Compiler
-        id: cache-zig
-        uses: actions/cache@v6
+      - name: Checkout Repository
+        # Pulls your actual source code into the container
+        uses: actions/checkout@v7
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
         with:
-          path: /opt/zig
-          key: zig-0.16.0-x86_64-linux
-
-      - name: Download & Install Zig 0.16.0
-        if: steps.cache-zig.outputs.cache-hit != 'true'
-        run: |
-          curl -L -o zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
-          mkdir -p /opt/zig
-          tar -xf zig.tar.xz -C /opt/zig --strip-components=1
-
-      - name: Add Zig to PATH
-        run: |
-          echo "/opt/zig" >> $GITHUB_PATH
+          version: 0.16.0
 
       - name: Cache Zig Build Artifacts
+        # Caches Zig's intermediate build files (ZIR) to make future compilations lightning fast
         uses: actions/cache@v6
         with:
           path: |
             .zig-cache
             ~/.cache/zig
-            zig-pkg
           key: zig-build-${{ runner.os }}-${{ hashFiles('build.zig', 'build.zig.zon', 'src/**') }}
           restore-keys: |
             zig-build-${{ runner.os }}-
 
       - name: Build Binary (-Doptimize=ReleaseFast -Dcpu=silvermont)
+        # Executes the actual compilation targeting your N3150 processor
         run: |
-          /opt/zig/zig build -Doptimize=ReleaseFast -Dcpu=silvermont
+          zig build -Doptimize=ReleaseFast -Dcpu=silvermont
 
       - name: Upload Binary Artifact
+        # Temporarily saves the compiled binary to GitHub's artifact storage
         uses: actions/upload-artifact@v7
         with:
           name: sratim-arch-n3150
           path: zig-out/bin/sratim
-          retention-days: 30
+          # We only need this for 1 day, just long enough to pass it to the 'release' job below
+          retention-days: 1 
+
+  release:
+    name: Generate Semantic Release
+    # Tells GitHub to wait until the 'build' job successfully finishes before starting this one
+    needs: build
+    # We run this on standard Ubuntu, no Arch container needed for API calls
+    runs-on: ubuntu-latest 
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          # fetch-depth: 0 is CRUCIAL here. It downloads the entire commit history 
+          # so the semantic-release tool can read your commit messages and past tags.
+          fetch-depth: 0 
+
+      - name: Bump Version and Push Tag
+        # Reads your commits (feat:, fix:, etc.) and calculates the next version number (e.g. v1.0.1)
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: patch 
+
+      - name: Download Binary Artifact
+        # Grabs the compiled binary we uploaded at the end of the 'build' job
+        uses: actions/download-artifact@v7
+        with:
+          name: sratim-arch-n3150
+          path: ./artifact
+
+      - name: Prepare Release Asset
+        # Renames the binary to something highly descriptive for the user downloading it
+        run: |
+          mv ./artifact/sratim ./sratim-archlinux-x86_64-silvermont
+          chmod +x ./sratim-archlinux-x86_64-silvermont
+
+      - name: Create GitHub Release
+        # Creates the official Release page, auto-generates the changelog, and attaches the binary
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_version.outputs.new_tag }}
+          name: Release ${{ steps.tag_version.outputs.new_tag }}
+          body: ${{ steps.tag_version.outputs.changelog }}
+          files: ./sratim-archlinux-x86_64-silvermont
+
