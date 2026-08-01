@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const HARDCODED_TMDB_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI0YjY4NjgwZDI3MzVlYjdiMWVkNjIwZTQwZDNiMjYxMCIsIm5iZiI6MTY5MjE5NTc4Ny41MjQsInN1YiI6IjY0ZGNkYmNiMDAxYmJkMDQxYmY0NjhlOCIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.3kiXVao5QsftRTtLu2H5mfmO8K35tCtD0siaWdeCbTw";
+
 pub const Config = struct {
 
     port: u16,
@@ -33,5 +35,12 @@ pub const Config = struct {
 
         if (self.tmdb_access_token) |t| allocator.free(t);
         if (self.tmdb_proxy) |p| allocator.free(p);
+    }
+
+    pub fn getTmdbToken(self: Config) []const u8 {
+        if (self.tmdb_access_token) |t| {
+            if (t.len > 0) return t;
+        }
+        return HARDCODED_TMDB_TOKEN;
     }
 };

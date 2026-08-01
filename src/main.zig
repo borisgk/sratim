@@ -60,7 +60,7 @@ pub fn main() !void {
     };
     std.debug.print("Library scan complete.\n", .{});
     
-    fetcher.startFetcherThread(std.heap.c_allocator, io, &database, config.tmdb_access_token, config.tmdb_proxy) catch |err| {
+    fetcher.startFetcherThread(std.heap.c_allocator, io, &database, config.getTmdbToken(), config.tmdb_proxy) catch |err| {
         std.debug.print("Failed to start TMDB fetcher: {}\n", .{err});
     };
     

@@ -5,10 +5,7 @@ const db_mod = @import("../../db/db.zig");
 const metadata_mod = @import("../../db/metadata.zig");
 
 pub fn handleApiMetadataSearch(request: *std.http.Server.Request, allocator: std.mem.Allocator, io: std.Io, config: *const config_mod.Config) !void {
-    const token = config.tmdb_access_token orelse {
-        request.respond("TMDB Access Token not configured in config.json", .{ .status = .bad_request }) catch return;
-        return;
-    };
+    const token = config.getTmdbToken();
     if (token.len == 0) {
         request.respond("TMDB Access Token is empty in config.json", .{ .status = .bad_request }) catch return;
         return;
@@ -117,10 +114,7 @@ const MetadataAutoLinkPayload = struct {
 };
 
 pub fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, config: *const config_mod.Config, body_buf: *[8192]u8) !void {
-    const token = config.tmdb_access_token orelse {
-        request.respond("TMDB Access Token not configured in config.json", .{ .status = .bad_request }) catch return;
-        return;
-    };
+    const token = config.getTmdbToken();
     if (token.len == 0) {
         request.respond("TMDB Access Token is empty in config.json", .{ .status = .bad_request }) catch return;
         return;
@@ -259,10 +253,7 @@ const MetadataManualLinkPayload = struct {
 };
 
 pub fn handleApiMetadataManualLink(request: *std.http.Server.Request, allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, config: *const config_mod.Config, body_buf: *[8192]u8) !void {
-    const token = config.tmdb_access_token orelse {
-        request.respond("TMDB Access Token not configured in config.json", .{ .status = .bad_request }) catch return;
-        return;
-    };
+    const token = config.getTmdbToken();
     if (token.len == 0) {
         request.respond("TMDB Access Token is empty in config.json", .{ .status = .bad_request }) catch return;
         return;
