@@ -11,6 +11,9 @@ jobs:
     name: Deploy to padre.rus9n.com
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    environment:
+      name: production
+      url: https://padre.rus9n.com
     
     steps:
       - name: Trigger Remote Installation
