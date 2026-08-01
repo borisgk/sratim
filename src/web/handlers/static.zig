@@ -1,4 +1,5 @@
 const std = @import("std");
+const main = @import("../../main.zig");
 pub const global_css: []const u8 = @embedFile("../style.css");
 pub const favicon_ico = @embedFile("../favicon.ico");
 pub const font_inter = @embedFile("../fonts/inter.woff2");
@@ -65,7 +66,7 @@ pub fn serveStaticAsset(request: *std.http.Server.Request, allocator: std.mem.Al
         const file_path = try std.fmt.allocPrint(allocator, "images/{s}", .{rel_path});
         defer allocator.free(file_path);
 
-        const file_contents = std.Io.Dir.cwd().readFileAlloc(io, file_path, allocator, std.Io.Limit.limited(10 * 1024 * 1024)) catch {
+        const file_contents = main.app_dir.readFileAlloc(io, file_path, allocator, std.Io.Limit.limited(10 * 1024 * 1024)) catch {
             try request.respond("Not Found", .{ .status = .not_found });
             return true;
         };

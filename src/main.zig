@@ -11,6 +11,8 @@ const c = @import("core/c.zig").c;
 
 /// The application entry point.
 /// Initializes the asynchronous I/O backend and starts accepting incoming HTTP connections.
+pub var app_dir: std.Io.Dir = undefined;
+
 pub fn main() !void {
     // Suppress FFmpeg informational logs and warnings to keep the terminal clean
     c.av_log_set_level(c.AV_LOG_ERROR);
@@ -25,11 +27,16 @@ pub fn main() !void {
 
     if (std.Io.Dir.cwd().access(io, "config.json", .{})) |_| {
         std.debug.print("Found local config.json, running in development mode.\n", .{});
+        app_dir = std.Io.Dir.cwd();
     } else |_| {
         std.debug.print("Local config.json not found, falling back to system paths.\n", .{});
         config_path = "/etc/sratim/config.json";
         db_path = "/var/lib/sratim/sratim.db";
         logs_db_path = "/var/lib/sratim/logs.db";
+        app_dir = std.Io.Dir.openDirAbsolute(io, "/var/lib/sratim", .{}) catch |err| {
+            std.debug.print("Failed to open production data directory /var/lib/sratim: {}\n", .{err});
+            return err;
+        };
     }
 
     var config = try config_mod.Config.load(std.heap.c_allocator, io, config_path);
