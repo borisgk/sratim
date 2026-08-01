@@ -1,0 +1,21 @@
+name: Deploy to Production
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  deploy:
+    name: Deploy to padre.rus9n.com
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Trigger Remote Installation
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USERNAME }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          # This script handles downloading the latest release, securely stopping the daemon, and restarting it!
+          script: |
+            curl -sL https://raw.githubusercontent.com/borisgk/sratim/main/scripts/install.sh | sudo bash
