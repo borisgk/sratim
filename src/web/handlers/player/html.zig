@@ -14,7 +14,7 @@ pub fn handlePlayer(
     database: *db_mod.Database,
     logs_database: *db_mod.Database,
     username: []const u8,
-    working_folder: []const u8,
+
     io: std.Io,
 ) !void {
     const target = request.head.target;
@@ -31,7 +31,7 @@ pub fn handlePlayer(
     else
         metadata_mod.getEpisodeInfoById(database, allocator, episode_id.?) catch null;
 
-    const resolved = common.resolveMediaPath(database, allocator, media_info_opt, working_folder) catch |err| {
+    const resolved = common.resolveMediaPath(database, allocator, media_info_opt) catch |err| {
         if (err == error.PathTraversal) {
             try request.respond("Forbidden", .{ .status = .forbidden });
         } else {

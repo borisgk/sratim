@@ -39,7 +39,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
     defer logs_database_val.close();
     const logs_database = &logs_database_val;
 
-    const working_folder = config.working_folder;
+
     defer stream.socket.close(io);
 
     var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
@@ -90,16 +90,16 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
         // Route: Media Streamer (Public for Cast receivers & media elements)
         if (std.mem.startsWith(u8, target, "/stream?")) {
             var stream_resp_buf: [8192]u8 = undefined;
-            player_stream.handleStream(&request, allocator, database, working_folder, &stream_resp_buf) catch return;
+            player_stream.handleStream(&request, allocator, database, &stream_resp_buf) catch return;
             continue;
         } else if (std.mem.startsWith(u8, target, "/subtitles?")) {
-            player_subtitles.handleSubtitles(&request, allocator, database, working_folder, io) catch |err| {
+            player_subtitles.handleSubtitles(&request, allocator, database, io) catch |err| {
                 std.debug.print("Subtitles handler error: {}\n", .{err});
             };
             continue;
         } else if (std.mem.startsWith(u8, target, "/api/v1/play?")) {
             var stream_resp_buf: [8192]u8 = undefined;
-            player_raw.handleRawPlay(&request, allocator, database, working_folder, &stream_resp_buf, io) catch return;
+            player_raw.handleRawPlay(&request, allocator, database, &stream_resp_buf, io) catch return;
             continue;
         }
 
@@ -153,7 +153,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
 
         // Route: HTML Player
         if (std.mem.startsWith(u8, target, "/player?")) {
-            player_html.handlePlayer(&request, allocator, database, logs_database, session_info.?.username, working_folder, io) catch return;
+            player_html.handlePlayer(&request, allocator, database, logs_database, session_info.?.username, io) catch return;
             continue;
         }
 

@@ -11,7 +11,7 @@ pub fn handleStream(
     request: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     database: *db_mod.Database,
-    working_folder: []const u8,
+
     resp_buf: []u8,
 ) !void {
     if (request.head.method == .OPTIONS) {
@@ -41,7 +41,7 @@ pub fn handleStream(
     else
         metadata_mod.getEpisodeInfoById(database, allocator, episode_id.?) catch null;
 
-    const resolved = common.resolveMediaPath(database, allocator, media_info_opt, working_folder) catch |err| {
+    const resolved = common.resolveMediaPath(database, allocator, media_info_opt) catch |err| {
         if (err == error.PathTraversal) {
             try request.respond("Forbidden", .{ .status = .forbidden });
         } else {

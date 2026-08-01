@@ -13,19 +13,19 @@ pub fn resolveMediaPath(
     database: *db_mod.Database,
     allocator: std.mem.Allocator,
     info_opt: ?metadata_mod.MovieInfo,
-    working_folder: []const u8,
 ) !?ResolvedMedia {
     if (info_opt == null) return null;
     const media_info = info_opt.?;
 
-    var base_path = try allocator.dupe(u8, working_folder);
+    var base_path: []u8 = undefined;
     if (library_mod.getLibraryById(database, allocator, media_info.library_id) catch null) |lib| {
-        allocator.free(base_path);
         base_path = try allocator.dupe(u8, lib.path);
         allocator.free(lib.name);
         allocator.free(lib.path);
         allocator.free(lib.metadata_language);
         if (lib.ignore_patterns) |pat| allocator.free(pat);
+    } else {
+        return error.LibraryNotFound;
     }
 
     const full_path = try std.fs.path.join(allocator, &[_][]const u8{ base_path, media_info.file_path });

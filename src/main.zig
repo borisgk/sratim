@@ -19,14 +19,27 @@ pub fn main() !void {
     var t = std.Io.Threaded.init(std.heap.c_allocator, .{});
     const io = t.io();
     
-    var config = try config_mod.Config.load(std.heap.c_allocator, io, "config.json");
+    var config_path: [:0]const u8 = "config.json";
+    var db_path: [:0]const u8 = "sratim.db";
+    var logs_db_path: [:0]const u8 = "logs.db";
+
+    if (std.Io.Dir.cwd().access(io, "config.json", .{})) |_| {
+        std.debug.print("Found local config.json, running in development mode.\n", .{});
+    } else |_| {
+        std.debug.print("Local config.json not found, falling back to system paths.\n", .{});
+        config_path = "/etc/sratim/config.json";
+        db_path = "/var/lib/sratim/sratim.db";
+        logs_db_path = "/var/lib/sratim/logs.db";
+    }
+
+    var config = try config_mod.Config.load(std.heap.c_allocator, io, config_path);
     defer config.deinit(std.heap.c_allocator);
 
     // Open SQLite database and initialize schema
-    var database = try db_mod.Database.open("sratim.db");
+    var database = try db_mod.Database.open(db_path);
     defer database.close();
 
-    var logs_database = try db_mod.Database.open("logs.db");
+    var logs_database = try db_mod.Database.open(logs_db_path);
     defer logs_database.close();
 
     try db_mod.initSchema(&database);
