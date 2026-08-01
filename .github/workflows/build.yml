@@ -5,10 +5,10 @@ on:
   push:
     branches: [ "main" ]
 
-# env:
+env:
   # Suppresses warnings from older GitHub Actions running on newer Node versions
-  # FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  # ACTIONS_NO_DEPRECATED_NODE_WARNINGS: "true"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  ACTIONS_NO_DEPRECATED_NODE_WARNINGS: "true"
 
 # Explicitly grant the workflow permission to write to the repository
 # This is absolutely required so the release job can push a new tag and create the GitHub Release
@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup Zig
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@v2.2.1
         with:
           version: 0.16.0
 
