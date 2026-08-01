@@ -132,3 +132,21 @@ jobs:
           key: ${{ secrets.PROD_SSH_KEY }}
           script: |
             curl -sL https://raw.githubusercontent.com/borisgk/sratim/main/scripts/install.sh | sudo bash
+
+  deploy-demo:
+    name: Deploy to meet.rus9n.com (Demo)
+    needs: release
+    runs-on: ubuntu-latest
+    environment:
+      name: demo
+      url: https://il1.rus9n.com
+    
+    steps:
+      - name: Trigger Remote Installation
+        uses: appleboy/ssh-action@master
+        with:
+          host: meet.rus9n.com
+          username: ${{ secrets.DEMO_USERNAME }}
+          key: ${{ secrets.DEMO_SSH_KEY }}
+          script: |
+            curl -sL https://raw.githubusercontent.com/borisgk/sratim/main/scripts/install.sh | sudo bash
