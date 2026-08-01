@@ -1,39 +1,46 @@
-name: Build & Semantic Release Arch Binary
+name: Build & Semantic Release Multi-Arch Binaries
 
 on:
-  # Triggers the workflow every time you push code to the main branch
   push:
     branches: [ "main" ]
 
 env:
-  # Suppresses warnings from older GitHub Actions running on newer Node versions
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   ACTIONS_NO_DEPRECATED_NODE_WARNINGS: "true"
 
-# Explicitly grant the workflow permission to write to the repository
-# This is absolutely required so the release job can push a new tag and create the GitHub Release
 permissions:
   contents: write
 
 jobs:
   build:
-    name: Build Arch Linux x86_64 Executable
-    # We run on GitHub's provided Ubuntu server...
-    runs-on: ubuntu-latest
-    # ...but we immediately launch an Arch Linux container inside it.
-    # All steps in this job will execute inside this Arch environment.
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
     container:
-      image: archlinux:base-devel
+      image: ${{ matrix.container }}
+    strategy:
+      matrix:
+        include:
+          - name: Arch Linux x86_64
+            os: ubuntu-latest
+            container: archlinux:base-devel
+            setup_cmd: pacman -Syu --needed --noconfirm git sqlite ffmpeg curl tar xz pkgconf
+            zig_cpu: silvermont
+            artifact_name: sratim-arch-n3150
+            binary_name: sratim-archlinux-x86_64-silvermont
+          - name: Ubuntu ARM64 (Ampere)
+            os: ubuntu-24.04-arm
+            container: ubuntu:24.04
+            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git libsqlite3-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev curl xz-utils pkg-config
+            zig_cpu: neoverse_n1
+            artifact_name: sratim-ubuntu-aarch64
+            binary_name: sratim-ubuntu-aarch64-neoverse_n1
 
     steps:
-      - name: Update Pacman & Install System Dependencies
-        # Install git first so actions/checkout can use it properly inside the Arch container
-        run: |
-          pacman -Syu --needed --noconfirm git sqlite ffmpeg curl tar xz pkgconf
+      - name: Install System Dependencies
+        run: ${{ matrix.setup_cmd }}
 
       - name: Checkout Repository
-        # Pulls your actual source code into the container
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v2.2.1
@@ -41,15 +48,14 @@ jobs:
           version: 0.16.0
 
       - name: Cache Zig Build Artifacts
-        # Caches Zig's intermediate build files (ZIR) to make future compilations lightning fast
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         with:
           path: |
             .zig-cache
             ~/.cache/zig
-          key: zig-build-${{ runner.os }}-${{ hashFiles('build.zig', 'build.zig.zon', 'src/**') }}
+          key: zig-build-${{ matrix.artifact_name }}-${{ hashFiles('build.zig', 'build.zig.zon', 'src/**') }}
           restore-keys: |
-            zig-build-${{ runner.os }}-
+            zig-build-${{ matrix.artifact_name }}-
 
       - name: Calculate Version (Dry Run)
         id: tag_version
@@ -59,64 +65,55 @@ jobs:
           default_bump: patch
           dry_run: true
 
-      - name: Build Binary (-Doptimize=ReleaseFast -Dcpu=silvermont -Dversion=...)
-        # Executes the actual compilation targeting your N3150 processor, injecting the version
+      - name: Build Binary (-Doptimize=ReleaseFast -Dcpu=${{ matrix.zig_cpu }})
         run: |
-          zig build -Doptimize=ReleaseFast -Dcpu=silvermont -Dversion=${{ steps.tag_version.outputs.new_tag }}
+          zig build -Doptimize=ReleaseFast -Dcpu=${{ matrix.zig_cpu }} -Dversion=${{ steps.tag_version.outputs.new_tag }}
+
+      - name: Rename Binary
+        run: mv zig-out/bin/sratim zig-out/bin/${{ matrix.binary_name }}
 
       - name: Upload Binary Artifact
-        # Temporarily saves the compiled binary to GitHub's artifact storage
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
-          name: sratim-arch-n3150
-          path: zig-out/bin/sratim
-          # We only need this for 1 day, just long enough to pass it to the 'release' job below
+          name: ${{ matrix.artifact_name }}
+          path: zig-out/bin/${{ matrix.binary_name }}
           retention-days: 1 
 
   release:
     name: Generate Semantic Release
-    # Tells GitHub to wait until the 'build' job successfully finishes before starting this one
     needs: build
-    # We run this on standard Ubuntu, no Arch container needed for API calls
     runs-on: ubuntu-latest 
     
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
         with:
-          # fetch-depth: 0 is CRUCIAL here. It downloads the entire commit history 
-          # so the semantic-release tool can read your commit messages and past tags.
           fetch-depth: 0 
 
       - name: Bump Version and Push Tag
-        # Reads your commits (feat:, fix:, etc.) and calculates the next version number (e.g. v1.0.1)
         id: tag_version
         uses: mathieudutour/github-tag-action@v6.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           default_bump: patch 
 
-      - name: Download Binary Artifact
-        # Grabs the compiled binary we uploaded at the end of the 'build' job
-        uses: actions/download-artifact@v7
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
         with:
-          name: sratim-arch-n3150
-          path: ./artifact
+          path: ./artifacts
+          merge-multiple: true
 
-      - name: Prepare Release Asset
-        # Renames the binary to something highly descriptive for the user downloading it
+      - name: Prepare Release Assets
         run: |
-          mv ./artifact/sratim ./sratim-archlinux-x86_64-silvermont
-          chmod +x ./sratim-archlinux-x86_64-silvermont
+          chmod +x ./artifacts/*
 
       - name: Create GitHub Release
-        # Creates the official Release page, auto-generates the changelog, and attaches the binary
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag_version.outputs.new_tag }}
           name: Release ${{ steps.tag_version.outputs.new_tag }}
           body: ${{ steps.tag_version.outputs.changelog }}
-          files: ./sratim-archlinux-x86_64-silvermont
+          files: ./artifacts/*
 
   deploy:
     name: Deploy to padre.rus9n.com
@@ -133,6 +130,5 @@ jobs:
           host: padre.rus9n.com
           username: ${{ secrets.PROD_USERNAME }}
           key: ${{ secrets.PROD_SSH_KEY }}
-          # This script handles downloading the latest release, securely stopping the daemon, and restarting it!
           script: |
             curl -sL https://raw.githubusercontent.com/borisgk/sratim/main/scripts/install.sh | sudo bash

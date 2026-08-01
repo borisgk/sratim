@@ -26,8 +26,8 @@ log_info "Checking system compatibility..."
 
 # Architecture check
 ARCH=$(uname -m)
-if [ "$ARCH" != "x86_64" ]; then
-  log_err "Unsupported architecture: $ARCH. Sratim currently only supports x86_64."
+if [ "$ARCH" != "x86_64" ] && [ "$ARCH" != "aarch64" ]; then
+  log_err "Unsupported architecture: $ARCH. Sratim currently only supports x86_64 and aarch64."
 fi
 
 # OS check
@@ -48,17 +48,19 @@ case "$OS" in
     ;;
 esac
 
-# CPU Architecture check for Silvermont/Airmont
-# We warn instead of fail here, as it might still run on newer Intel/AMD CPUs.
-if grep -q "model name" /proc/cpuinfo; then
-    CPU_MODEL=$(grep "model name" /proc/cpuinfo | head -n1 | cut -d':' -f2 | xargs)
-    log_info "Detected CPU: $CPU_MODEL"
-    # Basic heuristic for Intel Atom / Celeron N3xxx (Braswell/Airmont)
-    if echo "$CPU_MODEL" | grep -qi -E "N3150|Atom|Celeron"; then
-        log_info "CPU matches expected Silvermont/Airmont architecture."
-    else
-        log_warn "CPU does not strictly match Silvermont/Airmont targets. The binary may still work but performance is not guaranteed."
+# CPU Architecture check for Silvermont/Airmont (x86_64 only)
+if [ "$ARCH" = "x86_64" ]; then
+    if grep -q "model name" /proc/cpuinfo; then
+        CPU_MODEL=$(grep "model name" /proc/cpuinfo | head -n1 | cut -d':' -f2 | xargs)
+        log_info "Detected CPU: $CPU_MODEL"
+        if echo "$CPU_MODEL" | grep -qi -E "N3150|Atom|Celeron"; then
+            log_info "CPU matches expected Silvermont/Airmont architecture."
+        else
+            log_warn "CPU does not strictly match Silvermont/Airmont targets. The binary may still work but performance is not guaranteed."
+        fi
     fi
+elif [ "$ARCH" = "aarch64" ]; then
+    log_info "Detected ARM64 architecture. Preparing for Ubuntu Neoverse-N1 build."
 fi
 
 # 2. Download the latest binary from GitHub Releases
@@ -66,8 +68,12 @@ log_info "Fetching latest release from GitHub..."
 REPO="borisgk/sratim"
 API_URL="https://api.github.com/repos/${REPO}/releases/latest"
 
-# Get the download URL for the archlinux-x86_64-silvermont binary
-DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-archlinux-x86_64-silvermont" | cut -d '"' -f 4)
+# Get the download URL based on architecture
+if [ "$ARCH" = "x86_64" ]; then
+  DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-archlinux-x86_64-silvermont" | cut -d '"' -f 4)
+elif [ "$ARCH" = "aarch64" ]; then
+  DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-ubuntu-aarch64-neoverse_n1" | cut -d '"' -f 4)
+fi
 
 if [ -z "$DOWNLOAD_URL" ]; then
   log_err "Could not find the compiled binary in the latest release. Are you sure a release was published?"
