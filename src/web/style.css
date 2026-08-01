@@ -1,3 +1,20 @@
+/* ==========================================================================
+   SRATIM STYLESHEET
+
+   TABLE OF CONTENTS
+   1.  GLOBAL FONTS & BASE
+   2.  CONTAINER & LAYOUT
+   3.  NAV BUTTONS & HEADER
+   4.  ADMIN DASHBOARD
+   5.  CARDS GRID & STYLING
+   6.  EMPTY STATES & SEARCH
+   7.  FORMS & MODALS
+   8.  MEDIA PLAYBACK & DETAILS
+   ========================================================================== */
+
+/* ==========================================================================
+   1. GLOBAL FONTS & BASE
+   ========================================================================== */
 @font-face {
   font-family: 'Inter';
   font-style: normal;
@@ -13,6 +30,14 @@
   font-display: swap;
   src: url('/fonts/outfit.woff2') format('woff2');
 }
+
+@font-face {
+  font-family: 'Heebo';
+  font-style: normal;
+  font-weight: 300 800;
+  font-display: swap;
+  src: url('/fonts/heebo-hebrew.woff2') format('woff2');
+}
 * {
     box-sizing: border-box;
     margin: 0;
@@ -22,8 +47,11 @@
 body {
     background-color: #030308;
     background-image:
-        radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.06) 0%, transparent 50%),
-        radial-gradient(circle at 90% 80%, rgba(168, 85, 247, 0.06) 0%, transparent 50%);
+        linear-gradient(to bottom, rgba(3, 3, 8, 0.75) 0%, rgba(3, 3, 8, 0.95) 100%),
+        url('/assets/main_bg.png');
+    background-size: cover;
+    background-position: center top;
+    background-attachment: fixed;
     color: #f3f4f6;
     font-family: 'Inter', sans-serif;
     min-height: 100vh;
@@ -33,7 +61,9 @@ body {
     align-items: center;
 }
 
-/* Container & Layout */
+/* ==========================================================================
+   2. CONTAINER & LAYOUT
+   ========================================================================== */
 .show-backdrop {
     position: absolute;
     top: 0;
@@ -76,7 +106,9 @@ p.subtitle {
     font-weight: 300;
 }
 
-/* Nav Buttons */
+/* ==========================================================================
+   3. NAV BUTTONS & HEADER
+   ========================================================================== */
 .back-btn {
     position: absolute;
     top: 0;
@@ -169,14 +201,16 @@ p.subtitle {
     box-shadow: 0 0 15px rgba(239, 68, 68, 0.1);
 }
 
-/* Admin Dashboard Stats */
+/* ==========================================================================
+   4. ADMIN DASHBOARD
+   ========================================================================== */
 .admin-stats-section {
     margin-top: 10px;
     width: 100%;
 }
 
 .section-heading {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Outfit', 'Heebo', sans-serif;
     font-size: 1.5rem;
     font-weight: 600;
     color: #e5e7eb;
@@ -331,7 +365,7 @@ p.subtitle {
 }
 
 .card-title {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Outfit', 'Heebo', sans-serif;
     font-size: 1.25rem;
     font-weight: 600;
     color: #f3f4f6;
@@ -499,7 +533,7 @@ p.subtitle {
 }
 
 .stat-value {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Outfit', 'Heebo', sans-serif;
     font-size: 1.8rem;
     font-weight: 700;
     color: #ffffff;
@@ -563,7 +597,9 @@ p.subtitle {
     animation: spin 1s linear infinite;
 }
 
-/* Cards Grid */
+/* ==========================================================================
+   5. CARDS GRID & STYLING
+   ========================================================================== */
 .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -584,9 +620,14 @@ p.subtitle {
     flex-direction: column;
     justify-content: space-between;
     min-height: 200px;
+    background-size: cover;
+    background-position: center;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    backdrop-filter: blur(8px);
     position: relative;
+    overflow: hidden;
+    /* Force exact subpixel clipping to prevent image bleeding */
+    background-clip: padding-box;
+    -webkit-mask-image: -webkit-radial-gradient(white, black);
 }
 
 .movie-card {
@@ -690,7 +731,7 @@ p.subtitle {
 }
 
 .library-title {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Outfit', 'Heebo', sans-serif;
     font-size: 1.35rem;
     font-weight: 600;
     color: #ffffff;
@@ -709,7 +750,7 @@ p.subtitle {
 }
 
 .movie-title {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Outfit', 'Heebo', sans-serif;
     font-size: 1.25rem;
     font-weight: 600;
     line-height: 1.4;
@@ -783,7 +824,9 @@ p.subtitle {
     border: 1px solid rgba(255, 255, 255, 0.04);
 }
 
-/* Empty State / No Results */
+/* ==========================================================================
+   6. EMPTY STATES & SEARCH
+   ========================================================================== */
 .empty-state {
     grid-column: 1 / -1;
     text-align: center;
@@ -795,7 +838,7 @@ p.subtitle {
 }
 
 .empty-state h3 {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Outfit', 'Heebo', sans-serif;
     font-size: 1.5rem;
     color: #ffffff;
     margin-bottom: 12px;
@@ -857,7 +900,9 @@ p.subtitle {
     height: 20px;
 }
 
-/* Form Styles (Generic & Modal) */
+/* ==========================================================================
+   7. FORMS & MODALS
+   ========================================================================== */
 .form-group {
     margin-bottom: 24px;
     text-align: left;
@@ -994,7 +1039,7 @@ p.subtitle {
 }
 
 .modal-title {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Outfit', 'Heebo', sans-serif;
     font-size: 1.75rem;
     font-weight: 700;
     background: linear-gradient(135deg, #c084fc 0%, #38bdf8 100%);
@@ -1052,7 +1097,7 @@ p.subtitle {
 }
 
 .brand h1 {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Outfit', 'Heebo', sans-serif;
     font-size: 2.5rem;
     font-weight: 800;
     background: linear-gradient(135deg, #c084fc 0%, #6366f1 50%, #38bdf8 100%);
@@ -1112,7 +1157,9 @@ p.subtitle {
     background: rgba(167, 139, 250, 0.08);
 }
 
-/* Card Playback Progress Bar */
+/* ==========================================================================
+   8. MEDIA PLAYBACK & DETAILS
+   ========================================================================== */
 .card-progress {
     position: absolute;
     bottom: 0;

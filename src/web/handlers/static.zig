@@ -4,6 +4,11 @@ pub const global_css: []const u8 = @embedFile("../style.css");
 pub const favicon_ico = @embedFile("../favicon.ico");
 pub const font_inter = @embedFile("../fonts/inter.woff2");
 pub const font_outfit = @embedFile("../fonts/outfit.woff2");
+pub const font_heebo_hebrew = @embedFile("../fonts/heebo-hebrew.woff2");
+pub const bg_movies = @embedFile("../assets/movies.png");
+pub const bg_shows = @embedFile("../assets/shows.png");
+pub const bg_other = @embedFile("../assets/other.png");
+pub const bg_main = @embedFile("../assets/main_bg.png");
 
 /// Checks if the request target matches a known static asset route.
 /// If matched, serves the static asset and returns `true`. Otherwise returns `false`.
@@ -51,6 +56,62 @@ pub fn serveStaticAsset(request: *std.http.Server.Request, allocator: std.mem.Al
             .status = .ok,
             .extra_headers = &.{
                 .{ .name = "content-type", .value = "font/woff2" },
+                .{ .name = "Cache-Control", .value = "public, max-age=31536000, immutable" },
+            },
+        });
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, target, "/fonts/heebo-hebrew.woff2")) {
+        try request.respond(font_heebo_hebrew, .{
+            .status = .ok,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "font/woff2" },
+                .{ .name = "Cache-Control", .value = "public, max-age=31536000, immutable" },
+            },
+        });
+        return true;
+    }
+
+    // Route: Static Assets
+    if (std.mem.startsWith(u8, target, "/assets/movies.png")) {
+        try request.respond(bg_movies, .{
+            .status = .ok,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "image/png" },
+                .{ .name = "Cache-Control", .value = "public, max-age=31536000, immutable" },
+            },
+        });
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, target, "/assets/shows.png")) {
+        try request.respond(bg_shows, .{
+            .status = .ok,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "image/png" },
+                .{ .name = "Cache-Control", .value = "public, max-age=31536000, immutable" },
+            },
+        });
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, target, "/assets/other.png")) {
+        try request.respond(bg_other, .{
+            .status = .ok,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "image/png" },
+                .{ .name = "Cache-Control", .value = "public, max-age=31536000, immutable" },
+            },
+        });
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, target, "/assets/main_bg.png")) {
+        try request.respond(bg_main, .{
+            .status = .ok,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "image/png" },
                 .{ .name = "Cache-Control", .value = "public, max-age=31536000, immutable" },
             },
         });

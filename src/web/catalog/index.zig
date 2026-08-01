@@ -32,43 +32,21 @@ pub fn generateHtml(allocator: std.mem.Allocator, database: *db_mod.Database, is
         );
     } else {
         for (libraries) |lib| {
-            const icon_svg = switch (lib.lib_type) {
-                .Movies => 
-                    \\<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
-                    \\    <circle cx="12" cy="12" r="10"></circle>
-                    \\    <circle cx="12" cy="12" r="2"></circle>
-                    \\    <circle cx="12" cy="7" r="1.5"></circle>
-                    \\    <circle cx="12" cy="17" r="1.5"></circle>
-                    \\    <circle cx="7" cy="12" r="1.5"></circle>
-                    \\    <circle cx="17" cy="12" r="1.5"></circle>
-                    \\</svg>
-                ,
-                .Shows => 
-                    \\<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
-                    \\    <rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect>
-                    \\    <polyline points="17 2 12 7 7 2"></polyline>
-                    \\</svg>
-                ,
-                .Other => 
-                    \\<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
-                    \\    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-                    \\</svg>
-                ,
+            const bg_image = switch (lib.lib_type) {
+                .Movies => "/assets/movies.png",
+                .Shows => "/assets/shows.png",
+                .Other => "/assets/other.png",
             };
 
-            const card_start = try std.fmt.allocPrint(allocator, "            <a href=\"/library?id={d}\" class=\"library-card\">\n", .{lib.id});
+            const card_start = try std.fmt.allocPrint(allocator, "            <a href=\"/library?id={d}\" class=\"library-card\" style=\"background-image: linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.4) 50%, rgba(0,0,0,0.1) 100%), url('{s}');\">\n", .{lib.id, bg_image});
             defer allocator.free(card_start);
             try cards_buf.appendSlice(allocator, card_start);
 
-            try cards_buf.appendSlice(allocator, "                <div class=\"card-top\">\n                    <div class=\"icon-wrapper\">\n                        ");
-            try cards_buf.appendSlice(allocator, icon_svg);
-            try cards_buf.appendSlice(allocator, "\n                    </div>\n                    <div class=\"card-info\">\n                        <h3 class=\"library-title\">");
+            try cards_buf.appendSlice(allocator, "                <div class=\"card-top\">\n                    <div class=\"card-info\">\n                        <h3 class=\"library-title\">");
             try utils.escapeHtml(&cards_buf, allocator, lib.name);
-            try cards_buf.appendSlice(allocator, "</h3>\n                        <span class=\"library-path\">");
-            try utils.escapeHtml(&cards_buf, allocator, lib.path);
-            try cards_buf.appendSlice(allocator, "</span>\n                    </div>\n                </div>\n                <div class=\"card-bottom\">\n                    <span class=\"type-badge\">");
+            try cards_buf.appendSlice(allocator, "</h3>\n                    </div>\n                </div>\n                <div class=\"card-bottom\">\n                    <span class=\"type-badge\">");
             try cards_buf.appendSlice(allocator, lib.lib_type.toString());
-            try cards_buf.appendSlice(allocator, "</span>\n                    <span class=\"browse-pill\">Browse</span>\n                </div>\n            </a>\n");
+            try cards_buf.appendSlice(allocator, "</span>\n                </div>\n            </a>\n");
         }
     }
 
