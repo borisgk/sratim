@@ -64,8 +64,8 @@ pub const AudioTranscoder = struct {
                 null,
             ) < 0) return error.SwrInitError;
         } else {
-            const encode_cl = if (self.encode_ctx.*.channel_layout == 0) c.av_get_default_channel_layout(self.encode_ctx.*.channels) else self.encode_ctx.*.channel_layout;
-            const decode_cl = if (self.decode_ctx.*.channel_layout == 0) c.av_get_default_channel_layout(self.decode_ctx.*.channels) else self.decode_ctx.*.channel_layout;
+            const encode_cl = if (self.encode_ctx.*.channel_layout == 0) c.av_get_default_channel_layout(self.encode_ctx.*.channels) else @as(i64, @intCast(self.encode_ctx.*.channel_layout));
+            const decode_cl = if (self.decode_ctx.*.channel_layout == 0) c.av_get_default_channel_layout(self.decode_ctx.*.channels) else @as(i64, @intCast(self.decode_ctx.*.channel_layout));
             self.swr_ctx = c.swr_alloc_set_opts(
                 null,
                 encode_cl,
