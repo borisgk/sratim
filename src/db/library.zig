@@ -74,7 +74,7 @@ pub fn getLibraries(database: *db_mod.Database, allocator: std.mem.Allocator) ![
         list.deinit(allocator);
     }
 
-    var stmt = try database.prepare("SELECT id, name, path, type, is_enabled, depth_limit, scan_interval, metadata_language, ignore_patterns, include_in_dashboard, created_at, updated_at, last_scanned_at FROM libraries ORDER BY name ASC;");
+    var stmt = try database.prepare("SELECT id, name, path, type, is_enabled, depth_limit, scan_interval, metadata_language, ignore_patterns, include_in_dashboard, created_at, updated_at, last_scanned_at FROM libraries ORDER BY CASE type WHEN 'Movies' THEN 1 WHEN 'Shows' THEN 2 ELSE 3 END ASC, name ASC;");
     defer stmt.finalize();
 
     while ((try stmt.step()) == .row) {
