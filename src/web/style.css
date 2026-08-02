@@ -46,12 +46,6 @@
 
 body {
     background-color: #030308;
-    background-image:
-        linear-gradient(to bottom, rgba(3, 3, 8, 0.75) 0%, rgba(3, 3, 8, 0.95) 100%),
-        url('/assets/main_bg.png');
-    background-size: cover;
-    background-position: center bottom;
-    background-attachment: fixed;
     color: #f3f4f6;
     font-family: 'Inter', sans-serif;
     min-height: 100vh;

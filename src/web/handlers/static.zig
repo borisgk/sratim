@@ -8,7 +8,6 @@ pub const font_heebo_hebrew = @embedFile("../fonts/heebo-hebrew.woff2");
 pub const bg_movies = @embedFile("../assets/movies.png");
 pub const bg_shows = @embedFile("../assets/shows.png");
 pub const bg_other = @embedFile("../assets/other.png");
-pub const bg_main = @embedFile("../assets/main_bg.png");
 
 /// Checks if the request target matches a known static asset route.
 /// If matched, serves the static asset and returns `true`. Otherwise returns `false`.
@@ -98,17 +97,6 @@ pub fn serveStaticAsset(request: *std.http.Server.Request, allocator: std.mem.Al
 
     if (std.mem.startsWith(u8, target, "/assets/other.png")) {
         try request.respond(bg_other, .{
-            .status = .ok,
-            .extra_headers = &.{
-                .{ .name = "content-type", .value = "image/png" },
-                .{ .name = "Cache-Control", .value = "public, max-age=31536000, immutable" },
-            },
-        });
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, target, "/assets/main_bg.png")) {
-        try request.respond(bg_main, .{
             .status = .ok,
             .extra_headers = &.{
                 .{ .name = "content-type", .value = "image/png" },
