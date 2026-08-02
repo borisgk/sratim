@@ -82,7 +82,7 @@ jobs:
         run: ${{ matrix.setup_cmd }}
 
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v2.2.1
@@ -90,7 +90,7 @@ jobs:
           version: 0.16.0
 
       - name: Cache Zig Build Artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             .zig-cache
@@ -115,7 +115,7 @@ jobs:
         run: mv zig-out/bin/sratim zig-out/bin/${{ matrix.binary_name }}
 
       - name: Upload Binary Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: zig-out/bin/${{ matrix.binary_name }}
@@ -128,7 +128,7 @@ jobs:
     
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0 
 
@@ -140,7 +140,7 @@ jobs:
           default_bump: patch 
 
       - name: Download All Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: ./artifacts
           merge-multiple: true
@@ -167,7 +167,7 @@ jobs:
     
     steps:
       - name: Trigger Remote Installation
-        uses: appleboy/ssh-action@master
+        uses: appleboy/ssh-action@v1
         with:
           host: padre.rus9n.com
           username: ${{ secrets.PROD_USERNAME }}
@@ -185,7 +185,7 @@ jobs:
     
     steps:
       - name: Trigger Remote Installation
-        uses: appleboy/ssh-action@master
+        uses: appleboy/ssh-action@v1
         with:
           host: meet.rus9n.com
           username: ${{ secrets.DEMO_USERNAME }}
