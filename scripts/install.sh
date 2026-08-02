@@ -81,6 +81,16 @@ if [ "$ARCH" = "x86_64" ]; then
         DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-debian12-x86_64-baseline" | cut -d '"' -f 4)
         ;;
     esac
+  elif [ "$OS" = "ubuntu" ]; then
+    case "$OS_VERSION" in
+      "22.04") DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-ubuntu22.04-x86_64-baseline" | cut -d '"' -f 4) ;;
+      "24.04") DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-ubuntu24.04-x86_64-baseline" | cut -d '"' -f 4) ;;
+      "26.04") DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-ubuntu26.04-x86_64-baseline" | cut -d '"' -f 4) ;;
+      *)
+        log_warn "Ubuntu version $OS_VERSION not explicitly supported. Falling back to Ubuntu 24.04 binary."
+        DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-ubuntu24.04-x86_64-baseline" | cut -d '"' -f 4)
+        ;;
+    esac
   else
     # Fallback to Arch Linux Silvermont for padre server or unknown x86_64
     DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-archlinux-x86_64-silvermont" | cut -d '"' -f 4)

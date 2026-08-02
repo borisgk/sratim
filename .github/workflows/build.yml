@@ -48,6 +48,27 @@ jobs:
             zig_cpu: baseline
             artifact_name: sratim-debian13-x86_64
             binary_name: sratim-debian13-x86_64-baseline
+          - name: Ubuntu 22.04 LTS x86_64
+            os: ubuntu-latest
+            container: ubuntu:22.04
+            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git libsqlite3-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev curl xz-utils pkg-config
+            zig_cpu: baseline
+            artifact_name: sratim-ubuntu22.04-x86_64
+            binary_name: sratim-ubuntu22.04-x86_64-baseline
+          - name: Ubuntu 24.04 LTS x86_64
+            os: ubuntu-latest
+            container: ubuntu:24.04
+            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git libsqlite3-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev curl xz-utils pkg-config
+            zig_cpu: baseline
+            artifact_name: sratim-ubuntu24.04-x86_64
+            binary_name: sratim-ubuntu24.04-x86_64-baseline
+          - name: Ubuntu 26.04 LTS x86_64
+            os: ubuntu-latest
+            container: ubuntu:rolling
+            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git libsqlite3-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev curl xz-utils pkg-config
+            zig_cpu: baseline
+            artifact_name: sratim-ubuntu26.04-x86_64
+            binary_name: sratim-ubuntu26.04-x86_64-baseline
           - name: Ubuntu ARM64 (Ampere)
             os: ubuntu-24.04-arm
             container: ubuntu:24.04
