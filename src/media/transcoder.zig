@@ -42,7 +42,22 @@ pub const AudioTranscoder = struct {
             self.encode_ctx.*.channels = 2;
         }
         self.encode_ctx.*.sample_rate = 48000;
-        self.encode_ctx.*.sample_fmt = enc.*.sample_fmts[0];
+        if (@hasDecl(c, "avcodec_get_supported_config") and @hasDecl(c, "AV_CODEC_CONFIG_SAMPLE_FORMAT")) {
+            var sample_fmts: [*c]const c.AVSampleFormat = null;
+            if (c.avcodec_get_supported_config(self.encode_ctx, enc, c.AV_CODEC_CONFIG_SAMPLE_FORMAT, 0, @ptrCast(&sample_fmts), null) >= 0 and sample_fmts != null) {
+                self.encode_ctx.*.sample_fmt = sample_fmts[0];
+            } else {
+                self.encode_ctx.*.sample_fmt = c.AV_SAMPLE_FMT_FLTP;
+            }
+        } else if (@hasField(c.AVCodec, "sample_fmts")) {
+            if (enc.*.sample_fmts != null) {
+                self.encode_ctx.*.sample_fmt = enc.*.sample_fmts[0];
+            } else {
+                self.encode_ctx.*.sample_fmt = c.AV_SAMPLE_FMT_FLTP;
+            }
+        } else {
+            self.encode_ctx.*.sample_fmt = c.AV_SAMPLE_FMT_FLTP;
+        }
         self.encode_ctx.*.bit_rate = 192000;
         self.encode_ctx.*.time_base = c.AVRational{ .num = 1, .den = self.encode_ctx.*.sample_rate };
 
