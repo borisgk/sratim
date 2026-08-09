@@ -308,7 +308,7 @@ pub fn handleGetMovie(
     };
 
     var stmt = try database.prepare(
-        \\SELECT id, library_id, file_path, clean_name, title, overview, poster_path, backdrop_path, release_date, tmdb_id, file_size, runtime
+        \\SELECT id, library_id, file_path, clean_name, title, overview, poster_path, backdrop_path, release_date, tmdb_id, file_size
         \\FROM movies
         \\WHERE id = ?1 AND is_present = 1;
     );
@@ -327,10 +327,9 @@ pub fn handleGetMovie(
         const release_date = stmt.columnText(8) orelse "";
         const tmdb_id = stmt.columnText(9) orelse "";
         const db_file_size = stmt.columnInt64(10);
-        const db_runtime = stmt.columnInt(11);
 
         var file_size: u64 = @intCast(@max(0, db_file_size));
-        var runtime: u32 = @intCast(@max(0, db_runtime));
+        var runtime: u32 = 0;
 
         if (common.resolveMediaPath(database, allocator, .{ .library_id = library_id, .file_path = file_path }) catch null) |resolved| {
             defer allocator.free(resolved.resolved_path);
@@ -458,7 +457,7 @@ pub fn handleGetShow(
     }
 
     var ep_stmt = try database.prepare(
-        \\SELECT id, file_path, season, episode, title, overview, still_path, file_size, runtime
+        \\SELECT id, file_path, season, episode, title, overview, still_path, file_size
         \\FROM episodes 
         \\WHERE show_id = ?1 AND is_present = 1
         \\ORDER BY season ASC, episode ASC;
@@ -490,10 +489,9 @@ pub fn handleGetShow(
         const ep_overview_opt = ep_stmt.columnText(5);
         const ep_still_path_opt = ep_stmt.columnText(6);
         const ep_db_file_size = ep_stmt.columnInt64(7);
-        const ep_db_runtime = ep_stmt.columnInt(8);
 
         var ep_file_size: u64 = @intCast(@max(0, ep_db_file_size));
-        var ep_runtime: u32 = @intCast(@max(0, ep_db_runtime));
+        var ep_runtime: u32 = 0;
 
         if (common.resolveMediaPath(database, allocator, .{ .library_id = library_id, .file_path = file_path }) catch null) |resolved| {
             defer allocator.free(resolved.resolved_path);
