@@ -141,13 +141,13 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
         
         // Route: API v1 Movie Details (Protected)
         if (std.mem.startsWith(u8, target, "/api/v1/movie?")) {
-            api_v1_router.handleGetMovie(&request, allocator, database) catch return;
+            api_v1_router.handleGetMovie(&request, allocator, database, io) catch return;
             continue;
         }
 
         // Route: API v1 Show Details (Protected)
         if (std.mem.startsWith(u8, target, "/api/v1/show?")) {
-            api_v1_router.handleGetShow(&request, allocator, database) catch return;
+            api_v1_router.handleGetShow(&request, allocator, database, io) catch return;
             continue;
         }
 

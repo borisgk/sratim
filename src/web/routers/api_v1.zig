@@ -4,6 +4,9 @@ const users_mod = @import("../../db/users.zig");
 const logging_mod = @import("../../db/logging.zig");
 const session_mod = @import("../../db/session.zig");
 const library_mod = @import("../../db/library.zig");
+const metadata_mod = @import("../../db/metadata.zig");
+const common = @import("../handlers/player/common.zig");
+const streamer = @import("../../media/streamer.zig");
 const utils = @import("../utils.zig");
 
 const LoginPayload = struct {
@@ -292,6 +295,7 @@ pub fn handleGetMovie(
     request: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     database: *db_mod.Database,
+    io: std.Io,
 ) !void {
     if (request.head.method != .GET) {
         try request.respond("{\"success\":false,\"error\":\"Method not allowed\"}", .{ .status = .method_not_allowed });
@@ -322,8 +326,33 @@ pub fn handleGetMovie(
         const backdrop_path = stmt.columnText(7) orelse "";
         const release_date = stmt.columnText(8) orelse "";
         const tmdb_id = stmt.columnText(9) orelse "";
-        const file_size = stmt.columnInt64(10);
-        const runtime = stmt.columnInt(11);
+        const db_file_size = stmt.columnInt64(10);
+        const db_runtime = stmt.columnInt(11);
+
+        var file_size: u64 = @intCast(@max(0, db_file_size));
+        var runtime: u32 = @intCast(@max(0, db_runtime));
+
+        if (common.resolveMediaPath(database, allocator, .{ .library_id = library_id, .file_path = file_path }) catch null) |resolved| {
+            defer allocator.free(resolved.resolved_path);
+
+            if (std.Io.Dir.cwd().openFile(io, resolved.resolved_path, .{ .mode = .read_only }) catch null) |file| {
+                defer file.close(io);
+                if (file.stat(io) catch null) |st| {
+                    file_size = st.size;
+                }
+            }
+
+            const c_path = allocator.dupeZ(u8, resolved.resolved_path) catch null;
+            if (c_path) |cp| {
+                defer allocator.free(cp);
+                if (streamer.getMediaInfo(allocator, io, cp) catch null) |media_info| {
+                    defer media_info.deinit(allocator);
+                    if (media_info.duration > 0) {
+                        runtime = @as(u32, @intFromFloat(media_info.duration / 60.0));
+                    }
+                }
+            }
+        }
 
         const display_title = if (title_opt) |t| t else clean_name;
 
@@ -374,6 +403,7 @@ pub fn handleGetShow(
     request: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     database: *db_mod.Database,
+    io: std.Io,
 ) !void {
     if (request.head.method != .GET) {
         try request.respond("{\"success\":false,\"error\":\"Method not allowed\"}", .{ .status = .method_not_allowed });
@@ -459,8 +489,33 @@ pub fn handleGetShow(
         const ep_title_opt = ep_stmt.columnText(4);
         const ep_overview_opt = ep_stmt.columnText(5);
         const ep_still_path_opt = ep_stmt.columnText(6);
-        const ep_file_size = ep_stmt.columnInt64(7);
-        const ep_runtime = ep_stmt.columnInt(8);
+        const ep_db_file_size = ep_stmt.columnInt64(7);
+        const ep_db_runtime = ep_stmt.columnInt(8);
+
+        var ep_file_size: u64 = @intCast(@max(0, ep_db_file_size));
+        var ep_runtime: u32 = @intCast(@max(0, ep_db_runtime));
+
+        if (common.resolveMediaPath(database, allocator, .{ .library_id = library_id, .file_path = file_path }) catch null) |resolved| {
+            defer allocator.free(resolved.resolved_path);
+
+            if (std.Io.Dir.cwd().openFile(io, resolved.resolved_path, .{ .mode = .read_only }) catch null) |file| {
+                defer file.close(io);
+                if (file.stat(io) catch null) |st| {
+                    ep_file_size = st.size;
+                }
+            }
+
+            const c_path = allocator.dupeZ(u8, resolved.resolved_path) catch null;
+            if (c_path) |cp| {
+                defer allocator.free(cp);
+                if (streamer.getMediaInfo(allocator, io, cp) catch null) |media_info| {
+                    defer media_info.deinit(allocator);
+                    if (media_info.duration > 0) {
+                        ep_runtime = @as(u32, @intFromFloat(media_info.duration / 60.0));
+                    }
+                }
+            }
+        }
 
         const basename = std.fs.path.basename(file_path);
         const display_title = if (ep_title_opt) |t| t else basename;
