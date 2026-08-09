@@ -304,7 +304,7 @@ pub fn handleGetMovie(
     };
 
     var stmt = try database.prepare(
-        \\SELECT id, library_id, file_path, clean_name, title, overview, poster_path, backdrop_path, release_date, tmdb_id, file_size
+        \\SELECT id, library_id, file_path, clean_name, title, overview, poster_path, backdrop_path, release_date, tmdb_id, file_size, runtime
         \\FROM movies
         \\WHERE id = ?1 AND is_present = 1;
     );
@@ -323,7 +323,8 @@ pub fn handleGetMovie(
         const release_date = stmt.columnText(8) orelse "";
         const tmdb_id = stmt.columnText(9) orelse "";
         const file_size = stmt.columnInt64(10);
-        
+        const runtime = stmt.columnInt(11);
+
         const display_title = if (title_opt) |t| t else clean_name;
 
         var escaped_title = std.ArrayList(u8).empty;
@@ -353,8 +354,8 @@ pub fn handleGetMovie(
         }
 
         const json = try std.fmt.allocPrint(allocator, 
-            "{{\"success\":true,\"movie\":{{\"id\":{d},\"library_id\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"release_date\":\"{s}\",\"tmdb_id\":\"{s}\",\"file_size\":{d},\"file_path\":\"{s}\"}}}}",
-            .{ id, library_id, escaped_title.items, escaped_overview.items, poster_path, backdrop_path, release_date, tmdb_id, file_size, file_path }
+            "{{\"success\":true,\"movie\":{{\"id\":{d},\"library_id\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"release_date\":\"{s}\",\"tmdb_id\":\"{s}\",\"file_size\":{d},\"file_path\":\"{s}\",\"runtime\":{d}}}}}",
+            .{ id, library_id, escaped_title.items, escaped_overview.items, poster_path, backdrop_path, release_date, tmdb_id, file_size, file_path, runtime }
         );
         defer allocator.free(json);
 
@@ -427,7 +428,7 @@ pub fn handleGetShow(
     }
 
     var ep_stmt = try database.prepare(
-        \\SELECT id, file_path, season, episode, title, overview, still_path
+        \\SELECT id, file_path, season, episode, title, overview, still_path, file_size, runtime
         \\FROM episodes 
         \\WHERE show_id = ?1 AND is_present = 1
         \\ORDER BY season ASC, episode ASC;
@@ -458,6 +459,8 @@ pub fn handleGetShow(
         const ep_title_opt = ep_stmt.columnText(4);
         const ep_overview_opt = ep_stmt.columnText(5);
         const ep_still_path_opt = ep_stmt.columnText(6);
+        const ep_file_size = ep_stmt.columnInt64(7);
+        const ep_runtime = ep_stmt.columnInt(8);
 
         const basename = std.fs.path.basename(file_path);
         const display_title = if (ep_title_opt) |t| t else basename;
@@ -491,8 +494,8 @@ pub fn handleGetShow(
         }
 
         const ep_json = try std.fmt.allocPrint(allocator,
-            "{{\"id\":{d},\"season\":{d},\"episode\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"still_path\":\"{s}\"}}",
-            .{ ep_id, season, episode, esc_ep_title.items, esc_ep_overview.items, still_path }
+            "{{\"id\":{d},\"season\":{d},\"episode\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"still_path\":\"{s}\",\"file_size\":{d},\"runtime\":{d}}}",
+            .{ ep_id, season, episode, esc_ep_title.items, esc_ep_overview.items, still_path, ep_file_size, ep_runtime }
         );
         defer allocator.free(ep_json);
         try json.appendSlice(allocator, ep_json);
