@@ -68,6 +68,12 @@ pub fn main() !void {
     const addr = try std.Io.net.IpAddress.parseIp4("0.0.0.0", config.port);
     var srv = try std.Io.net.IpAddress.listen(&addr, io, .{ .reuse_address = true });
     
+    std.debug.print("Media Engine: subtitles={s}, metadata={s}, streamer={s}, audio={s}\n", .{
+        @tagName(config.media_engine.subtitles),
+        @tagName(config.media_engine.metadata),
+        @tagName(config.media_engine.streamer),
+        @tagName(config.media_engine.audio_transcoder),
+    });
     std.debug.print("Listening on http://0.0.0.0:{d}\n", .{config.port});
     
     // Main server loop: accept connections forever

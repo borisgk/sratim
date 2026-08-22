@@ -424,6 +424,13 @@ pub fn getMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]con
         }
     }
 
+    std.debug.print("[Native Metadata] Extracted metadata for {s} (duration: {d:.1}s, audio: {}, subs: {})\n", .{
+        file_path,
+        duration_sec,
+        audio_tracks.items.len,
+        subtitle_tracks.items.len,
+    });
+
     return MediaInfo{
         .duration = duration_sec,
         .codec_str = codec_str,

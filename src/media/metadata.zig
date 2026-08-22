@@ -7,8 +7,10 @@ const config_mod = @import("../config.zig");
 pub fn getKeyframePts(io: std.Io, file_path: []const u8, start_time: f64, audio_idx_requested: c_int, mode: config_mod.EngineMode) f64 {
     if (mode == .native) {
         if (native_metadata.getKeyframePts(io, file_path, start_time)) |pts| {
+            std.debug.print("[Native Metadata] Resolved keyframe PTS for {s} @ {d:.2}s -> {d:.3}s\n", .{ file_path, start_time, pts });
             return pts;
-        } else |_| {
+        } else |err| {
+            std.debug.print("[Native Metadata] Failed ({}), falling back to FFmpeg...\n", .{err});
             return getKeyframePtsFfmpeg(file_path, start_time, audio_idx_requested);
         }
     }
