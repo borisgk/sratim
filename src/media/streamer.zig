@@ -32,10 +32,7 @@ pub fn write_packet(ptr: ?*anyopaque, buf: [*c]const u8, buf_size: c_int) callco
 /// Opens an input media file (e.g., MKV), reads streams, dynamically transcodes incompatible audio to AAC,
 /// remuxes video natively (e.g., H.264), and pipes the fragmented MP4 output over HTTP.
 pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: c_int, http_ctx: *HttpStreamContext) !void {
-    var in_fmt_ctx: ?*c.AVFormatContext = c.avformat_alloc_context();
-    if (in_fmt_ctx != null) {
-        in_fmt_ctx.?.flags |= c.AVFMT_FLAG_GENPTS;
-    }
+    var in_fmt_ctx: ?*c.AVFormatContext = null;
     const c_file_path = try std.heap.c_allocator.dupeZ(u8, file_path);
     defer std.heap.c_allocator.free(c_file_path);
 
@@ -88,7 +85,7 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
             const out_stream = c.avformat_new_stream(out_ctx, null);
             if (c.avcodec_parameters_copy(out_stream.*.codecpar, stream.*.codecpar) < 0) return error.CodecCopyFailed;
             if (out_stream.*.codecpar.*.codec_id == c.AV_CODEC_ID_HEVC) {
-                out_stream.*.codecpar.*.codec_tag = c.MKTAG('h', 'e', 'v', '1');
+                out_stream.*.codecpar.*.codec_tag = c.MKTAG('h', 'v', 'c', '1');
 
                 // Fix incorrect HEVC level metadata (e.g. hevc_videotoolbox writes wrong levels).
                 // Compute minimum valid level from actual resolution and override if too low.
@@ -167,7 +164,7 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
     // movflags: fragmented mp4 configuration
     var dict: ?*c.AVDictionary = null;
     _ = c.av_dict_set(&dict, "movflags", "frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets", 0);
-    _ = c.av_dict_set(&dict, "avoid_negative_ts", "make_non_negative", 0);
+    _ = c.av_dict_set(&dict, "avoid_negative_ts", "disabled", 0);
     defer c.av_dict_free(@ptrCast(&dict));
 
     // Fast-seek to requested timestamp
@@ -226,7 +223,7 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
             last_video_dts = packet.*.dts;
 
             packet.*.pos = -1;
-            if (c.av_interleaved_write_frame(out_ctx, packet) < 0) break;
+            if (c.av_write_frame(out_ctx, packet) < 0) break;
         } else if (packet.*.stream_index == audio_in_idx) {
             if (audio_tr) |tr| {
                 tr.transcodePacket(packet, out_ctx, audio_out_idx) catch {
@@ -236,7 +233,7 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
                 packet.*.stream_index = audio_out_idx;
                 c.av_packet_rescale_ts(packet, in_ctx.*.streams[@intCast(audio_in_idx)].*.time_base, out_ctx.*.streams[@intCast(audio_out_idx)].*.time_base);
                 packet.*.pos = -1;
-                if (c.av_interleaved_write_frame(out_ctx, packet) < 0) break;
+                if (c.av_write_frame(out_ctx, packet) < 0) break;
             }
         }
     }
@@ -361,7 +358,7 @@ pub fn getMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]con
                 }
 
                 dynamic_codec_str = try std.fmt.allocPrint(allocator,
-                    "video/mp4; codecs=\"hev1.{d}.{d}.L{d}.{X:0>2}, mp4a.40.2\"",
+                    "video/mp4; codecs=\"hvc1.{d}.{d}.L{d}.{X:0>2}, mp4a.40.2\"",
                     .{ profile_idc, compat, level_idc, constraint_hex });
                 codec_str = dynamic_codec_str.?;
             } else if (codec_id == c.AV_CODEC_ID_AV1) {

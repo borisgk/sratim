@@ -204,7 +204,7 @@ pub const AudioTranscoder = struct {
             while (c.avcodec_receive_packet(self.encode_ctx, out_pkt) >= 0) {
                 out_pkt.*.stream_index = stream_idx;
                 c.av_packet_rescale_ts(out_pkt, self.encode_ctx.*.time_base, out_fmt_ctx.*.streams[@intCast(stream_idx)].*.time_base);
-                if (c.av_interleaved_write_frame(out_fmt_ctx, out_pkt) < 0) return error.WriteError;
+                if (c.av_write_frame(out_fmt_ctx, out_pkt) < 0) return error.WriteError;
             }
         }
     }

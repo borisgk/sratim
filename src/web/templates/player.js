@@ -408,9 +408,9 @@
             const signal = abortController.signal;
 
             // Probe codec support before doing anything
-            const supported = MediaSource.isTypeSupported(codecStr);
-            if (!supported) {
-                console.error('Browser does not support codec via MSE:', codecStr);
+            let effectiveCodec = codecStr;
+            if (!MediaSource.isTypeSupported(effectiveCodec)) {
+                console.warn('Browser does not support primary codec via MSE:', codecStr);
                 const fallbacks = [
                     'video/mp4; codecs="hvc1.2.4.L120.B0, mp4a.40.2"',
                     'video/mp4; codecs="hvc1.2.4.L150.B0, mp4a.40.2"',
@@ -419,9 +419,12 @@
                     'video/mp4; codecs="hev1.2.4.L120.B0, mp4a.40.2"',
                 ];
                 for (const fb of fallbacks) {
-                    // console.log('  trying fallback:', fb, MediaSource.isTypeSupported(fb));
+                    if (MediaSource.isTypeSupported(fb)) {
+                        effectiveCodec = fb;
+                        console.log('Using compatible fallback codec:', fb);
+                        break;
+                    }
                 }
-                return;
             }
 
             // Revoke old Blob URL to prevent memory leak
@@ -440,7 +443,7 @@
                     }
                     return;
                 }
-                const sb = ms.addSourceBuffer(codecStr);
+                const sb = ms.addSourceBuffer(effectiveCodec);
                 currentSourceBuffer = sb;
                 fetchAndAppend(sb, startTime, signal);
                 video.play().catch(e => console.error("Play failed:", e));
