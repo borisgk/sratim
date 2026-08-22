@@ -634,3 +634,30 @@ test "mp4_muxer fragment construction" {
     try testing.expectEqualStrings("mdat", builder.buf.items[mdat_pos + 4 .. mdat_pos + 8]);
     try testing.expectEqual(@as(u32, payload.len + 8), mdat_size);
 }
+
+test "mp4_muxer dual-track Video + Audio moov construction" {
+    const testing = std.testing;
+    var builder = BoxBuilder.init(testing.allocator);
+    defer builder.deinit();
+
+    try writeFtyp(&builder);
+
+    const video_cfg = VideoTrackConfig{
+        .width = 1920,
+        .height = 1080,
+        .codec = .h264,
+        .codec_private = &[_]u8{ 0x01, 0x64, 0x00, 0x1f, 0xff, 0xe1, 0x00, 0x04, 0x27, 0x64, 0x00, 0x1f, 0x01, 0x00, 0x04, 0x28, 0xee, 0x38, 0x80 },
+    };
+    const audio_cfg = AudioTrackConfig{
+        .sample_rate = 48000,
+        .channels = 2,
+        .codec_private = &[_]u8{ 0x11, 0x90 }, // 48kHz stereo AAC
+        .timescale = 48000,
+    };
+
+    const moov_offset = builder.buf.items.len;
+    try writeMoov(&builder, video_cfg, audio_cfg);
+    const moov_size = std.mem.readInt(u32, builder.buf.items[moov_offset..][0..4], .big);
+    try testing.expectEqualStrings("moov", builder.buf.items[moov_offset + 4 .. moov_offset + 8]);
+    try testing.expectEqual(@as(u32, @intCast(builder.buf.items.len - moov_offset)), moov_size);
+}

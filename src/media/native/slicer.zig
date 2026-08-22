@@ -215,6 +215,17 @@ pub fn streamMediaNative(
     if (video_track_opt == null) return error.NoVideoTrack;
     const video = video_track_opt.?;
 
+    // Check Audio format compatibility:
+    // If the movie has an audio track that is NOT AAC (e.g. AC-3, DTS, EAC3),
+    // web browsers require transcoding to AAC. Until Phase 4 pure-Zig audio decoding is wired in,
+    // we yield to the FFmpeg transcoder path so playback succeeds.
+    if (audio_track_opt) |aud| {
+        if (!std.mem.eql(u8, aud.codec_id, "A_AAC")) {
+            std.debug.print("[Native Streamer] Audio track is {s} (requires AAC transcoding) -> delegating to FFmpeg\n", .{aud.codec_id});
+            return error.AudioTranscodingRequired;
+        }
+    }
+
     // Determine Video Codec
     var video_codec: mp4_muxer.VideoCodecType = .h264;
     if (std.mem.eql(u8, video.codec_id, "V_MPEGH/ISO/HEVC")) {
@@ -245,7 +256,7 @@ pub fn streamMediaNative(
             audio_cfg = .{
                 .sample_rate = aud.sample_rate,
                 .channels = aud.channels,
-                .codec_private = aud.codec_private,
+                .codec_private = aud.codec_private orelse &[_]u8{ 0x11, 0x90 }, // 48kHz stereo fallback
                 .timescale = aud.sample_rate,
             };
         }
@@ -259,8 +270,7 @@ pub fn streamMediaNative(
 
     // 3. Fast Seek to Target Keyframe Cluster if start_time > 0
     if (start_time > 0.0) {
-        const seek_pts = native_metadata.getKeyframePts(io, file_path, start_time) catch start_time;
-        _ = seek_pts;
+        _ = native_metadata.getKeyframePts(io, file_path, start_time) catch start_time;
     }
 
     // Rewind or jump to first cluster
@@ -270,14 +280,21 @@ pub fn streamMediaNative(
 
     // 4. Stream Clusters & Output Movie Fragments
     var sequence_number: u32 = 1;
-    var base_decode_time: u64 = 0;
-    const timescale: f64 = 90000.0;
+    var base_decode_time_video: u64 = 0;
+    var base_decode_time_audio: u64 = 0;
+    const video_timescale: f64 = 90000.0;
 
-    var samples = std.ArrayList(mp4_muxer.SampleInfo).empty;
-    defer samples.deinit(allocator);
+    var video_samples = std.ArrayList(mp4_muxer.SampleInfo).empty;
+    defer video_samples.deinit(allocator);
 
-    var payload = std.ArrayList(u8).empty;
-    defer payload.deinit(allocator);
+    var video_payload = std.ArrayList(u8).empty;
+    defer video_payload.deinit(allocator);
+
+    var audio_samples = std.ArrayList(mp4_muxer.SampleInfo).empty;
+    defer audio_samples.deinit(allocator);
+
+    var audio_payload = std.ArrayList(u8).empty;
+    defer audio_payload.deinit(allocator);
 
     var current_cluster_ts_ns: u64 = 0;
     var first_pts_ns: ?u64 = null;
@@ -290,19 +307,33 @@ pub fn streamMediaNative(
         const elem = (try ebml.readElementHeader(r)) orelse break;
 
         if (elem.id == ebml.ID_CLUSTER) {
-            // Flush existing fragment on cluster boundary if we have samples
-            if (samples.items.len > 0) {
-                try mp4_muxer.writeFragment(&box_builder, sequence_number, 1, base_decode_time, samples.items, payload.items);
+            // Flush existing fragments on cluster boundary
+            if (video_samples.items.len > 0) {
+                try mp4_muxer.writeFragment(&box_builder, sequence_number, 1, base_decode_time_video, video_samples.items, video_payload.items);
                 try writer.writer.writeAll(box_builder.buf.items);
                 box_builder.buf.clearRetainingCapacity();
 
                 var total_dur: u64 = 0;
-                for (samples.items) |s| total_dur += s.duration;
-                base_decode_time += total_dur;
+                for (video_samples.items) |s| total_dur += s.duration;
+                base_decode_time_video += total_dur;
                 sequence_number += 1;
 
-                samples.clearRetainingCapacity();
-                payload.clearRetainingCapacity();
+                video_samples.clearRetainingCapacity();
+                video_payload.clearRetainingCapacity();
+            }
+
+            if (audio_samples.items.len > 0) {
+                try mp4_muxer.writeFragment(&box_builder, sequence_number, 2, base_decode_time_audio, audio_samples.items, audio_payload.items);
+                try writer.writer.writeAll(box_builder.buf.items);
+                box_builder.buf.clearRetainingCapacity();
+
+                var total_dur: u64 = 0;
+                for (audio_samples.items) |s| total_dur += s.duration;
+                base_decode_time_audio += total_dur;
+                sequence_number += 1;
+
+                audio_samples.clearRetainingCapacity();
+                audio_payload.clearRetainingCapacity();
             }
 
             var cluster_rem = elem.size;
@@ -339,18 +370,16 @@ pub fn streamMediaNative(
                             last_pts_ns = block_pts_ns;
                         }
 
-                        // Compute duration from last PTS or default to 33ms (30fps)
                         const dur_ns = if (block_pts_ns > last_pts_ns) (block_pts_ns - last_pts_ns) else 33_333_333;
                         last_pts_ns = block_pts_ns;
-                        const dur_ticks: u32 = @intFromFloat(@as(f64, @floatFromInt(dur_ns)) * timescale / 1_000_000_000.0);
+                        const dur_ticks: u32 = @intFromFloat(@as(f64, @floatFromInt(dur_ns)) * video_timescale / 1_000_000_000.0);
 
-                        // Read remaining payload
                         const header_len = track_vint.len + 3;
                         if (block_buf.items.len > header_len) {
                             const raw_data = block_buf.items[header_len..];
-                            const sample_start = payload.items.len;
+                            const sample_start = video_payload.items.len;
 
-                            // If payload uses Annex B start codes (0x00000001), convert to AVCC 4-byte size prefixes
+                            // NAL unit normalization
                             if (raw_data.len >= 4 and raw_data[0] == 0 and raw_data[1] == 0 and raw_data[2] == 0 and raw_data[3] == 1) {
                                 var offset: usize = 0;
                                 while (offset < raw_data.len) {
@@ -367,22 +396,34 @@ pub fn streamMediaNative(
                                         const nalu_len: u32 = @intCast(next_offset - nalu_start);
                                         var len_b: [4]u8 = undefined;
                                         std.mem.writeInt(u32, &len_b, nalu_len, .big);
-                                        try payload.appendSlice(allocator, &len_b);
-                                        try payload.appendSlice(allocator, raw_data[nalu_start..next_offset]);
+                                        try video_payload.appendSlice(allocator, &len_b);
+                                        try video_payload.appendSlice(allocator, raw_data[nalu_start..next_offset]);
                                         offset = next_offset;
                                     } else {
                                         offset += 1;
                                     }
                                 }
                             } else {
-                                try payload.appendSlice(allocator, raw_data);
+                                try video_payload.appendSlice(allocator, raw_data);
                             }
 
-                            const sample_size: u32 = @intCast(payload.items.len - sample_start);
-                            try samples.append(allocator, .{
+                            const sample_size: u32 = @intCast(video_payload.items.len - sample_start);
+                            try video_samples.append(allocator, .{
                                 .duration = if (dur_ticks > 0) dur_ticks else 3000,
                                 .size = sample_size,
                                 .is_keyframe = is_keyframe,
+                                .composition_time_offset = 0,
+                            });
+                        }
+                    } else if (audio_track_opt != null and track_num == audio_track_opt.?.track_num) {
+                        const header_len = track_vint.len + 3;
+                        if (block_buf.items.len > header_len) {
+                            const raw_data = block_buf.items[header_len..];
+                            try audio_payload.appendSlice(allocator, raw_data);
+                            try audio_samples.append(allocator, .{
+                                .duration = 1024, // 1024 samples per AAC frame
+                                .size = @intCast(raw_data.len),
+                                .is_keyframe = true,
                                 .composition_time_offset = 0,
                             });
                         }
@@ -400,8 +441,14 @@ pub fn streamMediaNative(
     }
 
     // Flush any remaining samples
-    if (samples.items.len > 0) {
-        try mp4_muxer.writeFragment(&box_builder, sequence_number, 1, base_decode_time, samples.items, payload.items);
+    if (video_samples.items.len > 0) {
+        try mp4_muxer.writeFragment(&box_builder, sequence_number, 1, base_decode_time_video, video_samples.items, video_payload.items);
+        try writer.writer.writeAll(box_builder.buf.items);
+        box_builder.buf.clearRetainingCapacity();
+        sequence_number += 1;
+    }
+    if (audio_samples.items.len > 0) {
+        try mp4_muxer.writeFragment(&box_builder, sequence_number, 2, base_decode_time_audio, audio_samples.items, audio_payload.items);
         try writer.writer.writeAll(box_builder.buf.items);
     }
 }
