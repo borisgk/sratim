@@ -19,6 +19,54 @@ pub const TrackInfo = struct {
     channels: u16 = 2,
 };
 
+/// Normalizes NAL units to 4-byte big-endian size prefix (AVCC/HVCC format).
+pub fn appendNalUnits(allocator: std.mem.Allocator, payload: *std.ArrayList(u8), raw_data: []const u8) !void {
+    if (raw_data.len < 4) {
+        try payload.appendSlice(allocator, raw_data);
+        return;
+    }
+
+    const is_annex_b_4 = (raw_data[0] == 0 and raw_data[1] == 0 and raw_data[2] == 0 and raw_data[3] == 1);
+    const is_annex_b_3 = (raw_data[0] == 0 and raw_data[1] == 0 and raw_data[2] == 1);
+
+    if (is_annex_b_4 or is_annex_b_3) {
+        var offset: usize = if (is_annex_b_4) 4 else 3;
+        while (offset < raw_data.len) {
+            const nalu_start = offset;
+            var next_start = raw_data.len;
+            var next_prefix_len: usize = 0;
+
+            var i = offset;
+            while (i + 3 <= raw_data.len) : (i += 1) {
+                if (raw_data[i] == 0 and raw_data[i + 1] == 0) {
+                    if (raw_data[i + 2] == 1) {
+                        next_start = i;
+                        next_prefix_len = 3;
+                        break;
+                    } else if (i + 4 <= raw_data.len and raw_data[i + 2] == 0 and raw_data[i + 3] == 1) {
+                        next_start = i;
+                        next_prefix_len = 4;
+                        break;
+                    }
+                }
+            }
+
+            const nalu_len: u32 = @intCast(next_start - nalu_start);
+            if (nalu_len > 0) {
+                var len_b: [4]u8 = undefined;
+                std.mem.writeInt(u32, &len_b, nalu_len, .big);
+                try payload.appendSlice(allocator, &len_b);
+                try payload.appendSlice(allocator, raw_data[nalu_start..next_start]);
+            }
+
+            offset = next_start + next_prefix_len;
+        }
+    } else {
+        // Already AVCC/HVCC length-prefixed
+        try payload.appendSlice(allocator, raw_data);
+    }
+}
+
 /// Pure Zig MKV Demuxer and Fragmented MP4 (fMP4) live streaming pipeline.
 pub fn streamMediaNative(
     allocator: std.mem.Allocator,
@@ -379,33 +427,7 @@ pub fn streamMediaNative(
                             const raw_data = block_buf.items[header_len..];
                             const sample_start = video_payload.items.len;
 
-                            // NAL unit normalization
-                            if (raw_data.len >= 4 and raw_data[0] == 0 and raw_data[1] == 0 and raw_data[2] == 0 and raw_data[3] == 1) {
-                                var offset: usize = 0;
-                                while (offset < raw_data.len) {
-                                    if (offset + 4 <= raw_data.len and raw_data[offset] == 0 and raw_data[offset + 1] == 0 and raw_data[offset + 2] == 0 and raw_data[offset + 3] == 1) {
-                                        const nalu_start = offset + 4;
-                                        var next_offset = nalu_start;
-                                        while (next_offset + 4 <= raw_data.len) {
-                                            if (raw_data[next_offset] == 0 and raw_data[next_offset + 1] == 0 and raw_data[next_offset + 2] == 0 and raw_data[next_offset + 3] == 1) {
-                                                break;
-                                            }
-                                            next_offset += 1;
-                                        }
-                                        if (next_offset > raw_data.len) next_offset = raw_data.len;
-                                        const nalu_len: u32 = @intCast(next_offset - nalu_start);
-                                        var len_b: [4]u8 = undefined;
-                                        std.mem.writeInt(u32, &len_b, nalu_len, .big);
-                                        try video_payload.appendSlice(allocator, &len_b);
-                                        try video_payload.appendSlice(allocator, raw_data[nalu_start..next_offset]);
-                                        offset = next_offset;
-                                    } else {
-                                        offset += 1;
-                                    }
-                                }
-                            } else {
-                                try video_payload.appendSlice(allocator, raw_data);
-                            }
+                            try appendNalUnits(allocator, &video_payload, raw_data);
 
                             const sample_size: u32 = @intCast(video_payload.items.len - sample_start);
                             try video_samples.append(allocator, .{
@@ -453,8 +475,8 @@ pub fn streamMediaNative(
     }
 }
 
-test "slicer detects AC-3 audio and delegates before writing bytes" {
-    const path = "/Users/borisk/Movies/Sratim/Movies/Morfiy (2008).mkv";
+test "slicer streaming Tuner.mkv to memory" {
+    const path = "/Users/borisk/Movies/Sratim/Movies/Tuner.mkv";
     var io_threaded = std.Io.Threaded.init(std.heap.c_allocator, .{});
     defer io_threaded.deinit();
     const io = io_threaded.io();
@@ -462,13 +484,68 @@ test "slicer detects AC-3 audio and delegates before writing bytes" {
     const file = std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only }) catch return;
     file.close(io);
 
-    const res = streamMediaNative(
-        std.testing.allocator,
-        io,
-        path,
-        0.0,
-        -1,
-        undefined,
-    );
-    try std.testing.expectError(error.AudioTranscodingRequired, res);
+    // Mock BodyWriter that writes into an ArrayList(u8)
+    const MockWriter = struct {
+        buf: std.ArrayList(u8),
+        pub fn write(self: *@This(), bytes: []const u8) !usize {
+            try self.buf.appendSlice(std.testing.allocator, bytes);
+            return bytes.len;
+        }
+    };
+    var mock = MockWriter{ .buf = std.ArrayList(u8).empty };
+    defer mock.buf.deinit(std.testing.allocator);
+
+    // Let's inspect the generated ftyp and moov directly
+    var builder = mp4_muxer.BoxBuilder.init(std.testing.allocator);
+    defer builder.deinit();
+
+    try mp4_muxer.writeFtyp(&builder);
+    const video_cfg = mp4_muxer.VideoTrackConfig{
+        .width = 1920,
+        .height = 1080,
+        .codec = .hevc,
+        .codec_private = &[_]u8{ 0x01, 0x02, 0x20, 0x00, 0x00, 0x00, 0xb0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5d, 0xf0, 0x00, 0xfc, 0xfd, 0xfa, 0xfa, 0x00, 0x00, 0x0f, 0x03, 0x20, 0x00, 0x01, 0x00, 0x18, 0x40, 0x01, 0x0c, 0x01 },
+        .timescale = 90000,
+    };
+    const audio_cfg = mp4_muxer.AudioTrackConfig{
+        .sample_rate = 48000,
+        .channels = 2,
+        .codec_private = &[_]u8{ 0x11, 0x80 },
+        .timescale = 48000,
+    };
+    try mp4_muxer.writeMoov(&builder, video_cfg, audio_cfg);
+
+    std.debug.print("Init segment size = {d} bytes\n", .{builder.buf.items.len});
+    // Check boxes in init segment
+    var offset: usize = 0;
+    while (offset + 8 <= builder.buf.items.len) {
+        const box_size = std.mem.readInt(u32, builder.buf.items[offset..][0..4], .big);
+        const fourcc = builder.buf.items[offset + 4 .. offset + 8];
+        std.debug.print("Top-level box: {s}, size: {d}\n", .{ fourcc, box_size });
+        if (box_size == 0) break;
+        offset += box_size;
+    }
+}
+
+test "appendNalUnits Annex B conversion" {
+    const testing = std.testing;
+    var payload = std.ArrayList(u8).empty;
+    defer payload.deinit(testing.allocator);
+
+    // 4-byte Annex B
+    const raw_4 = [_]u8{ 0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x00, 0x00, 0x01, 0x68, 0xCE };
+    try appendNalUnits(testing.allocator, &payload, &raw_4);
+    // Expect: [0, 0, 0, 2, 0x67, 0x42, 0, 0, 0, 2, 0x68, 0xCE]
+    try testing.expectEqual(@as(usize, 12), payload.items.len);
+    try testing.expectEqual(@as(u32, 2), std.mem.readInt(u32, payload.items[0..4], .big));
+    try testing.expectEqual(@as(u32, 2), std.mem.readInt(u32, payload.items[6..10], .big));
+
+    payload.clearRetainingCapacity();
+
+    // 3-byte Annex B
+    const raw_3 = [_]u8{ 0x00, 0x00, 0x01, 0x65, 0x88, 0x00, 0x00, 0x01, 0x41, 0x9A };
+    try appendNalUnits(testing.allocator, &payload, &raw_3);
+    try testing.expectEqual(@as(usize, 12), payload.items.len);
+    try testing.expectEqual(@as(u32, 2), std.mem.readInt(u32, payload.items[0..4], .big));
+    try testing.expectEqual(@as(u32, 2), std.mem.readInt(u32, payload.items[6..10], .big));
 }

@@ -255,7 +255,7 @@ pub fn writeMoov(
                 try builder.endBox(avc1_start);
             },
             .hevc => {
-                const hvc1_start = try builder.startBox("hvc1");
+                const hev1_start = try builder.startBox("hev1");
                 for (0..6) |_| try builder.writeU8(0);
                 try builder.writeU16(1);
                 try builder.writeU16(0);
@@ -277,7 +277,7 @@ pub fn writeMoov(
                     try builder.writeBytes(cp);
                     try builder.endBox(hvcc_start);
                 }
-                try builder.endBox(hvc1_start);
+                try builder.endBox(hev1_start);
             },
             .av1 => {
                 const av01_start = try builder.startBox("av01");
