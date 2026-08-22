@@ -1317,6 +1317,108 @@ p.subtitle {
     padding: 2px 8px;
 }
 
+/* --- Media Sections & Horizontal Scroll Rows --- */
+.media-section {
+    margin-bottom: 44px;
+    width: 100%;
+}
+
+.media-section-header {
+    margin-bottom: 20px;
+    width: 100%;
+}
+
+.section-title {
+    font-family: 'Outfit', sans-serif;
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #f3f4f6;
+    margin-bottom: 18px;
+    letter-spacing: -0.02em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.horizontal-scroll-row {
+    display: flex;
+    gap: 20px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 16px;
+    padding-top: 6px;
+    margin-left: -4px;
+    margin-right: -4px;
+    padding-left: 4px;
+    padding-right: 4px;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.horizontal-scroll-row::-webkit-scrollbar {
+    height: 6px;
+}
+
+.horizontal-scroll-row::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.horizontal-scroll-row::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+}
+
+.horizontal-scroll-row::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.horizontal-scroll-row .movie-item {
+    flex: 0 0 170px;
+    max-width: 170px;
+}
+
+.horizontal-scroll-row .movie-card {
+    min-height: unset;
+    aspect-ratio: 2 / 3;
+    padding: 18px;
+    border-radius: 20px;
+}
+
+.horizontal-scroll-row .movie-card .icon-wrapper {
+    width: 44px;
+    height: 44px;
+    margin-bottom: 16px;
+    border-radius: 12px;
+}
+
+.horizontal-scroll-row .movie-card.has-poster .icon-wrapper {
+    display: none;
+}
+
+.horizontal-scroll-row .movie-item .movie-title {
+    font-family: 'Outfit', sans-serif;
+    font-size: 0.92rem;
+    font-weight: 450;
+    line-height: 1.35;
+    color: #e5e7eb;
+    margin-top: 10px;
+    margin-bottom: 0;
+    text-align: left;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    transition: color 0.2s ease;
+}
+
+.horizontal-scroll-row .movie-card .type-badge {
+    font-size: 0.65rem;
+    padding: 2px 8px;
+}
+
 /* --- Episode List Layout (16:9) --- */
 .episode-list {
     display: flex;

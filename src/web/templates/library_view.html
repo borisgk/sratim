@@ -34,6 +34,8 @@
             <input type="text" id="search-input" class="search-input" placeholder="Search files in this library..." autocomplete="off">
         </div>
 
+        __RECENTLY_ADDED_SECTION__
+
         <div class="grid" id="movie-grid">
             __MOVIE_CARDS__
             <div id="no-results" class="no-results">No movies found matching your search.</div>
@@ -61,13 +63,22 @@
 
     <script>
         const searchInput = document.getElementById('search-input');
-        const items = document.querySelectorAll('.movie-item');
+        const items = document.querySelectorAll('#movie-grid .movie-item');
         const noResults = document.getElementById('no-results');
+        const recentSection = document.getElementById('recently-added-section');
+        const allMoviesHeader = document.querySelector('.media-section-header');
 
         if (searchInput) {
             searchInput.addEventListener('input', (e) => {
                 const query = e.target.value.toLowerCase().trim();
                 let hasMatches = false;
+
+                if (recentSection) {
+                    recentSection.style.display = query === '' ? '' : 'none';
+                }
+                if (allMoviesHeader) {
+                    allMoviesHeader.style.display = query === '' ? '' : 'none';
+                }
 
                 items.forEach(item => {
                     const card = item.querySelector('.movie-card');
