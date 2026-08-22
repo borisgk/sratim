@@ -457,8 +457,80 @@ test "parseCues binary parsing" {
         .size = raw_cues.len,
         .header_size = 0,
     };
-
     // When seeking to 10.0s, the nearest previous keyframe is 5.0s
     const pts = try parseCues(&r, cues_elem, 1_000_000.0, 10.0);
     try std.testing.expectEqual(@as(f64, 5.0), pts);
+}
+
+test "inspect Morfiy tracks" {
+    const path = "/Users/borisk/Movies/Sratim/Movies/Morfiy (2008).mkv";
+    var io_threaded = std.Io.Threaded.init(std.heap.c_allocator, .{});
+    defer io_threaded.deinit();
+    const io = io_threaded.io();
+
+    const file = std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only }) catch |err| {
+        std.debug.print("Could not open {s}: {}\n", .{ path, err });
+        return;
+    };
+    defer file.close(io);
+
+    var file_buf: [65536]u8 = undefined;
+    var file_reader = file.reader(io, &file_buf);
+    const r = &file_reader.interface;
+
+    const ebml_hdr = (try ebml.readElementHeader(r)) orelse return;
+    try ebml.skipBytes(r, ebml_hdr.size);
+    const seg_hdr = (try ebml.readElementHeader(r)) orelse return;
+    _ = seg_hdr;
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    while (true) {
+        const elem = (try ebml.readElementHeader(r)) orelse break;
+        if (elem.id == ebml.ID_TRACKS) {
+            var rem = elem.size;
+            while (rem > 0) {
+                const sub = (try ebml.readElementHeader(r)) orelse break;
+                rem -= sub.header_size;
+                if (sub.id == ebml.ID_TRACK_ENTRY) {
+                    var entry_rem = sub.size;
+                    var t_num: ?u64 = null;
+                    var t_type: ?u64 = null;
+                    var t_codec: ?[]const u8 = null;
+                    var t_priv: ?[]const u8 = null;
+                    while (entry_rem > 0) {
+                        const child = (try ebml.readElementHeader(r)) orelse break;
+                        entry_rem -= child.header_size;
+                        if (child.id == ebml.ID_TRACK_NUMBER) {
+                            t_num = try ebml.readUint(r, child.size);
+                        } else if (child.id == ebml.ID_TRACK_TYPE) {
+                            t_type = try ebml.readUint(r, child.size);
+                        } else if (child.id == ebml.ID_CODEC_ID) {
+                            t_codec = try ebml.readString(arena.allocator(), r, child.size);
+                        } else if (child.id == ebml.ID_CODEC_PRIVATE) {
+                            const buf = try arena.allocator().alloc(u8, @intCast(child.size));
+                            try r.readSliceAll(buf);
+                            t_priv = buf;
+                        } else {
+                            try ebml.skipBytes(r, child.size);
+                        }
+                        if (child.size != ebml.UNKNOWN_SIZE) entry_rem -= child.size;
+                    }
+                    std.debug.print("Track #{?}: type={?}, codec={?s}, priv_len={?}\n", .{
+                        t_num, t_type, t_codec, if (t_priv) |p| p.len else null,
+                    });
+                    if (t_priv) |p| {
+                        std.debug.print("Priv bytes: {x}\n", .{p[0..@min(32, p.len)]});
+                    }
+                } else {
+                    try ebml.skipBytes(r, sub.size);
+                }
+                if (sub.size != ebml.UNKNOWN_SIZE) rem -= sub.size;
+            }
+            break;
+        } else {
+            if (elem.size != ebml.UNKNOWN_SIZE) try ebml.skipBytes(r, elem.size);
+        }
+    }
 }

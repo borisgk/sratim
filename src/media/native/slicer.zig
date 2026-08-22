@@ -452,3 +452,23 @@ pub fn streamMediaNative(
         try writer.writer.writeAll(box_builder.buf.items);
     }
 }
+
+test "slicer detects AC-3 audio and delegates before writing bytes" {
+    const path = "/Users/borisk/Movies/Sratim/Movies/Morfiy (2008).mkv";
+    var io_threaded = std.Io.Threaded.init(std.heap.c_allocator, .{});
+    defer io_threaded.deinit();
+    const io = io_threaded.io();
+
+    const file = std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only }) catch return;
+    file.close(io);
+
+    const res = streamMediaNative(
+        std.testing.allocator,
+        io,
+        path,
+        0.0,
+        -1,
+        undefined,
+    );
+    try std.testing.expectError(error.AudioTranscodingRequired, res);
+}
