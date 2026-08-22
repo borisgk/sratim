@@ -541,13 +541,14 @@ pub fn writeFragment(
         try builder.endBox(tfdt_start);
 
         // trun:
-        // flags:
-        //   0x000001 (data-offset-present)
-        //   0x000004 (first-sample-flags-present)
-        //   0x000100 (sample-duration-present)
-        //   0x000200 (sample-size-present)
-        //   0x000800 (sample-composition-time-offsets-present)
-        const trun_flags: u24 = 0x000001 | 0x000004 | 0x000100 | 0x000200 | 0x000800;
+        // Video uses CTS offsets and first-sample-flags.
+        // Audio uses only data-offset, sample-duration, and sample-size.
+        const is_video = (track_id == 1);
+        const trun_flags: u24 = if (is_video)
+            (0x000001 | 0x000004 | 0x000100 | 0x000200 | 0x000800)
+        else
+            (0x000001 | 0x000100 | 0x000200);
+
         const trun_start = try builder.writeFullBoxHeader("trun", 0, trun_flags);
         try builder.writeU32(@intCast(samples.len));
 
@@ -555,14 +556,18 @@ pub fn writeFragment(
         data_offset_pos = builder.buf.items.len;
         try builder.writeI32(0);
 
-        // first_sample_flags: 0x02000000 for keyframe, 0x01010000 for non-keyframe
-        const first_keyframe = if (samples.len > 0 and samples[0].is_keyframe) @as(u32, 0x02000000) else @as(u32, 0x01010000);
-        try builder.writeU32(first_keyframe);
+        if (is_video) {
+            // first_sample_flags: 0x02000000 for keyframe, 0x01010000 for non-keyframe
+            const first_keyframe = if (samples.len > 0 and samples[0].is_keyframe) @as(u32, 0x02000000) else @as(u32, 0x01010000);
+            try builder.writeU32(first_keyframe);
+        }
 
         for (samples) |s| {
             try builder.writeU32(s.duration);
             try builder.writeU32(s.size);
-            try builder.writeI32(s.composition_time_offset);
+            if (is_video) {
+                try builder.writeI32(s.composition_time_offset);
+            }
         }
         try builder.endBox(trun_start);
         try builder.endBox(traf_start);

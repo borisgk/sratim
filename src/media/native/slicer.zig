@@ -436,6 +436,21 @@ pub fn streamMediaNative(
                                 .is_keyframe = is_keyframe,
                                 .composition_time_offset = 0,
                             });
+
+                            // Flush video fragment eagerly
+                            if (video_samples.items.len >= 24 or (is_keyframe and video_samples.items.len >= 12)) {
+                                try mp4_muxer.writeFragment(&box_builder, sequence_number, 1, base_decode_time_video, video_samples.items, video_payload.items);
+                                try writer.writer.writeAll(box_builder.buf.items);
+                                box_builder.buf.clearRetainingCapacity();
+
+                                var total_dur: u64 = 0;
+                                for (video_samples.items) |s| total_dur += s.duration;
+                                base_decode_time_video += total_dur;
+                                sequence_number += 1;
+
+                                video_samples.clearRetainingCapacity();
+                                video_payload.clearRetainingCapacity();
+                            }
                         }
                     } else if (audio_track_opt != null and track_num == audio_track_opt.?.track_num) {
                         const header_len = track_vint.len + 3;
@@ -448,6 +463,21 @@ pub fn streamMediaNative(
                                 .is_keyframe = true,
                                 .composition_time_offset = 0,
                             });
+
+                            // Flush audio fragment eagerly
+                            if (audio_samples.items.len >= 24) {
+                                try mp4_muxer.writeFragment(&box_builder, sequence_number, 2, base_decode_time_audio, audio_samples.items, audio_payload.items);
+                                try writer.writer.writeAll(box_builder.buf.items);
+                                box_builder.buf.clearRetainingCapacity();
+
+                                var total_dur: u64 = 0;
+                                for (audio_samples.items) |s| total_dur += s.duration;
+                                base_decode_time_audio += total_dur;
+                                sequence_number += 1;
+
+                                audio_samples.clearRetainingCapacity();
+                                audio_payload.clearRetainingCapacity();
+                            }
                         }
                     }
                 } else {

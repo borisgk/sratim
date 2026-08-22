@@ -462,8 +462,8 @@ test "parseCues binary parsing" {
     try std.testing.expectEqual(@as(f64, 5.0), pts);
 }
 
-test "inspect Morfiy tracks" {
-    const path = "/Users/borisk/Movies/Sratim/Movies/Morfiy (2008).mkv";
+test "inspect Tuner tracks" {
+    const path = "/Users/borisk/Movies/Sratim/Movies/Tuner.mkv";
     var io_threaded = std.Io.Threaded.init(std.heap.c_allocator, .{});
     defer io_threaded.deinit();
     const io = io_threaded.io();
@@ -527,6 +527,23 @@ test "inspect Morfiy tracks" {
                     try ebml.skipBytes(r, sub.size);
                 }
                 if (sub.size != ebml.UNKNOWN_SIZE) rem -= sub.size;
+            }
+        } else if (elem.id == ebml.ID_CLUSTER) {
+            var cl_rem = elem.size;
+            while (cl_rem > 0) {
+                const sub = (try ebml.readElementHeader(r)) orelse break;
+                cl_rem -= sub.header_size;
+                if (sub.id == ebml.ID_SIMPLE_BLOCK) {
+                    const buf = try arena.allocator().alloc(u8, @intCast(sub.size));
+                    try r.readSliceAll(buf);
+                    const vint = ebml.decodeVint(buf) catch continue;
+                    std.debug.print("SimpleBlock for track {d}, size {d}, data: {x}\n", .{
+                        vint.value, buf.len, buf[vint.len + 3 .. @min(buf.len, vint.len + 16)],
+                    });
+                } else {
+                    try ebml.skipBytes(r, sub.size);
+                }
+                if (sub.size != ebml.UNKNOWN_SIZE) cl_rem -= sub.size;
             }
             break;
         } else {
