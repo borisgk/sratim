@@ -1,11 +1,21 @@
 const std = @import("std");
 const c = @import("../core/c.zig").c;
+const native_metadata = @import("native/metadata.zig");
+const config_mod = @import("../config.zig");
 
 /// Returns the actual keyframe PTS for a given seek position.
-/// Opens the file, seeks to start_time with AVSEEK_FLAG_BACKWARD,
-/// reads one packet, and returns its DTS/PTS in seconds.
-/// This is lightweight: no avformat_find_stream_info, just header + seek + one read.
-pub fn getKeyframePts(file_path: []const u8, start_time: f64, audio_idx_requested: c_int) f64 {
+pub fn getKeyframePts(io: std.Io, file_path: []const u8, start_time: f64, audio_idx_requested: c_int, mode: config_mod.EngineMode) f64 {
+    if (mode == .native) {
+        if (native_metadata.getKeyframePts(io, file_path, start_time)) |pts| {
+            return pts;
+        } else |_| {
+            return getKeyframePtsFfmpeg(file_path, start_time, audio_idx_requested);
+        }
+    }
+    return getKeyframePtsFfmpeg(file_path, start_time, audio_idx_requested);
+}
+
+pub fn getKeyframePtsFfmpeg(file_path: []const u8, start_time: f64, audio_idx_requested: c_int) f64 {
     const c_path = std.heap.c_allocator.dupeZ(u8, file_path) catch return start_time;
     defer std.heap.c_allocator.free(c_path);
 

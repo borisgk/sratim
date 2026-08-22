@@ -3,6 +3,7 @@ const db_mod = @import("../../../db/db.zig");
 const metadata_mod = @import("../../../db/metadata.zig");
 const streamer = @import("../../../media/streamer.zig");
 const media_metadata = @import("../../../media/metadata.zig");
+const config_mod = @import("../../../config.zig");
 const utils = @import("../../utils.zig");
 const common = @import("common.zig");
 
@@ -11,7 +12,8 @@ pub fn handleStream(
     request: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     database: *db_mod.Database,
-
+    config: *const config_mod.Config,
+    io: std.Io,
     resp_buf: []u8,
 ) !void {
     if (request.head.method == .OPTIONS) {
@@ -57,7 +59,7 @@ pub fn handleStream(
     const start_time = utils.parseQueryFloat(target, "start") orelse 0;
     const audio_idx = utils.parseQueryInt(c_int, target, "audio") orelse -1;
 
-    const actual_start = media_metadata.getKeyframePts(resolved.?.resolved_path, start_time, audio_idx);
+    const actual_start = media_metadata.getKeyframePts(io, resolved.?.resolved_path, start_time, audio_idx, config.media_engine.metadata);
     var actual_start_buf: [32]u8 = undefined;
     const actual_start_str = try std.fmt.bufPrint(&actual_start_buf, "{d:.3}", .{actual_start});
 

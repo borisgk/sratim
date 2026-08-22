@@ -90,7 +90,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
         // Route: Media Streamer (Public for Cast receivers & media elements)
         if (std.mem.startsWith(u8, target, "/stream?")) {
             var stream_resp_buf: [8192]u8 = undefined;
-            player_stream.handleStream(&request, allocator, database, &stream_resp_buf) catch return;
+            player_stream.handleStream(&request, allocator, database, config, io, &stream_resp_buf) catch return;
             continue;
         } else if (std.mem.startsWith(u8, target, "/subtitles?")) {
             player_subtitles.handleSubtitles(&request, allocator, database, config, io) catch |err| {
@@ -141,19 +141,19 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
         
         // Route: API v1 Movie Details (Protected)
         if (std.mem.startsWith(u8, target, "/api/v1/movie?")) {
-            api_v1_router.handleGetMovie(&request, allocator, database, io) catch return;
+            api_v1_router.handleGetMovie(&request, allocator, database, config, io) catch return;
             continue;
         }
 
         // Route: API v1 Show Details (Protected)
         if (std.mem.startsWith(u8, target, "/api/v1/show?")) {
-            api_v1_router.handleGetShow(&request, allocator, database, io) catch return;
+            api_v1_router.handleGetShow(&request, allocator, database, config, io) catch return;
             continue;
         }
 
         // Route: HTML Player
         if (std.mem.startsWith(u8, target, "/player?")) {
-            player_html.handlePlayer(&request, allocator, database, logs_database, session_info.?.username, io) catch return;
+            player_html.handlePlayer(&request, allocator, database, logs_database, session_info.?.username, config, io) catch return;
             continue;
         }
 

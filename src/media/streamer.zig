@@ -252,43 +252,28 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
     }
 }
 
+const native_metadata = @import("native/metadata.zig");
 const subtitles_mod = @import("subtitles.zig");
-pub const SubtitleTrack = subtitles_mod.SubtitleTrack;
+const config_mod = @import("../config.zig");
 
-pub const AudioTrack = struct {
-    id: usize,
-    label: []const u8,
-};
-
-pub const MediaInfo = struct {
-    duration: f64,
-    codec_str: []const u8,
-    dynamic_codec_str: ?[]const u8 = null,
-    audio_tracks: []AudioTrack,
-    subtitle_tracks: []SubtitleTrack,
-
-    pub fn deinit(self: *const MediaInfo, allocator: std.mem.Allocator) void {
-        for (self.audio_tracks) |track| {
-            allocator.free(track.label);
-        }
-        if (self.audio_tracks.len > 0) {
-            allocator.free(self.audio_tracks);
-        }
-        for (self.subtitle_tracks) |track| {
-            allocator.free(track.label);
-            allocator.free(track.language);
-        }
-        if (self.subtitle_tracks.len > 0) {
-            allocator.free(self.subtitle_tracks);
-        }
-        if (self.dynamic_codec_str) |s| {
-            allocator.free(s);
-        }
-    }
-};
+pub const SubtitleTrack = native_metadata.SubtitleTrack;
+pub const AudioTrack = native_metadata.AudioTrack;
+pub const MediaInfo = native_metadata.MediaInfo;
 
 /// Retrieves the duration, codec info, and available audio/subtitle tracks of a media file.
-pub fn getMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8) !MediaInfo {
+pub fn getMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8, mode: config_mod.EngineMode) !MediaInfo {
+    if (mode == .native) {
+        if (native_metadata.getMediaInfo(allocator, io, file_path)) |info| {
+            return info;
+        } else |err| {
+            std.debug.print("Native getMediaInfo failed ({}), falling back to FFmpeg...\n", .{err});
+            return getMediaInfoFfmpeg(allocator, io, file_path);
+        }
+    }
+    return getMediaInfoFfmpeg(allocator, io, file_path);
+}
+
+pub fn getMediaInfoFfmpeg(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8) !MediaInfo {
     _ = io;
     var fmt_ctx: ?*c.AVFormatContext = null;
     if (c.avformat_open_input(@ptrCast(&fmt_ctx), file_path.ptr, null, null) < 0) return error.OpenFailed;

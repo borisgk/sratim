@@ -3,6 +3,7 @@ const db_mod = @import("../../../db/db.zig");
 const metadata_mod = @import("../../../db/metadata.zig");
 const logging_mod = @import("../../../db/logging.zig");
 const streamer = @import("../../../media/streamer.zig");
+const config_mod = @import("../../../config.zig");
 const html = @import("../../../core/html.zig");
 const utils = @import("../../utils.zig");
 const common = @import("common.zig");
@@ -14,7 +15,7 @@ pub fn handlePlayer(
     database: *db_mod.Database,
     logs_database: *db_mod.Database,
     username: []const u8,
-
+    config: *const config_mod.Config,
     io: std.Io,
 ) !void {
     const target = request.head.target;
@@ -47,7 +48,7 @@ pub fn handlePlayer(
     const c_full_path = try allocator.dupeZ(u8, resolved.?.resolved_path);
     defer allocator.free(c_full_path);
 
-    const media_info = streamer.getMediaInfo(allocator, io, c_full_path) catch streamer.MediaInfo{
+    const media_info = streamer.getMediaInfo(allocator, io, c_full_path, config.media_engine.metadata) catch streamer.MediaInfo{
         .duration = 2799.0,
         .codec_str = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\"",
         .audio_tracks = &[_]streamer.AudioTrack{},

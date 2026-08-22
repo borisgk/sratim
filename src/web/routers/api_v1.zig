@@ -7,6 +7,7 @@ const library_mod = @import("../../db/library.zig");
 const metadata_mod = @import("../../db/metadata.zig");
 const common = @import("../handlers/player/common.zig");
 const streamer = @import("../../media/streamer.zig");
+const config_mod = @import("../../config.zig");
 const utils = @import("../utils.zig");
 
 const LoginPayload = struct {
@@ -295,6 +296,7 @@ pub fn handleGetMovie(
     request: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     database: *db_mod.Database,
+    config: *const config_mod.Config,
     io: std.Io,
 ) !void {
     if (request.head.method != .GET) {
@@ -318,25 +320,24 @@ pub fn handleGetMovie(
     if ((try stmt.step()) == .row) {
         const id = stmt.columnInt64(0);
         const library_id = stmt.columnInt64(1);
-        const file_path = stmt.columnText(2) orelse "";
-        const clean_name = stmt.columnText(3) orelse "";
+        const file_path = stmt.columnText(2).?;
+        const clean_name = stmt.columnText(3).?;
         const title_opt = stmt.columnText(4);
         const overview = stmt.columnText(5) orelse "";
         const poster_path = stmt.columnText(6) orelse "";
         const backdrop_path = stmt.columnText(7) orelse "";
         const release_date = stmt.columnText(8) orelse "";
         const tmdb_id = stmt.columnText(9) orelse "";
-        const db_file_size = stmt.columnInt64(10);
 
-        var file_size: u64 = @intCast(@max(0, db_file_size));
         var runtime: u32 = 0;
+        var file_size: u64 = 0;
 
         if (common.resolveMediaPath(database, allocator, .{ .library_id = library_id, .file_path = file_path }) catch null) |resolved| {
             defer allocator.free(resolved.resolved_path);
-
-            if (std.Io.Dir.cwd().openFile(io, resolved.resolved_path, .{ .mode = .read_only }) catch null) |file| {
-                defer file.close(io);
-                if (file.stat(io) catch null) |st| {
+            const file = std.Io.Dir.cwd().openFile(io, resolved.resolved_path, .{ .mode = .read_only }) catch null;
+            if (file) |f| {
+                defer f.close(io);
+                if (f.stat(io) catch null) |st| {
                     file_size = st.size;
                 }
             }
@@ -344,7 +345,7 @@ pub fn handleGetMovie(
             const c_path = allocator.dupeZ(u8, resolved.resolved_path) catch null;
             if (c_path) |cp| {
                 defer allocator.free(cp);
-                if (streamer.getMediaInfo(allocator, io, cp) catch null) |media_info| {
+                if (streamer.getMediaInfo(allocator, io, cp, config.media_engine.metadata) catch null) |media_info| {
                     defer media_info.deinit(allocator);
                     if (media_info.duration > 0) {
                         runtime = @as(u32, @intFromFloat(media_info.duration / 60.0));
@@ -402,6 +403,7 @@ pub fn handleGetShow(
     request: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     database: *db_mod.Database,
+    config: *const config_mod.Config,
     io: std.Io,
 ) !void {
     if (request.head.method != .GET) {
@@ -506,7 +508,7 @@ pub fn handleGetShow(
             const c_path = allocator.dupeZ(u8, resolved.resolved_path) catch null;
             if (c_path) |cp| {
                 defer allocator.free(cp);
-                if (streamer.getMediaInfo(allocator, io, cp) catch null) |media_info| {
+                if (streamer.getMediaInfo(allocator, io, cp, config.media_engine.metadata) catch null) |media_info| {
                     defer media_info.deinit(allocator);
                     if (media_info.duration > 0) {
                         ep_runtime = @as(u32, @intFromFloat(media_info.duration / 60.0));
