@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("../core/c.zig").c;
 
 const transcoder = @import("transcoder.zig");
+const native_slicer = @import("native/slicer.zig");
 
 /// Context passed to the custom FFmpeg AVIO writer.
 /// Used to bridge FFmpeg's blocking writes into Zig's asynchronous-capable standard HTTP body writer.
@@ -26,12 +27,30 @@ pub fn write_packet(ptr: ?*anyopaque, buf: [*c]const u8, buf_size: c_int) callco
     return buf_size;
 }
 
-
-
 /// The main streaming pipeline.
-/// Opens an input media file (e.g., MKV), reads streams, dynamically transcodes incompatible audio to AAC,
-/// remuxes video natively (e.g., H.264), and pipes the fragmented MP4 output over HTTP.
-pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: c_int, http_ctx: *HttpStreamContext) !void {
+/// Dispatches to pure-Zig slicer or FFmpeg based on configured EngineMode.
+pub fn streamMedia(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    file_path: []const u8,
+    start_time: f64,
+    audio_idx_requested: c_int,
+    http_ctx: *HttpStreamContext,
+    mode: config_mod.EngineMode,
+) !void {
+    if (mode == .native) {
+        std.debug.print("[Native Streamer] Slicing {s} from {d:.2}s via pure Zig fMP4 pipeline...\n", .{ file_path, start_time });
+        if (native_slicer.streamMediaNative(allocator, io, file_path, start_time, audio_idx_requested, http_ctx.writer)) {
+            return;
+        } else |err| {
+            std.debug.print("[Native Streamer] Native streaming failed ({}), falling back to FFmpeg...\n", .{err});
+            return streamMediaFfmpeg(file_path, start_time, audio_idx_requested, http_ctx);
+        }
+    }
+    return streamMediaFfmpeg(file_path, start_time, audio_idx_requested, http_ctx);
+}
+
+pub fn streamMediaFfmpeg(file_path: []const u8, start_time: f64, audio_idx_requested: c_int, http_ctx: *HttpStreamContext) !void {
     var in_fmt_ctx: ?*c.AVFormatContext = c.avformat_alloc_context();
     if (in_fmt_ctx != null) {
         in_fmt_ctx.?.flags |= c.AVFMT_FLAG_GENPTS;

@@ -77,7 +77,7 @@ pub fn handleStream(
     });
 
     var stream_ctx = streamer.HttpStreamContext{ .writer = &resp };
-    streamer.streamMedia(resolved.?.resolved_path, start_time, audio_idx, &stream_ctx) catch |e| {
+    streamer.streamMedia(allocator, io, resolved.?.resolved_path, start_time, audio_idx, &stream_ctx, config.media_engine.streamer) catch |e| {
         if (e != error.ConnectionDropped) {
             std.debug.print("Stream error: {}\n", .{e});
         }
