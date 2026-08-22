@@ -192,9 +192,12 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
 
         const in_tb = in_ctx.*.streams[@intCast(packet.*.stream_index)].*.time_base;
 
-        // Fallback for missing DTS: use PTS
+        // Fallback for missing timestamps
         if (packet.*.dts == c.AV_NOPTS_VALUE) {
             packet.*.dts = packet.*.pts;
+        }
+        if (packet.*.pts == c.AV_NOPTS_VALUE) {
+            packet.*.pts = packet.*.dts;
         }
 
         // Establish the zero-base offset from the first packet read
@@ -218,11 +221,6 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
             // Enforce strictly monotonic DTS
             if (last_video_dts != c.AV_NOPTS_VALUE and packet.*.dts <= last_video_dts) {
                 packet.*.dts = last_video_dts + 1;
-            }
-            
-            // PTS must be >= DTS
-            if (packet.*.pts < packet.*.dts) {
-                packet.*.pts = packet.*.dts;
             }
 
             last_video_dts = packet.*.dts;
