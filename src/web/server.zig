@@ -93,7 +93,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             player_stream.handleStream(&request, allocator, database, &stream_resp_buf) catch return;
             continue;
         } else if (std.mem.startsWith(u8, target, "/subtitles?")) {
-            player_subtitles.handleSubtitles(&request, allocator, database, io) catch |err| {
+            player_subtitles.handleSubtitles(&request, allocator, database, config, io) catch |err| {
                 std.debug.print("Subtitles handler error: {}\n", .{err});
             };
             continue;

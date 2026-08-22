@@ -2,6 +2,7 @@ const std = @import("std");
 const db_mod = @import("../../../db/db.zig");
 const metadata_mod = @import("../../../db/metadata.zig");
 const subtitles_mod = @import("../../../media/subtitles.zig");
+const config_mod = @import("../../../config.zig");
 const utils = @import("../../utils.zig");
 const common = @import("common.zig");
 
@@ -30,7 +31,7 @@ pub fn handleSubtitles(
     request: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     database: *db_mod.Database,
-
+    config: *const config_mod.Config,
     io: std.Io,
 ) !void {
     if (request.head.method == .OPTIONS) {
@@ -126,7 +127,7 @@ pub fn handleSubtitles(
     };
 
     var success = true;
-    subtitles_mod.extractSubtitlesVtt(allocator, io, &dual_writer, c_full_path, track_idx.?, start_offset) catch |err| {
+    subtitles_mod.extractSubtitlesVtt(allocator, io, &dual_writer, c_full_path, track_idx.?, start_offset, config.media_engine.subtitles) catch |err| {
         std.debug.print("Subtitle extraction stopped: {}\n", .{err});
         success = false;
     };

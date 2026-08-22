@@ -2,11 +2,39 @@ const std = @import("std");
 
 const HARDCODED_TMDB_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI0YjY4NjgwZDI3MzVlYjdiMWVkNjIwZTQwZDNiMjYxMCIsIm5iZiI6MTY5MjE5NTc4Ny41MjQsInN1YiI6IjY0ZGNkYmNiMDAxYmJkMDQxYmY0NjhlOCIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.3kiXVao5QsftRTtLu2H5mfmO8K35tCtD0siaWdeCbTw";
 
+pub const EngineMode = enum {
+    ffmpeg,
+    native,
+
+    pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !EngineMode {
+        _ = allocator;
+        _ = options;
+        const token = try source.next();
+        switch (token) {
+            .string => |str| {
+                if (std.mem.eql(u8, str, "native") or std.mem.eql(u8, str, "pure_zig") or std.mem.eql(u8, str, "zig")) {
+                    return .native;
+                }
+                return .ffmpeg;
+            },
+            else => return .ffmpeg,
+        }
+    }
+};
+
+pub const MediaEngineConfig = struct {
+    subtitles: EngineMode = .ffmpeg,
+    metadata: EngineMode = .ffmpeg,
+    streamer: EngineMode = .ffmpeg,
+    audio_transcoder: EngineMode = .ffmpeg,
+};
+
 pub const Config = struct {
 
     port: u16,
     tmdb_access_token: ?[]const u8 = null,
     tmdb_proxy: ?[]const u8 = null,
+    media_engine: MediaEngineConfig = .{},
 
     pub fn load(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !Config {
         const file_content = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, std.Io.Limit.limited(1024 * 1024));
@@ -28,6 +56,7 @@ pub const Config = struct {
             .port = parsed.value.port,
             .tmdb_access_token = token,
             .tmdb_proxy = proxy,
+            .media_engine = parsed.value.media_engine,
         };
     }
 

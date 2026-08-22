@@ -1,6 +1,8 @@
 const std = @import("std");
 const c = @import("../core/c.zig").c;
 const streamer = @import("streamer.zig");
+const native_subtitles = @import("native/subtitles.zig");
+const config_mod = @import("../config.zig");
 
 
 pub const SubtitleTrack = struct {
@@ -88,14 +90,26 @@ fn cleanAssText(out: *std.ArrayList(u8), allocator: std.mem.Allocator, ass_raw: 
     }
 }
 
+/// Dispatches subtitle extraction based on configured EngineMode with graceful fallback.
+pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: anytype, file_path: [:0]const u8, stream_idx: usize, start_offset: f64, mode: config_mod.EngineMode) !void {
+    if (mode == .native) {
+        native_subtitles.extractMkvSubtitlesVtt(allocator, io, writer, file_path, stream_idx, start_offset) catch |err| {
+            std.debug.print("Native subtitle extraction failed ({}), falling back to FFmpeg...\n", .{err});
+            return extractSubtitlesVttFfmpeg(allocator, io, writer, file_path, stream_idx, start_offset);
+        };
+        return;
+    }
+    return extractSubtitlesVttFfmpeg(allocator, io, writer, file_path, stream_idx, start_offset);
+}
+
 /// Native libavcodec / libavformat subtitle extraction directly to an HTTP or string writer.
-pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: anytype, file_path: [:0]const u8, stream_idx: usize, start_offset: f64) !void {
+pub fn extractSubtitlesVttFfmpeg(allocator: std.mem.Allocator, io: std.Io, writer: anytype, file_path: [:0]const u8, stream_idx: usize, start_offset: f64) !void {
     _ = io;
     
     const t0 = c.av_gettime();
     var packet_count: usize = 0;
     var cue_count: usize = 0;
-    std.debug.print("Starting subtitle extraction for {s}, stream_idx: {}, start_offset: {d}\n", .{file_path, stream_idx, start_offset});
+    std.debug.print("Starting FFmpeg subtitle extraction for {s}, stream_idx: {}, start_offset: {d}\n", .{file_path, stream_idx, start_offset});
 
     var opts: ?*c.AVDictionary = null;
     _ = c.av_dict_set(&opts, "buffer_size", "524288", 0);
