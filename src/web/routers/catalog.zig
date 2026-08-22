@@ -31,7 +31,7 @@ pub fn route(
     const session_info = session_info_opt.?;
 
     if (std.mem.eql(u8, target, "/")) {
-        const html_content = catalog_index.generateHtml(allocator, database, session_info.is_admin) catch |err| {
+        const html_content = catalog_index.generateHtml(allocator, database, logs_database, session_info.username, session_info.is_admin) catch |err| {
             std.debug.print("Catalog error: {}\n", .{err});
             try request.respond("Internal Server Error", .{ .status = .internal_server_error });
             return true;

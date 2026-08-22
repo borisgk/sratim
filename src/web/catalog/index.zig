@@ -2,13 +2,20 @@ const std = @import("std");
 const template_engine = @import("../../core/template.zig");
 const db_mod = @import("../../db/db.zig");
 const library_mod = @import("../../db/library.zig");
+const logging_mod = @import("../../db/logging.zig");
 const utils = @import("../utils.zig");
 const build_options = @import("build_options");
 
 const global_css: []const u8 = @embedFile("../style.css");
 
-/// Generates the HTML catalog of libraries.
-pub fn generateHtml(allocator: std.mem.Allocator, database: *db_mod.Database, is_admin: bool) ![]u8 {
+/// Generates the HTML catalog of libraries along with recently watched shelf.
+pub fn generateHtml(
+    allocator: std.mem.Allocator,
+    database: *db_mod.Database,
+    logs_database: *db_mod.Database,
+    username: []const u8,
+    is_admin: bool,
+) ![]u8 {
     const libraries = try library_mod.getLibraries(database, allocator);
     defer {
         for (libraries) |lib| {
@@ -50,6 +57,209 @@ pub fn generateHtml(allocator: std.mem.Allocator, database: *db_mod.Database, is
         }
     }
 
+    // Generate Recently Watched section for movies and episodes
+    var recently_watched_section_buf = std.ArrayList(u8).empty;
+    defer recently_watched_section_buf.deinit(allocator);
+
+    const recent_items = logging_mod.getRecentlyWatched(logs_database, allocator, username, 20) catch &[_]logging_mod.RecentlyWatchedItem{};
+    defer allocator.free(recent_items);
+
+    var recent_cards_buf = std.ArrayList(u8).empty;
+    defer recent_cards_buf.deinit(allocator);
+
+    var recent_count: usize = 0;
+
+    for (recent_items) |item| {
+        if (item.media_type == .movie) {
+            var movie_stmt = database.prepare(
+                \\SELECT title, clean_name, poster_path, is_present 
+                \\FROM movies 
+                \\WHERE id = ?1;
+            ) catch continue;
+            defer movie_stmt.finalize();
+            movie_stmt.bindInt64(1, item.item_id) catch continue;
+
+            if ((movie_stmt.step() catch null) == .row) {
+                const is_present = movie_stmt.columnInt(3);
+                if (is_present != 1) continue;
+
+                const title_opt = movie_stmt.columnText(0);
+                const clean_name = movie_stmt.columnText(1) orelse "Movie";
+                const poster_path_opt = movie_stmt.columnText(2);
+                const display_title = if (title_opt) |t| t else clean_name;
+
+                var progress_pct: ?f64 = null;
+                if (item.duration > 0) {
+                    progress_pct = (item.position / item.duration) * 100.0;
+                }
+
+                recent_count += 1;
+                try recent_cards_buf.appendSlice(allocator, "        <div class=\"movie-item\">\n");
+                const card_header = try std.fmt.allocPrint(allocator, "            <div class=\"movie-card{s}\" data-id=\"{d}\" data-name=\"", .{
+                    if (poster_path_opt != null and poster_path_opt.?.len > 0) " has-poster" else "",
+                    item.item_id,
+                });
+                defer allocator.free(card_header);
+                try recent_cards_buf.appendSlice(allocator, card_header);
+                try utils.escapeHtml(&recent_cards_buf, allocator, display_title);
+                try recent_cards_buf.appendSlice(allocator, "\">\n");
+
+                if (poster_path_opt != null and poster_path_opt.?.len > 0) {
+                    try recent_cards_buf.appendSlice(allocator, "                <img class=\"poster-img\" loading=\"lazy\" alt=\"poster\" src=\"/images/posters/w185");
+                    try recent_cards_buf.appendSlice(allocator, poster_path_opt.?);
+                    try recent_cards_buf.appendSlice(allocator, "\">\n");
+                }
+
+                const play_link = try std.fmt.allocPrint(allocator,
+                    \\            <a href="/details?id={d}" class="play-link"></a>
+                    \\            <div class="card-content">
+                    \\                <div class="card-top">
+                    \\                    <div class="icon-wrapper">
+                    \\                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+                    \\                            <path d="M15 10l5-3.07v10.14L15 14v-4z" stroke-linecap="round" stroke-linejoin="round"/>
+                    \\                            <rect x="4" y="6" width="11" height="12" rx="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    \\                        </svg>
+                    \\                    </div>
+                    \\                </div>
+                    \\                <div class="card-bottom">
+                    \\                    <span class="type-badge">Movie</span>
+                    \\                </div>
+                    \\            </div>
+                    \\
+                , .{item.item_id});
+                defer allocator.free(play_link);
+                try recent_cards_buf.appendSlice(allocator, play_link);
+
+                if (progress_pct) |pct| {
+                    if (pct >= 1.0 and pct < 95.0) {
+                        const progress_str = try std.fmt.allocPrint(allocator,
+                            \\            <div class="card-progress">
+                            \\                <div class="progress-fill" style="width: {d:.1}%;"></div>
+                            \\            </div>
+                            \\
+                        , .{pct});
+                        defer allocator.free(progress_str);
+                        try recent_cards_buf.appendSlice(allocator, progress_str);
+                    }
+                }
+
+                try recent_cards_buf.appendSlice(allocator, "        </div>\n        <h3 class=\"movie-title\">");
+                try utils.escapeHtml(&recent_cards_buf, allocator, display_title);
+                try recent_cards_buf.appendSlice(allocator, "</h3>\n    </div>\n");
+            }
+        } else if (item.media_type == .episode) {
+            var ep_stmt = database.prepare(
+                \\SELECT e.show_id, e.season, e.episode, e.title, e.file_path, e.is_present, s.title, s.poster_path, s.is_present
+                \\FROM episodes e
+                \\JOIN shows s ON e.show_id = s.id
+                \\WHERE e.id = ?1;
+            ) catch continue;
+            defer ep_stmt.finalize();
+            ep_stmt.bindInt64(1, item.item_id) catch continue;
+
+            if ((ep_stmt.step() catch null) == .row) {
+                const ep_is_present = ep_stmt.columnInt(5);
+                const show_is_present = ep_stmt.columnInt(8);
+                if (ep_is_present != 1 or show_is_present != 1) continue;
+
+                const season = ep_stmt.columnInt(1);
+                const episode = ep_stmt.columnInt(2);
+                const ep_title_opt = ep_stmt.columnText(3);
+                const ep_file_path = ep_stmt.columnText(4).?;
+                const show_title = ep_stmt.columnText(6).?;
+                const poster_path_opt = ep_stmt.columnText(7);
+
+                const basename = std.fs.path.basename(ep_file_path);
+                const ep_display_name = if (ep_title_opt) |t| t else basename;
+
+                var ep_badge_buf: [32]u8 = undefined;
+                const ep_badge = std.fmt.bufPrint(&ep_badge_buf, "S{d}:E{d}", .{ season, episode }) catch "TV";
+
+                var progress_pct: ?f64 = null;
+                if (item.duration > 0) {
+                    progress_pct = (item.position / item.duration) * 100.0;
+                }
+
+                recent_count += 1;
+                try recent_cards_buf.appendSlice(allocator, "        <div class=\"movie-item\">\n");
+                const card_header = try std.fmt.allocPrint(allocator, "            <div class=\"movie-card{s}\" data-id=\"{d}\" data-name=\"", .{
+                    if (poster_path_opt != null and poster_path_opt.?.len > 0) " has-poster" else "",
+                    item.item_id,
+                });
+                defer allocator.free(card_header);
+                try recent_cards_buf.appendSlice(allocator, card_header);
+                try utils.escapeHtml(&recent_cards_buf, allocator, show_title);
+                try recent_cards_buf.appendSlice(allocator, " ");
+                try utils.escapeHtml(&recent_cards_buf, allocator, ep_display_name);
+                try recent_cards_buf.appendSlice(allocator, "\">\n");
+
+                if (poster_path_opt != null and poster_path_opt.?.len > 0) {
+                    try recent_cards_buf.appendSlice(allocator, "                <img class=\"poster-img\" loading=\"lazy\" alt=\"poster\" src=\"/images/posters/w185");
+                    try recent_cards_buf.appendSlice(allocator, poster_path_opt.?);
+                    try recent_cards_buf.appendSlice(allocator, "\">\n");
+                }
+
+                const play_link = try std.fmt.allocPrint(allocator,
+                    \\            <a href="/player?episode_id={d}" class="play-link"></a>
+                    \\            <div class="card-content">
+                    \\                <div class="card-top">
+                    \\                    <div class="icon-wrapper">
+                    \\                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+                    \\                            <rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect>
+                    \\                            <polyline points="17 2 12 7 7 2"></polyline>
+                    \\                        </svg>
+                    \\                    </div>
+                    \\                </div>
+                    \\                <div class="card-bottom">
+                    \\                    <span class="type-badge">{s}</span>
+                    \\                </div>
+                    \\            </div>
+                    \\
+                , .{ item.item_id, ep_badge });
+                defer allocator.free(play_link);
+                try recent_cards_buf.appendSlice(allocator, play_link);
+
+                if (progress_pct) |pct| {
+                    if (pct >= 1.0 and pct < 95.0) {
+                        const progress_str = try std.fmt.allocPrint(allocator,
+                            \\            <div class="card-progress">
+                            \\                <div class="progress-fill" style="width: {d:.1}%;"></div>
+                            \\            </div>
+                            \\
+                        , .{pct});
+                        defer allocator.free(progress_str);
+                        try recent_cards_buf.appendSlice(allocator, progress_str);
+                    }
+                }
+
+                try recent_cards_buf.appendSlice(allocator, "        </div>\n        <h3 class=\"movie-title\" title=\"");
+                try utils.escapeHtml(&recent_cards_buf, allocator, show_title);
+                try recent_cards_buf.appendSlice(allocator, " - ");
+                try utils.escapeHtml(&recent_cards_buf, allocator, ep_display_name);
+                try recent_cards_buf.appendSlice(allocator, "\">");
+                try utils.escapeHtml(&recent_cards_buf, allocator, show_title);
+                try recent_cards_buf.appendSlice(allocator, "</h3>\n        <p class=\"movie-subtitle\" style=\"font-size: 0.8rem; color: #9ca3af; margin: 4px 0 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;\">");
+                try utils.escapeHtml(&recent_cards_buf, allocator, ep_badge);
+                try recent_cards_buf.appendSlice(allocator, " - ");
+                try utils.escapeHtml(&recent_cards_buf, allocator, ep_display_name);
+                try recent_cards_buf.appendSlice(allocator, "</p>\n    </div>\n");
+            }
+        }
+    }
+
+    if (recent_count > 0) {
+        try recently_watched_section_buf.appendSlice(allocator,
+            \\<div id="recently-watched-section" class="media-section" style="margin-top: 40px;">
+            \\    <h2 class="section-title">Recently Watched</h2>
+            \\    <div class="horizontal-scroll-row">
+        );
+        try recently_watched_section_buf.appendSlice(allocator, recent_cards_buf.items);
+        try recently_watched_section_buf.appendSlice(allocator,
+            \\    </div>
+            \\</div>
+        );
+    }
+
     const admin_link_html = if (is_admin)
         \\<a href="/admin" class="admin-btn">
         \\    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
@@ -64,6 +274,7 @@ pub fn generateHtml(allocator: std.mem.Allocator, database: *db_mod.Database, is
     return template_engine.render(allocator, @embedFile("../templates/catalog.html"), .{
         .INLINE_CSS = global_css,
         .LIBRARY_CARDS = cards_buf.items,
+        .RECENTLY_WATCHED_SECTION = recently_watched_section_buf.items,
         .ADMIN_LINK = admin_link_html,
         .APP_VERSION = build_options.version,
     });

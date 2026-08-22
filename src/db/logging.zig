@@ -14,6 +14,14 @@ pub const EpisodeProgressInfo = struct {
     duration: f64,
 };
 
+pub const RecentlyWatchedItem = struct {
+    media_type: enum { movie, episode },
+    item_id: i64,
+    position: f64,
+    duration: f64,
+    updated_at: i64,
+};
+
 /// Initializes the logging and progress database schema.
 pub fn initLogsSchema(database: *db_mod.Database) !void {
     try database.exec(
@@ -303,6 +311,46 @@ pub fn resetEpisodePlaybackProgress(database: *db_mod.Database, username: []cons
     _ = try stmt.step();
 }
 
+/// Retrieves recently watched movies and episodes for a given user, ordered by most recently updated.
+pub fn getRecentlyWatched(database: *db_mod.Database, allocator: std.mem.Allocator, username: []const u8, limit: usize) ![]RecentlyWatchedItem {
+    var list = std.ArrayList(RecentlyWatchedItem).empty;
+    defer list.deinit(allocator);
+
+    var stmt = try database.prepare(
+        \\SELECT 'movie', movie_id, position, duration, updated_at
+        \\FROM playback_progress
+        \\WHERE username = ?1
+        \\UNION ALL
+        \\SELECT 'episode', episode_id, position, duration, updated_at
+        \\FROM episode_playback_progress
+        \\WHERE username = ?1
+        \\ORDER BY updated_at DESC
+        \\LIMIT ?2;
+    );
+    defer stmt.finalize();
+
+    try stmt.bindText(1, username);
+    try stmt.bindInt64(2, @intCast(limit));
+
+    while ((try stmt.step()) == .row) {
+        const type_str = stmt.columnText(0).?;
+        const item_id = stmt.columnInt64(1);
+        const position = c.sqlite3_column_double(stmt.stmt, 2);
+        const duration = c.sqlite3_column_double(stmt.stmt, 3);
+        const updated_at = stmt.columnInt64(4);
+
+        try list.append(allocator, .{
+            .media_type = if (std.mem.eql(u8, type_str, "movie")) .movie else .episode,
+            .item_id = item_id,
+            .position = position,
+            .duration = duration,
+            .updated_at = updated_at,
+        });
+    }
+
+    return try list.toOwnedSlice(allocator);
+}
+
 test "logging: test login and playback event logs" {
     const allocator = std.testing.allocator;
     
@@ -321,6 +369,11 @@ test "logging: test login and playback event logs" {
     const progress = try getPlaybackProgress(&db, "testuser", 1);
     try std.testing.expectEqual(@as(f64, 42.5), progress);
     
+    // Test episode playback progress
+    try saveEpisodePlaybackProgress(&db, "testuser", 10, 15.0, 60.0);
+    const ep_progress = try getEpisodePlaybackProgress(&db, "testuser", 10);
+    try std.testing.expectEqual(@as(f64, 15.0), ep_progress);
+
     // Test library progress list
     const items = try getProgressForUser(&db, allocator, "testuser");
     defer {
@@ -331,6 +384,13 @@ test "logging: test login and playback event logs" {
     try std.testing.expectEqual(@as(i64, 1), items[0].movie_id);
     try std.testing.expectEqual(@as(f64, 42.5), items[0].position);
     try std.testing.expectEqual(@as(f64, 120.0), items[0].duration);
+
+    // Test recently watched list
+    const recent = try getRecentlyWatched(&db, allocator, "testuser", 10);
+    defer {
+        allocator.free(recent);
+    }
+    try std.testing.expectEqual(@as(usize, 2), recent.len);
 
     // Test playback progress deletion
     try resetPlaybackProgress(&db, "testuser", 1);
