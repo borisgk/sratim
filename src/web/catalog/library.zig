@@ -3,104 +3,19 @@ const template_engine = @import("../../core/template.zig");
 const db_mod = @import("../../db/db.zig");
 const library_mod = @import("../../db/library.zig");
 const logging_mod = @import("../../db/logging.zig");
-const utils = @import("../utils.zig");
+const cards = @import("cards.zig");
 
 const global_css: []const u8 = @embedFile("../style.css");
 
-fn appendMovieCard(
-    cards_buf: *std.ArrayList(u8),
+pub fn generateLibraryContentHtml(
     allocator: std.mem.Allocator,
-    movie_id: i64,
-    file_path: []const u8,
-    clean_name: []const u8,
-    title_opt: ?[]const u8,
-    poster_path_opt: ?[]const u8,
-    tmdb_id: ?i64,
-    progress_list: []const logging_mod.ProgressInfo,
+    io: std.Io,
+    database: *db_mod.Database,
+    logs_database: *db_mod.Database,
+    library_id: i64,
+    username: []const u8,
     is_admin: bool,
-) !void {
-    var tmdb_id_buf: [32]u8 = undefined;
-    const tmdb_id_str = if (tmdb_id) |tid| (std.fmt.bufPrint(&tmdb_id_buf, "{d}", .{tid}) catch "") else "";
-
-    const display_title = if (title_opt) |t| t else clean_name;
-
-    var progress_pct: ?f64 = null;
-    for (progress_list) |item| {
-        if (item.movie_id == movie_id) {
-            if (item.duration > 0) {
-                progress_pct = (item.position / item.duration) * 100.0;
-            }
-            break;
-        }
-    }
-
-    try cards_buf.appendSlice(allocator, "        <div class=\"movie-item\">\n");
-    const card_header = try std.fmt.allocPrint(allocator, "            <div class=\"movie-card{s}\" data-id=\"{d}\" data-tmdb-id=\"{s}\" data-name=\"", .{
-        if (poster_path_opt != null and poster_path_opt.?.len > 0) " has-poster" else "",
-        movie_id,
-        tmdb_id_str,
-    });
-    defer allocator.free(card_header);
-    try cards_buf.appendSlice(allocator, card_header);
-    try utils.escapeHtml(cards_buf, allocator, display_title);
-    try cards_buf.appendSlice(allocator, " ");
-    try utils.escapeHtml(cards_buf, allocator, file_path);
-    try cards_buf.appendSlice(allocator, "\">\n");
-    
-    if (poster_path_opt != null and poster_path_opt.?.len > 0) {
-        try cards_buf.appendSlice(allocator, "                <img class=\"poster-img\" loading=\"lazy\" alt=\"poster\" src=\"/images/posters/w185");
-        try cards_buf.appendSlice(allocator, poster_path_opt.?);
-        try cards_buf.appendSlice(allocator, "\">\n");
-    }
-    if (is_admin) {
-        try cards_buf.appendSlice(allocator, "            <button class=\"context-menu-btn\" title=\"Actions\">\n                <svg viewBox=\"0 0 24 24\" fill=\"currentColor\" width=\"20\" height=\"20\">\n                    <circle cx=\"12\" cy=\"5\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"12\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"19\" r=\"2\"/>\n                </svg>\n            </button>\n            <div class=\"context-dropdown\">\n");
-        const dropdown_content = try std.fmt.allocPrint(allocator,
-            \\                <button class="dropdown-item lookup-btn" data-id="{d}" data-type="movie">Lookup Metadata</button>
-            \\                <button class="dropdown-item manual-id-btn" data-id="{d}" data-type="movie" data-tmdb-id="{s}">Manual TMDB ID</button>
-            \\            </div>
-            \\
-        , .{ movie_id, movie_id, tmdb_id_str });
-        defer allocator.free(dropdown_content);
-        try cards_buf.appendSlice(allocator, dropdown_content);
-    }
-
-    const play_link = try std.fmt.allocPrint(allocator,
-        \\            <a href="/details?id={d}" class="play-link"></a>
-        \\
-        \\            <div class="card-content">
-        \\                <div class="card-top">
-        \\                    <div class="icon-wrapper">
-        \\                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
-        \\                            <path d="M15 10l5-3.07v10.14L15 14v-4z" stroke-linecap="round" stroke-linejoin="round"/>
-        \\                            <rect x="4" y="6" width="11" height="12" rx="2" stroke-linecap="round" stroke-linejoin="round"/>
-        \\                        </svg>
-        \\                    </div>
-        \\                </div>
-        \\            </div>
-        \\
-    , .{movie_id});
-    defer allocator.free(play_link);
-    try cards_buf.appendSlice(allocator, play_link);
-
-    if (progress_pct) |pct| {
-        if (pct >= 1.0 and pct < 95.0) {
-            const progress_str = try std.fmt.allocPrint(allocator,
-                \\            <div class="card-progress">
-                \\                <div class="progress-fill" style="width: {d:.1}%;"></div>
-                \\            </div>
-                \\
-            , .{pct});
-            defer allocator.free(progress_str);
-            try cards_buf.appendSlice(allocator, progress_str);
-        }
-    }
-
-    try cards_buf.appendSlice(allocator, "        </div>\n        <h3 class=\"movie-title\">");
-    try utils.escapeHtml(cards_buf, allocator, display_title);
-    try cards_buf.appendSlice(allocator, "</h3>\n    </div>\n");
-}
-
-pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, logs_database: *db_mod.Database, library_id: i64, username: []const u8, is_admin: bool) !?[]u8 {
+) !?[]u8 {
     _ = io;
     const lib_opt = try library_mod.getLibraryById(database, allocator, library_id);
     if (lib_opt == null) return null;
@@ -127,9 +42,7 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
     defer if (is_admin) allocator.free(rescan_btn_html);
 
     const progress_list = logging_mod.getProgressForUser(logs_database, allocator, username) catch &[_]logging_mod.ProgressInfo{};
-    defer {
-        allocator.free(progress_list);
-    }
+    defer allocator.free(progress_list);
 
     var cards_buf = std.ArrayList(u8).empty;
     defer cards_buf.deinit(allocator);
@@ -158,57 +71,9 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
             const title = stmt.columnText(1).?;
             const poster_path_opt = stmt.columnText(2);
             const tmdb_id_val = stmt.columnText(3);
-            const tmdb_id_str = if (tmdb_id_val != null) stmt.columnText(3).? else "";
+            const tmdb_id = if (tmdb_id_val != null) stmt.columnInt64(3) else null;
 
-            try cards_buf.appendSlice(allocator, "    <div class=\"movie-item\">\n");
-            const card_header = try std.fmt.allocPrint(allocator, "        <div class=\"movie-card{s}\" data-id=\"{d}\" data-tmdb-id=\"{s}\" data-name=\"", .{
-                if (poster_path_opt != null and poster_path_opt.?.len > 0) " has-poster" else "",
-                show_id,
-                tmdb_id_str,
-            });
-            defer allocator.free(card_header);
-            try cards_buf.appendSlice(allocator, card_header);
-            try utils.escapeHtml(&cards_buf, allocator, title);
-            try cards_buf.appendSlice(allocator, "\">\n");
-            
-            if (poster_path_opt != null and poster_path_opt.?.len > 0) {
-                try cards_buf.appendSlice(allocator, "            <img class=\"poster-img\" loading=\"lazy\" alt=\"poster\" src=\"/images/posters/w185");
-                try cards_buf.appendSlice(allocator, poster_path_opt.?);
-                try cards_buf.appendSlice(allocator, "\">\n");
-            }
-
-            if (is_admin) {
-                try cards_buf.appendSlice(allocator, "            <button class=\"context-menu-btn\" title=\"Actions\">\n                <svg viewBox=\"0 0 24 24\" fill=\"currentColor\" width=\"20\" height=\"20\">\n                    <circle cx=\"12\" cy=\"5\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"12\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"19\" r=\"2\"/>\n                </svg>\n            </button>\n            <div class=\"context-dropdown\">\n");
-                const admin_dropdown = try std.fmt.allocPrint(allocator,
-                    \\                <button class="dropdown-item lookup-btn" data-id="{d}" data-type="show">Lookup Metadata</button>
-                    \\                <button class="dropdown-item manual-id-btn" data-id="{d}" data-type="show" data-tmdb-id="{s}">Manual TMDB ID</button>
-                    \\            </div>
-                    \\
-                , .{ show_id, show_id, tmdb_id_str });
-                defer allocator.free(admin_dropdown);
-                try cards_buf.appendSlice(allocator, admin_dropdown);
-            }
-
-            const dropdown_content = try std.fmt.allocPrint(allocator,
-                \\            <a href="/show?id={d}" class="play-link"></a>
-                \\            <div class="card-content">
-                \\                <div class="card-top">
-                \\                    <div class="icon-wrapper">
-                \\                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
-                \\                            <rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect>
-                \\                            <polyline points="17 2 12 7 7 2"></polyline>
-                \\                        </svg>
-                \\                    </div>
-                \\                </div>
-                \\            </div>
-                \\
-            , .{ show_id });
-            defer allocator.free(dropdown_content);
-            try cards_buf.appendSlice(allocator, dropdown_content);
-
-            try cards_buf.appendSlice(allocator, "        </div>\n        <h3 class=\"movie-title\">");
-            try utils.escapeHtml(&cards_buf, allocator, title);
-            try cards_buf.appendSlice(allocator, "</h3>\n    </div>\n");
+            try cards.appendShowCard(&cards_buf, allocator, show_id, title, poster_path_opt, tmdb_id, is_admin);
         }
     } else {
         var recent_stmt = try database.prepare(
@@ -235,7 +100,17 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
             const tmdb_id_val = recent_stmt.columnText(5);
             const tmdb_id = if (tmdb_id_val != null) recent_stmt.columnInt64(5) else null;
 
-            try appendMovieCard(&recent_cards_buf, allocator, movie_id, file_path, clean_name, title_opt, poster_path_opt, tmdb_id, progress_list, is_admin);
+            var progress_pct: ?f64 = null;
+            for (progress_list) |item| {
+                if (item.movie_id == movie_id) {
+                    if (item.duration > 0) {
+                        progress_pct = (item.position / item.duration) * 100.0;
+                    }
+                    break;
+                }
+            }
+
+            try cards.appendMovieCard(&recent_cards_buf, allocator, movie_id, file_path, clean_name, title_opt, poster_path_opt, tmdb_id, progress_pct, is_admin);
         }
 
         if (recent_count > 0) {
@@ -278,7 +153,17 @@ pub fn generateLibraryContentHtml(allocator: std.mem.Allocator, io: std.Io, data
             const tmdb_id_val = stmt.columnText(5);
             const tmdb_id = if (tmdb_id_val != null) stmt.columnInt64(5) else null;
 
-            try appendMovieCard(&cards_buf, allocator, movie_id, file_path, clean_name, title_opt, poster_path_opt, tmdb_id, progress_list, is_admin);
+            var progress_pct: ?f64 = null;
+            for (progress_list) |item| {
+                if (item.movie_id == movie_id) {
+                    if (item.duration > 0) {
+                        progress_pct = (item.position / item.duration) * 100.0;
+                    }
+                    break;
+                }
+            }
+
+            try cards.appendMovieCard(&cards_buf, allocator, movie_id, file_path, clean_name, title_opt, poster_path_opt, tmdb_id, progress_pct, is_admin);
         }
     }
 

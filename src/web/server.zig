@@ -127,27 +127,8 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             continue;
         }
 
-        // Route: API v1 Libraries (Protected)
-        if (std.mem.eql(u8, target, "/api/v1/libraries")) {
-            api_v1_router.handleGetLibraries(&request, allocator, database) catch return;
-            continue;
-        }
-
-        // Route: API v1 Library Items (Protected)
-        if (std.mem.startsWith(u8, target, "/api/v1/library?")) {
-            api_v1_router.handleGetLibraryItems(&request, allocator, database) catch return;
-            continue;
-        }
-        
-        // Route: API v1 Movie Details (Protected)
-        if (std.mem.startsWith(u8, target, "/api/v1/movie?")) {
-            api_v1_router.handleGetMovie(&request, allocator, database, config, io) catch return;
-            continue;
-        }
-
-        // Route: API v1 Show Details (Protected)
-        if (std.mem.startsWith(u8, target, "/api/v1/show?")) {
-            api_v1_router.handleGetShow(&request, allocator, database, config, io) catch return;
+        // Route: API v1 Handlers
+        if (api_v1_router.route(&request, allocator, io, config, database, logs_database, session_info, &resp_buf) catch return) {
             continue;
         }
 
