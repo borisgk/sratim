@@ -83,7 +83,8 @@ pub fn getMediaInfoFfmpeg(allocator: std.mem.Allocator, io: std.Io, file_path: [
                 codec_str = "video/mp4; codecs=\"vp09.00.10.08, mp4a.40.2\"";
             }
         } else if (stream.*.codecpar.*.codec_type == c.AVMEDIA_TYPE_AUDIO) {
-            var label: []const u8 = "Unknown";
+            var label: []const u8 = "";
+            var free_label = false;
 
             const title_entry = c.av_dict_get(stream.*.metadata, "title", null, 0);
             const lang_entry = c.av_dict_get(stream.*.metadata, "language", null, 0);
@@ -91,8 +92,17 @@ pub fn getMediaInfoFfmpeg(allocator: std.mem.Allocator, io: std.Io, file_path: [
             if (title_entry != null) {
                 label = std.mem.span(title_entry.*.value);
             } else if (lang_entry != null) {
-                label = std.mem.span(lang_entry.*.value);
+                const lang_val = std.mem.span(lang_entry.*.value);
+                if (!std.ascii.eqlIgnoreCase(lang_val, "und") and !std.ascii.eqlIgnoreCase(lang_val, "undetermined")) {
+                    label = native_metadata.getLanguageName(lang_val) orelse lang_val;
+                }
             }
+
+            if (label.len == 0) {
+                label = try std.fmt.allocPrint(allocator, "Audio Track {d}", .{audio_tracks.items.len + 1});
+                free_label = true;
+            }
+            defer if (free_label) allocator.free(label);
 
             const label_dup = try allocator.dupe(u8, label);
             try audio_tracks.append(allocator, .{ .id = i, .label = label_dup });
@@ -106,21 +116,35 @@ pub fn getMediaInfoFfmpeg(allocator: std.mem.Allocator, io: std.Io, file_path: [
             }
 
             var label: []const u8 = "";
-            var lang: []const u8 = "";
+            var lang: []const u8 = "und";
 
             const title_entry = c.av_dict_get(stream.*.metadata, "title", null, 0);
             const lang_entry = c.av_dict_get(stream.*.metadata, "language", null, 0);
 
-            if (title_entry != null) {
-                label = std.mem.span(title_entry.*.value);
-            }
             if (lang_entry != null) {
-                lang = std.mem.span(lang_entry.*.value);
-                if (label.len == 0) label = lang;
+                const lang_val = std.mem.span(lang_entry.*.value);
+                if (!std.ascii.eqlIgnoreCase(lang_val, "und") and !std.ascii.eqlIgnoreCase(lang_val, "undetermined")) {
+                    lang = lang_val;
+                }
             }
+
+            if (title_entry != null) {
+                const title_val = std.mem.span(title_entry.*.value);
+                if (title_val.len > 0 and !std.ascii.eqlIgnoreCase(title_val, "und")) {
+                    label = title_val;
+                }
+            }
+
+            var free_label = false;
             if (label.len == 0) {
-                label = "Subtitle Track";
+                if (!std.ascii.eqlIgnoreCase(lang, "und")) {
+                    label = native_metadata.getLanguageName(lang) orelse lang;
+                } else {
+                    label = try std.fmt.allocPrint(allocator, "Subtitle Track {d}", .{subtitle_tracks.items.len + 1});
+                    free_label = true;
+                }
             }
+            defer if (free_label) allocator.free(label);
 
             const is_forced = (stream.*.disposition & c.AV_DISPOSITION_FORCED) != 0 or
                 (std.ascii.indexOfIgnoreCase(label, "forced") != null);

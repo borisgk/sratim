@@ -88,4 +88,6 @@ pub fn main() !void {
 
 test {
     _ = @import("media/subtitles.zig");
+    _ = @import("media/native/metadata.zig");
+    _ = @import("media/native/detector.zig");
 }

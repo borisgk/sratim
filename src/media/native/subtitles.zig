@@ -80,6 +80,257 @@ pub fn cleanAssText(out: *std.ArrayList(u8), allocator: std.mem.Allocator, ass_r
     }
 }
 
+/// Peeks a small sample of text from a specific subtitle stream for language detection.
+pub fn peekSubtitleSample(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    file_path: [:0]const u8,
+    target_stream_idx: usize,
+) !?[]u8 {
+    const file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
+    defer file.close(io);
+
+    var file_buf: [65536]u8 = undefined;
+    var file_reader = file.reader(io, &file_buf);
+    const r = &file_reader.interface;
+
+    const ebml_hdr = (try ebml.readElementHeader(r)) orelse return null;
+    if (ebml_hdr.id != ebml.ID_EBML) return null;
+    try ebml.skipBytes(r, ebml_hdr.size);
+
+    const seg_hdr = (try ebml.readElementHeader(r)) orelse return null;
+    if (seg_hdr.id != ebml.ID_SEGMENT) return null;
+
+    var current_stream_idx: usize = 0;
+    var target_track_num: ?u64 = null;
+    var first_cluster_elem: ?ebml.ElementHeader = null;
+
+    while (true) {
+        const elem = (try ebml.readElementHeader(r)) orelse break;
+
+        if (elem.id == ebml.ID_TRACKS) {
+            var tracks_rem = elem.size;
+            while (tracks_rem > 0) {
+                const sub = (try ebml.readElementHeader(r)) orelse break;
+                tracks_rem -= sub.header_size;
+                if (sub.size != ebml.UNKNOWN_SIZE and sub.size > tracks_rem) break;
+
+                if (sub.id == ebml.ID_TRACK_ENTRY) {
+                    var entry_rem = sub.size;
+                    var t_num: ?u64 = null;
+                    var t_type: ?u64 = null;
+
+                    while (entry_rem > 0) {
+                        const trk_child = (try ebml.readElementHeader(r)) orelse break;
+                        entry_rem -= trk_child.header_size;
+                        if (trk_child.size != ebml.UNKNOWN_SIZE and trk_child.size > entry_rem) break;
+
+                        if (trk_child.id == ebml.ID_TRACK_NUMBER) {
+                            t_num = try ebml.readUint(r, trk_child.size);
+                        } else if (trk_child.id == ebml.ID_TRACK_TYPE) {
+                            t_type = try ebml.readUint(r, trk_child.size);
+                        } else {
+                            try ebml.skipBytes(r, trk_child.size);
+                        }
+                        if (trk_child.size != ebml.UNKNOWN_SIZE) entry_rem -= trk_child.size;
+                    }
+
+                    if (t_type) |tt| {
+                        if (current_stream_idx == target_stream_idx and tt == 17) {
+                            if (t_num) |num| {
+                                target_track_num = num;
+                            }
+                        }
+                        current_stream_idx += 1;
+                    }
+                } else {
+                    try ebml.skipBytes(r, sub.size);
+                }
+                if (sub.size != ebml.UNKNOWN_SIZE) tracks_rem -= sub.size;
+            }
+        } else if (elem.id == ebml.ID_CLUSTER) {
+            if (first_cluster_elem == null) {
+                first_cluster_elem = elem;
+            }
+            break;
+        } else {
+            if (elem.size != ebml.UNKNOWN_SIZE) {
+                try ebml.skipBytes(r, elem.size);
+            }
+        }
+    }
+
+    if (target_track_num == null or first_cluster_elem == null) {
+        return null;
+    }
+
+    var sample_buf = std.ArrayList(u8).empty;
+    defer sample_buf.deinit(allocator);
+
+    var cluster_elem: ?ebml.ElementHeader = first_cluster_elem;
+    var cues_collected: usize = 0;
+
+    var text_buf = std.ArrayList(u8).empty;
+    defer text_buf.deinit(allocator);
+
+    while (cluster_elem) |ce| {
+        var cluster_rem: u64 = ce.size;
+
+        while (cluster_rem > 0) {
+            const sub = (try ebml.readElementHeader(r)) orelse break;
+            cluster_rem -= sub.header_size;
+            if (sub.size != ebml.UNKNOWN_SIZE and sub.size > cluster_rem) break;
+
+            if (sub.id == ebml.ID_SIMPLE_BLOCK or sub.id == ebml.ID_BLOCK) {
+                if (sub.size < 4) {
+                    try ebml.skipBytes(r, sub.size);
+                    cluster_rem -= sub.size;
+                    continue;
+                }
+
+                const peek_len: usize = @intCast(@min(sub.size, 16));
+                var header_buf: [16]u8 = undefined;
+                try r.readSliceAll(header_buf[0..peek_len]);
+
+                const track_res = ebml.decodeVint(header_buf[0..peek_len]) catch {
+                    try ebml.skipBytes(r, sub.size - peek_len);
+                    cluster_rem -= sub.size;
+                    continue;
+                };
+
+                if (track_res.value != target_track_num.?) {
+                    try ebml.skipBytes(r, sub.size - peek_len);
+                    cluster_rem -= sub.size;
+                    continue;
+                }
+
+                const hdr_len = track_res.len + 3;
+                if (sub.size < hdr_len) {
+                    try ebml.skipBytes(r, sub.size - peek_len);
+                    cluster_rem -= sub.size;
+                    continue;
+                }
+
+                const payload_len: usize = @intCast(sub.size - hdr_len);
+                const payload = try allocator.alloc(u8, payload_len);
+                defer allocator.free(payload);
+
+                const already_in_hdr = if (peek_len > hdr_len) peek_len - hdr_len else 0;
+                if (already_in_hdr > 0) {
+                    @memcpy(payload[0..already_in_hdr], header_buf[hdr_len..peek_len]);
+                }
+                const rem_to_read = payload_len - already_in_hdr;
+                if (rem_to_read > 0) {
+                    try r.readSliceAll(payload[already_in_hdr..]);
+                }
+                cluster_rem -= sub.size;
+
+                text_buf.clearRetainingCapacity();
+                try cleanAssText(&text_buf, allocator, payload);
+                const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
+                if (trimmed.len > 0) {
+                    if (sample_buf.items.len > 0) try sample_buf.append(allocator, ' ');
+                    try sample_buf.appendSlice(allocator, trimmed);
+                    cues_collected += 1;
+                    if (cues_collected >= 3 or sample_buf.items.len >= 300) {
+                        return try sample_buf.toOwnedSlice(allocator);
+                    }
+                }
+            } else if (sub.id == ebml.ID_BLOCK_GROUP) {
+                var bg_rem: u64 = sub.size;
+                var block_payload: ?[]u8 = null;
+                defer if (block_payload) |bp| allocator.free(bp);
+
+                while (bg_rem > 0) {
+                    const bg_child = (try ebml.readElementHeader(r)) orelse break;
+                    bg_rem -= bg_child.header_size;
+                    if (bg_child.size != ebml.UNKNOWN_SIZE and bg_child.size > bg_rem) break;
+
+                    if (bg_child.id == ebml.ID_BLOCK) {
+                        if (bg_child.size < 4) {
+                            try ebml.skipBytes(r, bg_child.size);
+                            bg_rem -= bg_child.size;
+                            continue;
+                        }
+
+                        const peek_len: usize = @intCast(@min(bg_child.size, 16));
+                        var header_buf: [16]u8 = undefined;
+                        try r.readSliceAll(header_buf[0..peek_len]);
+
+                        const track_res = ebml.decodeVint(header_buf[0..peek_len]) catch {
+                            try ebml.skipBytes(r, bg_child.size - peek_len);
+                            bg_rem -= bg_child.size;
+                            continue;
+                        };
+                        if (track_res.value == target_track_num.?) {
+                            const hdr_len = track_res.len + 3;
+                            if (bg_child.size >= hdr_len) {
+                                const payload_len: usize = @intCast(bg_child.size - hdr_len);
+                                const p_buf = try allocator.alloc(u8, payload_len);
+                                errdefer allocator.free(p_buf);
+
+                                const already_in_hdr = if (peek_len > hdr_len) peek_len - hdr_len else 0;
+                                if (already_in_hdr > 0) {
+                                    @memcpy(p_buf[0..already_in_hdr], header_buf[hdr_len..peek_len]);
+                                }
+                                const rem_to_read = payload_len - already_in_hdr;
+                                if (rem_to_read > 0) {
+                                    try r.readSliceAll(p_buf[already_in_hdr..]);
+                                }
+                                block_payload = p_buf;
+                            } else {
+                                try ebml.skipBytes(r, bg_child.size - peek_len);
+                            }
+                        } else {
+                            try ebml.skipBytes(r, bg_child.size - peek_len);
+                        }
+                        bg_rem -= bg_child.size;
+                    } else {
+                        try ebml.skipBytes(r, bg_child.size);
+                        bg_rem -= bg_child.size;
+                    }
+                }
+
+                if (block_payload) |bp| {
+                    text_buf.clearRetainingCapacity();
+                    try cleanAssText(&text_buf, allocator, bp);
+                    const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
+                    if (trimmed.len > 0) {
+                        if (sample_buf.items.len > 0) try sample_buf.append(allocator, ' ');
+                        try sample_buf.appendSlice(allocator, trimmed);
+                        cues_collected += 1;
+                        if (cues_collected >= 3 or sample_buf.items.len >= 300) {
+                            return try sample_buf.toOwnedSlice(allocator);
+                        }
+                    }
+                }
+                cluster_rem -= sub.size;
+            } else {
+                if (sub.size != ebml.UNKNOWN_SIZE) {
+                    try ebml.skipBytes(r, sub.size);
+                    cluster_rem -= sub.size;
+                }
+            }
+        }
+
+        cluster_elem = null;
+        while (true) {
+            const next_elem = (try ebml.readElementHeader(r)) orelse break;
+            if (next_elem.id == ebml.ID_CLUSTER) {
+                cluster_elem = next_elem;
+                break;
+            } else if (next_elem.size != ebml.UNKNOWN_SIZE) {
+                try ebml.skipBytes(r, next_elem.size);
+            }
+        }
+    }
+
+    if (sample_buf.items.len > 0) {
+        return try sample_buf.toOwnedSlice(allocator);
+    }
+    return null;
+}
+
 /// Pure Zig extraction of embedded subtitles from an MKV file directly to a WebVTT writer.
 pub fn extractMkvSubtitlesVtt(
     allocator: std.mem.Allocator,
