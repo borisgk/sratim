@@ -1,0 +1,16 @@
+{
+  "name": "sratim",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sratim video playback test suite with Playwright",
+  "type": "module",
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:report": "playwright show-report tests/e2e-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0"
+  }
+}

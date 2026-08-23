@@ -17,4 +17,7 @@ AGENTS.md
 .DS_Store
 plans/
 sync*
-tests/
+tests/*.mkv
+tests/e2e-report/
+node_modules/
+test-results/
