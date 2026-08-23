@@ -106,8 +106,9 @@ pub fn extractMkvSubtitlesVtt(
     if (seg_hdr.id != ebml.ID_SEGMENT) return error.NotMatroska;
 
     var timestamp_scale: f64 = 1_000_000.0; // Default 1ms = 1,000,000 ns
-    var target_track_number: ?u64 = null;
     var current_stream_idx: usize = 0;
+    var target_track_num: ?u64 = null;
+    var first_cluster_elem: ?ebml.ElementHeader = null;
 
     // Scan segment level-1 elements
     while (true) {
@@ -155,10 +156,10 @@ pub fn extractMkvSubtitlesVtt(
                         if (trk_child.size != ebml.UNKNOWN_SIZE) entry_rem -= trk_child.size;
                     }
 
-                    if (t_num != null and t_type != null) {
-                        if (current_stream_idx == target_stream_idx) {
-                            if (t_type.? == 0x11) { // 0x11 = Subtitle
-                                target_track_number = t_num;
+                    if (t_type) |tt| {
+                        if (current_stream_idx == target_stream_idx and tt == 17) { // 17 = Subtitle
+                            if (t_num) |num| {
+                                target_track_num = num;
                             }
                         }
                         current_stream_idx += 1;
@@ -169,13 +170,11 @@ pub fn extractMkvSubtitlesVtt(
                 if (sub.size != ebml.UNKNOWN_SIZE) tracks_rem -= sub.size;
             }
         } else if (elem.id == ebml.ID_CLUSTER) {
-            if (target_track_number == null) {
-                return error.SubtitleTrackNotFound;
+            // First cluster found - save it and break to start cluster scanning
+            if (first_cluster_elem == null) {
+                first_cluster_elem = elem;
             }
-
-            try writer.writeAll("WEBVTT\n\n");
-            try parseClusters(allocator, r, elem, timestamp_scale, target_track_number.?, start_offset, writer);
-            return;
+            break;
         } else {
             // Skip other level-1 elements
             if (elem.size != ebml.UNKNOWN_SIZE) {
@@ -184,9 +183,13 @@ pub fn extractMkvSubtitlesVtt(
         }
     }
 
-    if (target_track_number == null) {
-        return error.SubtitleTrackNotFound;
+    if (target_track_num == null or first_cluster_elem == null) {
+        return error.NoSubtitleStreamsFound;
     }
+
+    // Output standard WEBVTT header once before extracting cues
+    try writer.writeAll("WEBVTT\n\n");
+    try parseClusters(allocator, r, first_cluster_elem.?, timestamp_scale, target_track_num.?, start_offset, writer);
 }
 
 fn parseClusters(
@@ -351,3 +354,19 @@ test "cleanAssText" {
     try cleanAssText(&out, std.testing.allocator, raw);
     try std.testing.expectEqualStrings("Hello\nWorld!", out.items);
 }
+
+test "extractMkvSubtitlesVtt from test_sync.mkv" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    defer aw.deinit();
+
+    try extractMkvSubtitlesVtt(allocator, io, &aw.writer, "tests/test_sync.mkv", 2, 0.0);
+    const vtt = aw.written();
+    try std.testing.expect(std.mem.startsWith(u8, vtt, "WEBVTT\n\n"));
+    try std.testing.expect(std.mem.indexOf(u8, vtt, "-->") != null);
+}
+
