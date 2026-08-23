@@ -134,25 +134,29 @@
                 }
             },
 
-            setTrack(trackId, explicitStart) {
+            setTrack(trackId) {
+                if (currentSubtitleIdx === trackId && this.activeCues && this.activeCues.length > 0) {
+                    this.updateOverlay();
+                    return;
+                }
+
                 currentSubtitleIdx = trackId;
 
                 if (trackId === -1) {
                     this.activeCues = [];
                     this.updateOverlay();
                     btnSubtitles.classList.remove('active');
+                    if (this.abortController) this.abortController.abort();
                     return;
                 }
 
                 btnSubtitles.classList.add('active');
                 this.activeCues = [];
 
-                const currentPos = explicitStart !== undefined ? explicitStart : getAbsoluteTime();
-
                 if (this.abortController) this.abortController.abort();
                 this.abortController = new AbortController();
 
-                const subUrl = `/subtitles?${MEDIA_QUERY}&track=${trackId}&start=${currentPos}`;
+                const subUrl = `/subtitles?${MEDIA_QUERY}&track=${trackId}`;
                 fetch(subUrl, { signal: this.abortController.signal })
                     .then(async r => {
                         const reader = r.body.getReader();
@@ -386,7 +390,7 @@
                 retryCount = retryCount || 0;
 
                 if (currentSubtitleIdx !== -1) {
-                    SubtitleManager.setTrack(currentSubtitleIdx, startTime);
+                    SubtitleManager.updateOverlay();
                 }
 
                 if (abortController) abortController.abort();

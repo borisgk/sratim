@@ -128,7 +128,9 @@ pub fn handleSubtitles(
 
     var success = true;
     subtitles_mod.extractSubtitlesVtt(allocator, io, &dual_writer, c_full_path, track_idx.?, start_offset, config.media_engine.subtitles) catch |err| {
-        std.debug.print("Subtitle extraction stopped: {}\n", .{err});
+        if (err != error.WriteFailed and err != error.BrokenPipe and err != error.ConnectionResetByPeer and err != error.NotOpenForWriting) {
+            std.debug.print("Subtitle extraction error: {}\n", .{err});
+        }
         success = false;
     };
 
