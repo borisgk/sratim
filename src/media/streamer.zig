@@ -190,6 +190,11 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
         defer c.av_packet_unref(packet);
         if (http_ctx.has_error) break;
 
+        const stream_idx = @as(c_int, @intCast(packet.*.stream_index));
+        if (stream_idx != video_in_idx and stream_idx != audio_in_idx) {
+            continue;
+        }
+
         const in_tb = in_ctx.*.streams[@intCast(packet.*.stream_index)].*.time_base;
 
         // Fallback for missing DTS: use PTS

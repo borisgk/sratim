@@ -101,7 +101,8 @@
 
             parseVttTime(timeStr) {
                 if (!timeStr) return 0;
-                const parts = timeStr.trim().split(':');
+                const clean = timeStr.trim().split(/\s+/)[0];
+                const parts = clean.split(':');
                 let hours = 0, mins = 0, secs = 0;
                 if (parts.length === 3) {
                     hours = parseFloat(parts[0]);
@@ -111,7 +112,7 @@
                     mins = parseFloat(parts[0]);
                     secs = parseFloat(parts[1]);
                 }
-                return (hours * 3600) + (mins * 60) + secs;
+                return (hours * 3600) + (mins * 60) + (secs || 0);
             },
 
             updateOverlay() {
@@ -639,6 +640,10 @@
                 WatchTracker.sendEvent('start', getAbsoluteTime());
             });
 
+            video.addEventListener('seeked', () => {
+                SubtitleManager.updateOverlay();
+            });
+
             video.addEventListener('timeupdate', () => {
                 const actualTime = getAbsoluteTime();
                 const percentage = (actualTime / DURATION) * 100;
@@ -782,7 +787,7 @@
         if (SUBTITLE_TRACKS && SUBTITLE_TRACKS.length > 0) {
             const forcedTrack = SUBTITLE_TRACKS.find(t => (t.label && t.label.toLowerCase().includes('forced')));
             if (forcedTrack) {
-                currentSubtitleIdx = forcedTrack.id;
+                SubtitleManager.setTrack(forcedTrack.id);
             }
         }
 
