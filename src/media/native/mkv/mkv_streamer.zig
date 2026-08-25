@@ -7,13 +7,14 @@ const cues = @import("../cues.zig");
 const isobmff = @import("../isobmff.zig");
 const fmp4_muxer = @import("../fmp4_muxer.zig");
 const streamer = @import("../../streamer.zig");
+const transcoder_mod = @import("../../transcoder.zig");
 
 const MkvTrackInfo = types.MkvTrackInfo;
 const MkvBlock = types.MkvBlock;
 const MediaSample = isobmff.MediaSample;
 const BlockReader = block_reader.BlockReader;
 
-/// Checks whether an MKV file can be remuxed and sliced natively (supported video + AAC audio).
+/// Checks whether an MKV file can be remuxed and sliced natively (supported video + native or transcodable audio).
 pub fn canStreamMkvNatively(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -50,8 +51,9 @@ pub fn canStreamMkvNatively(
     if (video_trk.stsd_raw == null) return false;
 
     if (audio_track_opt) |at| {
-        // Only 2-channel (stereo) or mono AAC can be played natively without downmixing
-        if (at.stsd_raw == null or at.channels > 2) return false;
+        const is_native_aac = (at.stsd_raw != null and at.channels <= 2);
+        const is_transcodable = (transcoder_mod.StreamAudioTranscoder.mapCodecId(at.codec_id) != null);
+        if (!is_native_aac and !is_transcodable) return false;
     }
 
     return true;
@@ -119,7 +121,35 @@ pub fn streamMkvGeneric(
         }
     }
 
-    // 2. Build initialization segment (ftyp + moov)
+    // 2. Set up audio transcoding if needed
+    const needs_audio_transcode = if (audio_track_opt) |at|
+        (at.stsd_raw == null or at.channels > 2)
+    else
+        false;
+
+    var audio_transcoder: ?*transcoder_mod.StreamAudioTranscoder = null;
+    defer if (audio_transcoder) |atc| atc.deinit();
+
+    var synthetic_aac_stsd: ?[]u8 = null;
+    defer if (synthetic_aac_stsd) |s| allocator.free(s);
+
+    if (needs_audio_transcode) {
+        const at = audio_track_opt.?;
+        std.debug.print("[Streamer] [MKV Slicer] Video: native zero-copy | Audio: inline FFmpeg transcoding ({s}, {d}ch -> Stereo AAC)\n", .{ at.codec_id, at.channels });
+        audio_transcoder = try transcoder_mod.StreamAudioTranscoder.initFromCodec(
+            at.codec_id,
+            at.codec_private,
+            at.channels,
+            at.sample_rate,
+        );
+        synthetic_aac_stsd = try track_parser.buildAacStsd(allocator, &[_]u8{ 0x11, 0x90 }, 2, 48000);
+    } else if (audio_track_opt != null) {
+        std.debug.print("[Streamer] [MKV Slicer] 100% Pure Zig native stream (Video + Stereo AAC passthrough)\n", .{});
+    } else {
+        std.debug.print("[Streamer] [MKV Slicer] 100% Pure Zig native stream (Video only, no audio track)\n", .{});
+    }
+
+    // 3. Build initialization segment (ftyp + moov)
     const video_mp4_track = isobmff.Mp4MediaTrack{
         .track_id = 1,
         .stream_idx = video_trk.stream_idx,
@@ -136,19 +166,18 @@ pub fn streamMkvGeneric(
     var audio_mp4_track_opt: ?isobmff.Mp4MediaTrack = null;
     var audio_timescale: u32 = 48000;
     if (audio_track_opt) |at| {
-        if (at.stsd_raw) |astsd| {
-            audio_timescale = if (at.sample_rate > 0) at.sample_rate else 48000;
-            audio_mp4_track_opt = isobmff.Mp4MediaTrack{
-                .track_id = 2,
-                .stream_idx = at.stream_idx,
-                .handler_type = "soun".*,
-                .timescale = audio_timescale,
-                .duration = 0,
-                .stsd_raw = astsd,
-                .samples = &.{},
-                .sync_sample_indices = &.{},
-            };
-        }
+        const astsd = if (needs_audio_transcode) synthetic_aac_stsd.? else at.stsd_raw.?;
+        audio_timescale = if (!needs_audio_transcode and at.sample_rate > 0) at.sample_rate else 48000;
+        audio_mp4_track_opt = isobmff.Mp4MediaTrack{
+            .track_id = 2,
+            .stream_idx = at.stream_idx,
+            .handler_type = "soun".*,
+            .timescale = audio_timescale,
+            .duration = 0,
+            .stsd_raw = astsd,
+            .samples = &.{},
+            .sync_sample_indices = &.{},
+        };
     }
 
     const init_segment = try fmp4_muxer.buildInitSegment(allocator, video_mp4_track, audio_mp4_track_opt);
@@ -159,7 +188,7 @@ pub fn streamMkvGeneric(
         return;
     };
 
-    // 3. Open separate file handles: one for sequential demuxing, one for payload streaming
+    // 4. Open separate file handles: one for sequential demuxing, one for payload streaming
     const demux_file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
     defer demux_file.close(io);
 
@@ -191,9 +220,18 @@ pub fn streamMkvGeneric(
     var pending_audio_blocks = std.ArrayList(MkvBlock).empty;
     defer pending_audio_blocks.deinit(allocator);
 
+    var transcoded_audio_frames = std.ArrayList(transcoder_mod.EncodedAacFrame).empty;
+    defer {
+        for (transcoded_audio_frames.items) |f| allocator.free(f.data);
+        transcoded_audio_frames.deinit(allocator);
+    }
+
+    var raw_audio_packet_buf = std.ArrayList(u8).empty;
+    defer raw_audio_packet_buf.deinit(allocator);
+
     var next_gop_keyframe: ?MkvBlock = null;
 
-    // 4. Stream GOP fragments
+    // 5. Stream GOP fragments
     while (!has_error.*) {
         if (max_fragments) |max_f| {
             if (seq_num > max_f) break;
@@ -219,7 +257,21 @@ pub fn streamMkvGeneric(
                 }
                 try pending_video_blocks.append(allocator, blk);
             } else if (audio_track_opt != null and blk.track_num == audio_track_opt.?.track_num) {
-                try pending_audio_blocks.append(allocator, blk);
+                if (needs_audio_transcode) {
+                    payload_reader.seekTo(blk.payload_offset) catch {
+                        has_error.* = true;
+                        break;
+                    };
+                    raw_audio_packet_buf.clearRetainingCapacity();
+                    try raw_audio_packet_buf.resize(allocator, blk.payload_size);
+                    payload_reader.interface.readSliceAll(raw_audio_packet_buf.items) catch {
+                        has_error.* = true;
+                        break;
+                    };
+                    try audio_transcoder.?.transcodePacket(allocator, raw_audio_packet_buf.items, &transcoded_audio_frames);
+                } else {
+                    try pending_audio_blocks.append(allocator, blk);
+                }
             }
         }
 
@@ -233,22 +285,37 @@ pub fn streamMkvGeneric(
             seek_base_video_dts = v_samples[0].dts;
         }
 
-        // Build audio media samples (strictly 1024 samples per AAC frame)
+        // Build audio media samples
         var a_samples = std.ArrayList(MediaSample).empty;
         defer a_samples.deinit(allocator);
 
-        if (audio_mp4_track_opt != null and pending_audio_blocks.items.len > 0) {
-            for (pending_audio_blocks.items) |ab| {
-                try a_samples.append(allocator, MediaSample{
-                    .dts_delta = 1024,
-                    .dts = 0,
-                    .pts = 0,
-                    .pts_sec = ab.pts_sec,
-                    .offset = ab.payload_offset,
-                    .size = ab.payload_size,
-                    .is_sync = true,
-                    .ctts_offset = 0,
-                });
+        if (audio_mp4_track_opt != null) {
+            if (needs_audio_transcode) {
+                for (transcoded_audio_frames.items) |f| {
+                    try a_samples.append(allocator, MediaSample{
+                        .dts_delta = f.sample_count,
+                        .dts = 0,
+                        .pts = 0,
+                        .pts_sec = 0,
+                        .offset = 0,
+                        .size = @intCast(f.data.len),
+                        .is_sync = true,
+                        .ctts_offset = 0,
+                    });
+                }
+            } else if (pending_audio_blocks.items.len > 0) {
+                for (pending_audio_blocks.items) |ab| {
+                    try a_samples.append(allocator, MediaSample{
+                        .dts_delta = 1024,
+                        .dts = 0,
+                        .pts = 0,
+                        .pts_sec = ab.pts_sec,
+                        .offset = ab.payload_offset,
+                        .size = ab.payload_size,
+                        .is_sync = true,
+                        .ctts_offset = 0,
+                    });
+                }
             }
         }
 
@@ -306,29 +373,40 @@ pub fn streamMkvGeneric(
             if (has_error.*) break;
         }
 
-        // Stream audio payload bytes directly from payload_file
+        // Stream audio payload bytes
         if (!has_error.* and a_samples.items.len > 0) {
-            for (a_samples.items) |s| {
-                if (s.size == 0) continue;
-                payload_reader.seekTo(s.offset) catch {
-                    has_error.* = true;
-                    break;
-                };
-
-                var rem = s.size;
-                while (rem > 0) {
-                    const to_read: usize = @intCast(@min(rem, transfer_buf.len));
-                    payload_reader.interface.readSliceAll(transfer_buf[0..to_read]) catch {
+            if (needs_audio_transcode) {
+                for (transcoded_audio_frames.items) |f| {
+                    writer.writeAll(f.data) catch {
                         has_error.* = true;
                         break;
                     };
-                    writer.writeAll(transfer_buf[0..to_read]) catch {
-                        has_error.* = true;
-                        break;
-                    };
-                    rem -= @intCast(to_read);
                 }
-                if (has_error.*) break;
+                for (transcoded_audio_frames.items) |f| allocator.free(f.data);
+                transcoded_audio_frames.clearRetainingCapacity();
+            } else {
+                for (a_samples.items) |s| {
+                    if (s.size == 0) continue;
+                    payload_reader.seekTo(s.offset) catch {
+                        has_error.* = true;
+                        break;
+                    };
+
+                    var rem = s.size;
+                    while (rem > 0) {
+                        const to_read: usize = @intCast(@min(rem, transfer_buf.len));
+                        payload_reader.interface.readSliceAll(transfer_buf[0..to_read]) catch {
+                            has_error.* = true;
+                            break;
+                        };
+                        writer.writeAll(transfer_buf[0..to_read]) catch {
+                            has_error.* = true;
+                            break;
+                        };
+                        rem -= @intCast(to_read);
+                    }
+                    if (has_error.*) break;
+                }
             }
         }
 
@@ -354,6 +432,103 @@ test "generate MKV fMP4 fragments for Sof Ha Olam Smola" {
         "/Users/borisk/Movies/Sratim/Movies/Sof Ha Olam Smola (2004).mkv",
         0.0,
         2, // Hebrew AAC track
+        &out_writer.interface,
+        &has_error,
+        3, // 3 fragments
+    );
+    try out_writer.flush();
+}
+
+test "generate MKV fMP4 fragments with AC3 audio transcoding" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const out_file = std.Io.Dir.cwd().createFile(io, "tmp/mkv_test_ac3_out.mp4", .{}) catch return;
+    defer out_file.close(io);
+
+    var out_buf: [65536]u8 = undefined;
+    var out_writer = out_file.writer(io, &out_buf);
+
+    var has_error = false;
+    // Track 1 of Sof Ha Olam Smola is AC3 (Russian)
+    try streamMkvGeneric(
+        allocator,
+        io,
+        "/Users/borisk/Movies/Sratim/Movies/Sof Ha Olam Smola (2004).mkv",
+        0.0,
+        1, // Russian AC3 track
+        &out_writer.interface,
+        &has_error,
+        3, // 3 fragments
+    );
+    try out_writer.flush();
+}
+
+test "generate MKV fMP4 fragments for Tuner.mkv with 5.1 AAC downmixing" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const out_file = std.Io.Dir.cwd().createFile(io, "tmp/mkv_test_tuner_out.mp4", .{}) catch return;
+    defer out_file.close(io);
+
+    var out_buf: [65536]u8 = undefined;
+    var out_writer = out_file.writer(io, &out_buf);
+
+    var has_error = false;
+    try streamMkvGeneric(
+        allocator,
+        io,
+        "/Users/borisk/Movies/Sratim/Movies/Tuner.mkv",
+        0.0,
+        1, // 5.1 AAC track
+        &out_writer.interface,
+        &has_error,
+        3, // 3 fragments
+    );
+    try out_writer.flush();
+}
+
+test "generate MKV fMP4 fragments for Along Came Polly with AC3 5.1" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const out_file = std.Io.Dir.cwd().createFile(io, "tmp/mkv_test_polly_out.mp4", .{}) catch return;
+    defer out_file.close(io);
+
+    var out_buf: [65536]u8 = undefined;
+    var out_writer = out_file.writer(io, &out_buf);
+
+    var has_error = false;
+    try streamMkvGeneric(
+        allocator,
+        io,
+        "/Users/borisk/Movies/Sratim/Movies/Along Came Polly (2004).mkv",
+        0.0,
+        1, // AC3 5.1 track
+        &out_writer.interface,
+        &has_error,
+        3, // 3 fragments
+    );
+    try out_writer.flush();
+}
+
+test "generate MKV fMP4 fragments for Night at the Museum with DTS 5.1" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const out_file = std.Io.Dir.cwd().createFile(io, "tmp/mkv_test_dts_out.mp4", .{}) catch return;
+    defer out_file.close(io);
+
+    var out_buf: [65536]u8 = undefined;
+    var out_writer = out_file.writer(io, &out_buf);
+
+    var has_error = false;
+    try streamMkvGeneric(
+        allocator,
+        io,
+        "/Users/borisk/Movies/Sratim/Movies/Ночь в музее_Секрет гробницы.1080p. Ton.mkv",
+        0.0,
+        1, // DTS 5.1 track
         &out_writer.interface,
         &has_error,
         3, // 3 fragments
