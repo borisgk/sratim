@@ -251,4 +251,45 @@ test.describe('Video Player Playback & Streaming Tests', () => {
     const postSeekTime = await page.evaluate(() => document.querySelector('video').currentTime);
     expect(postSeekTime).toBeGreaterThan(progressedTime + 4.0);
   });
+
+  test('TC-08: Episode playback and subtitle track extraction on Ludwig S02E01', async ({ page }) => {
+    // Navigate to Ludwig S02E01
+    await page.goto('/player?episode_id=8113');
+
+    const video = page.locator('#video');
+    await expect(video).toBeVisible({ timeout: 10000 });
+
+    // Wait for playback startup
+    await page.waitForFunction(() => {
+      const v = document.querySelector('video');
+      return v && v.readyState >= 2;
+    }, { timeout: 15000 });
+
+    // Select subtitles
+    const btnSubtitles = page.locator('#subtitlesbtn');
+    await expect(btnSubtitles).toBeVisible();
+    await btnSubtitles.click();
+
+    const trackButtons = page.locator('.sub-track-btn');
+    const count = await trackButtons.count();
+    expect(count).toBeGreaterThan(1);
+
+    // Track response from /subtitles?episode_id=8113
+    const subtitleResponsePromise = page.waitForResponse(
+      (resp) => resp.url().includes('/subtitles?') && resp.url().includes('episode_id=8113') && resp.status() === 200,
+      { timeout: 10000 }
+    );
+
+    // Select English track
+    await trackButtons.nth(1).click();
+    const subResponse = await subtitleResponsePromise;
+    expect(subResponse.status()).toBe(200);
+    const subText = await subResponse.text();
+    expect(subText).toContain('WEBVTT');
+    expect(subText).toContain('-->');
+
+    // Verify subtitle overlay is active in DOM
+    const overlay = page.locator('#subtitle-overlay');
+    await expect(overlay).toBeAttached();
+  });
 });

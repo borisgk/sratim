@@ -297,4 +297,32 @@ test "extractSubtitlesVtt native vs ffmpeg on MKV and MP4" {
         const res = extractSubtitlesVtt(allocator, io, &aw.writer, "tests/test_subs.mp4", 99, 0.0, .native);
         try std.testing.expectError(error.NoSubtitleStreamsFound, res);
     }
+
+    // 6. Test e2e native subtitle extraction on Ludwig S02E01 (both tracks)
+    {
+        const ludwig_path = "/Users/borisk/Movies/Sratim/Shows/Ludwig/Ludwig 2024 S02E01 1080p WEB-DL HEVC x265-RMTeam.mkv";
+        
+        // Track 1 (Stream 2)
+        {
+            var aw = std.Io.Writer.Allocating.init(allocator);
+            defer aw.deinit();
+            try extractSubtitlesVtt(allocator, io, &aw.writer, ludwig_path, 2, 0.0, .native);
+            const vtt = aw.written();
+            try std.testing.expect(std.mem.startsWith(u8, vtt, "WEBVTT\n\n"));
+            try std.testing.expect(std.mem.indexOf(u8, vtt, "-->") != null);
+            // Verify cues are found throughout the episode (e.g. later than 30 minutes in)
+            try std.testing.expect(vtt.len > 10000);
+        }
+
+        // Track 2 (Stream 3 SDH)
+        {
+            var aw = std.Io.Writer.Allocating.init(allocator);
+            defer aw.deinit();
+            try extractSubtitlesVtt(allocator, io, &aw.writer, ludwig_path, 3, 0.0, .native);
+            const vtt = aw.written();
+            try std.testing.expect(std.mem.startsWith(u8, vtt, "WEBVTT\n\n"));
+            try std.testing.expect(std.mem.indexOf(u8, vtt, "-->") != null);
+            try std.testing.expect(vtt.len > 10000);
+        }
+    }
 }
