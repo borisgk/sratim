@@ -285,7 +285,7 @@ pub const StreamAudioTranscoder = struct {
             c.av_channel_layout_default(&self.decode_ctx.*.ch_layout, in_channels_i32);
         } else {
             self.decode_ctx.*.channels = in_channels_i32;
-            self.decode_ctx.*.channel_layout = c.av_get_default_channel_layout(in_channels_i32);
+            self.decode_ctx.*.channel_layout = @as(u64, @bitCast(c.av_get_default_channel_layout(in_channels_i32)));
         }
 
         if (codec_private) |cp| {
@@ -383,8 +383,8 @@ pub const StreamAudioTranscoder = struct {
                 null,
             ) < 0) return error.SwrInitError;
         } else {
-            const encode_cl = c.AV_CH_LAYOUT_STEREO;
-            const decode_cl = if (self.decode_ctx.*.channel_layout == 0) c.av_get_default_channel_layout(self.decode_ctx.*.channels) else @as(i64, @intCast(self.decode_ctx.*.channel_layout));
+            const encode_cl = @as(i64, @bitCast(@as(u64, c.AV_CH_LAYOUT_STEREO)));
+            const decode_cl = if (self.decode_ctx.*.channel_layout == 0) c.av_get_default_channel_layout(self.decode_ctx.*.channels) else @as(i64, @bitCast(self.decode_ctx.*.channel_layout));
             self.swr_ctx = c.swr_alloc_set_opts(
                 null,
                 encode_cl,
