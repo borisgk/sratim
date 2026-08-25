@@ -151,10 +151,15 @@ fn parseTrackEntry(
         if (sub.size != ebml.UNKNOWN_SIZE) rem -= sub_size;
     }
 
-    const codec_id = codec_id_opt orelse return null;
+    const codec_id = codec_id_opt orelse {
+        if (codec_private_opt) |cp| allocator.free(cp);
+        return null;
+    };
 
     // Generate standard ISOBMFF stsd box from CodecPrivate
     var stsd_raw: ?[]u8 = null;
+    errdefer if (stsd_raw) |s| allocator.free(s);
+
     if (track_type == .Video) {
         if (std.mem.eql(u8, codec_id, "V_MPEG4/ISO/AVC")) {
             if (codec_private_opt) |cp| {

@@ -56,6 +56,8 @@ pub fn handleStream(
         try request.respond("Movie not found", .{ .status = .not_found });
         return;
     }
+    var res_media = resolved.?;
+    defer res_media.deinit(allocator);
 
     const start_time = utils.parseQueryFloat(target, "start") orelse 0;
     const audio_idx = utils.parseQueryInt(c_int, target, "audio") orelse -1;

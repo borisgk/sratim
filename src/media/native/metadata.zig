@@ -300,6 +300,7 @@ fn getMatroskaMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0
                             defer if (free_label) allocator.free(label);
 
                             const label_dup = try allocator.dupe(u8, label);
+                            errdefer allocator.free(label_dup);
                             try audio_tracks.append(allocator, .{ .id = current_stream_idx, .label = label_dup });
                         } else if (tt == 17) { // Subtitle
                             var is_bitmap = false;
@@ -364,7 +365,9 @@ fn getMatroskaMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0
                                 defer if (free_final) allocator.free(final_label);
 
                                 const label_dup = try allocator.dupe(u8, final_label);
+                                errdefer allocator.free(label_dup);
                                 const lang_dup = try allocator.dupe(u8, lang);
+                                errdefer allocator.free(lang_dup);
                                 try subtitle_tracks.append(allocator, .{ .id = current_stream_idx, .label = label_dup, .language = lang_dup });
                             }
                         }

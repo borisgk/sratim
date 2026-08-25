@@ -56,12 +56,10 @@ pub fn handleRawPlay(
         try request.respond("Media not found", .{ .status = .not_found });
         return;
     }
-    defer {
-        allocator.free(resolved.?.resolved_path);
-        allocator.free(resolved.?.file_path);
-    }
+    var res_media = resolved.?;
+    defer res_media.deinit(allocator);
 
-    const file_path = resolved.?.resolved_path;
+    const file_path = res_media.resolved_path;
     var file = std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only }) catch {
         try request.respond("File not found on disk", .{ .status = .not_found });
         return;

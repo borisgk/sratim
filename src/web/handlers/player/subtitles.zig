@@ -74,6 +74,8 @@ pub fn handleSubtitles(
         try request.respond("Media not found", .{ .status = .not_found });
         return;
     }
+    var res_media = resolved.?;
+    defer res_media.deinit(allocator);
 
     // Ensure cache directory exists
     std.Io.Dir.cwd().createDirPath(io, ".sratim/cache/subs") catch {};

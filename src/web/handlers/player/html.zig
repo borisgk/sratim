@@ -44,6 +44,8 @@ pub fn handlePlayer(
         try request.respond("Media not found", .{ .status = .not_found });
         return;
     }
+    var res_media = resolved.?;
+    defer res_media.deinit(allocator);
 
     const c_full_path = try allocator.dupeZ(u8, resolved.?.resolved_path);
     defer allocator.free(c_full_path);
