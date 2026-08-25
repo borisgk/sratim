@@ -83,7 +83,8 @@ pub fn handleStream(
     });
 
     var stream_ctx = streamer.HttpStreamContext{ .writer = &resp };
-    streamer.streamMedia(allocator, io, resolved.?.resolved_path, start_time, audio_idx, &stream_ctx, config.media_engine.streamer) catch |e| {
+    // Use std.heap.c_allocator so that each GOP fragment and AAC frame buffer is freed to the OS heap immediately
+    streamer.streamMedia(std.heap.c_allocator, io, resolved.?.resolved_path, start_time, audio_idx, &stream_ctx, config.media_engine.streamer) catch |e| {
         if (e != error.ConnectionDropped) {
             std.debug.print("Stream error: {}\n", .{e});
         }

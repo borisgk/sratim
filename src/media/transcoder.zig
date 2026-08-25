@@ -162,32 +162,13 @@ pub const AudioTranscoder = struct {
         if (c.avcodec_send_packet(self.decode_ctx, in_packet) < 0) return;
 
         while (c.avcodec_receive_frame(self.decode_ctx, self.frame_in) >= 0) {
-            const out_samples = c.av_rescale_rnd(
-                c.swr_get_delay(self.swr_ctx.?, self.decode_ctx.*.sample_rate) + self.frame_in.*.nb_samples,
-                self.encode_ctx.*.sample_rate,
-                self.decode_ctx.*.sample_rate,
-                c.AV_ROUND_UP,
-            );
-            
-            var converted_frame = c.av_frame_alloc() orelse return error.OutOfMemory;
-            defer c.av_frame_free(@ptrCast(&converted_frame));
-            if (@hasDecl(c, "av_channel_layout_copy")) {
-                _ = c.av_channel_layout_copy(&converted_frame.*.ch_layout, &self.encode_ctx.*.ch_layout);
-            } else {
-                converted_frame.*.channel_layout = self.encode_ctx.*.channel_layout;
-                converted_frame.*.channels = self.encode_ctx.*.channels;
-            }
-            converted_frame.*.sample_rate = self.encode_ctx.*.sample_rate;
-            converted_frame.*.format = self.encode_ctx.*.sample_fmt;
-            converted_frame.*.nb_samples = @intCast(out_samples);
-            if (c.av_frame_get_buffer(converted_frame, 0) < 0) return error.OutOfMemory;
+            var conv_buf: [2][4096]f32 = undefined;
+            var out_ptrs = [_][*c]u8{ @ptrCast(&conv_buf[0]), @ptrCast(&conv_buf[1]) };
 
             const in_data = @as([*c][*c]const u8, @ptrCast(&self.frame_in.*.data));
-            const out_data = @as([*c][*c]u8, @ptrCast(&converted_frame.*.data));
-            
-            const real_out_samples = c.swr_convert(self.swr_ctx.?, out_data, @intCast(out_samples), in_data, self.frame_in.*.nb_samples);
+            const real_out_samples = c.swr_convert(self.swr_ctx.?, &out_ptrs, 4096, in_data, self.frame_in.*.nb_samples);
             if (real_out_samples > 0) {
-                _ = c.av_audio_fifo_write(self.fifo, @ptrCast(out_data), real_out_samples);
+                _ = c.av_audio_fifo_write(self.fifo, @ptrCast(&out_ptrs), real_out_samples);
             }
         }
 
@@ -418,33 +399,13 @@ pub const StreamAudioTranscoder = struct {
         while (c.avcodec_receive_frame(self.decode_ctx, self.frame_in) >= 0) {
             try self.initOrUpdateSwr();
 
-            const out_samples = c.av_rescale_rnd(
-                c.swr_get_delay(self.swr_ctx.?, self.decode_ctx.*.sample_rate) + self.frame_in.*.nb_samples,
-                self.encode_ctx.*.sample_rate,
-                self.decode_ctx.*.sample_rate,
-                c.AV_ROUND_UP,
-            );
-
-            var converted_frame = c.av_frame_alloc() orelse return error.OutOfMemory;
-            defer c.av_frame_free(@ptrCast(&converted_frame));
-
-            if (@hasDecl(c, "av_channel_layout_copy")) {
-                _ = c.av_channel_layout_copy(&converted_frame.*.ch_layout, &self.encode_ctx.*.ch_layout);
-            } else {
-                converted_frame.*.channel_layout = self.encode_ctx.*.channel_layout;
-                converted_frame.*.channels = self.encode_ctx.*.channels;
-            }
-            converted_frame.*.sample_rate = self.encode_ctx.*.sample_rate;
-            converted_frame.*.format = self.encode_ctx.*.sample_fmt;
-            converted_frame.*.nb_samples = @intCast(out_samples);
-            if (c.av_frame_get_buffer(converted_frame, 0) < 0) return error.OutOfMemory;
+            var conv_buf: [2][4096]f32 = undefined;
+            var out_ptrs = [_][*c]u8{ @ptrCast(&conv_buf[0]), @ptrCast(&conv_buf[1]) };
 
             const in_data = @as([*c][*c]const u8, @ptrCast(&self.frame_in.*.data));
-            const out_data = @as([*c][*c]u8, @ptrCast(&converted_frame.*.data));
-
-            const real_out_samples = c.swr_convert(self.swr_ctx.?, out_data, @intCast(out_samples), in_data, self.frame_in.*.nb_samples);
+            const real_out_samples = c.swr_convert(self.swr_ctx.?, &out_ptrs, 4096, in_data, self.frame_in.*.nb_samples);
             if (real_out_samples > 0) {
-                _ = c.av_audio_fifo_write(self.fifo, @ptrCast(out_data), real_out_samples);
+                _ = c.av_audio_fifo_write(self.fifo, @ptrCast(&out_ptrs), real_out_samples);
             }
         }
 

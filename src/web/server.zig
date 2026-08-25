@@ -55,6 +55,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
     var httpserver = std.http.Server.init(&in.interface, &out.interface);
 
     while (true) {
+        _ = arena.reset(.retain_capacity);
         var request = httpserver.receiveHead() catch |err| {
             if (err == error.HttpConnectionClosing or err == error.ConnectionResetByPeer) return;
             return;
