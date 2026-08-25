@@ -2,7 +2,8 @@ import { test, expect } from '@playwright/test';
 import { authenticateSession } from './helpers/auth.js';
 
 test.describe('Video Player Playback & Streaming Tests', () => {
-  let targetMovieId = 1;
+  let targetMovieId = 25;
+  let targetMp4MovieId = 1673;
 
   test.beforeEach(async ({ page, context, baseURL }) => {
     // Authenticate session before navigating to protected endpoints
@@ -18,20 +19,30 @@ test.describe('Video Player Playback & Streaming Tests', () => {
       }
     });
 
-    // Try to dynamically detect the first available movie from library
+    // Try to dynamically detect available movies from movie libraries (including MP4)
     try {
       const libRes = await page.request.get('/api/v1/libraries');
       if (libRes.ok()) {
         const libData = await libRes.json();
-        if (libData.libraries && libData.libraries.length > 0) {
-          const firstLib = libData.libraries[0];
-          const itemsRes = await page.request.get(`/api/v1/library?id=${firstLib.id}`);
+        const movieLibs = (libData.libraries || []).filter(l => l.lib_type !== 'Shows' && l.type !== 'Shows');
+        for (const lib of (movieLibs.length > 0 ? movieLibs : libData.libraries)) {
+          const itemsRes = await page.request.get(`/api/v1/library?id=${lib.id}`);
           if (itemsRes.ok()) {
             const itemsData = await itemsRes.json();
-            if (itemsData.items && itemsData.items.length > 0) {
-              targetMovieId = itemsData.items[0].id;
+            const items = itemsData.updates || itemsData.items || [];
+            if (items.length > 0) {
+              if (targetMovieId === 25) {
+                targetMovieId = items[0].id;
+              }
+              for (const item of items) {
+                if (item.title && (item.title.toLowerCase().includes('.mp4') || item.title.toLowerCase().includes('oklahoma'))) {
+                  targetMp4MovieId = item.id;
+                  break;
+                }
+              }
             }
           }
+          if (targetMp4MovieId && targetMp4MovieId !== 1673) break;
         }
       }
     } catch (_) {}
@@ -190,5 +201,54 @@ test.describe('Video Player Playback & Streaming Tests', () => {
     await page.waitForTimeout(2000);
 
     expect(watchEventReceived).toBe(true);
+  });
+
+  test('TC-07: Native MP4 slicing playback, continuous progression, and seeking', async ({ page }) => {
+    const mp4Id = targetMp4MovieId || targetMovieId;
+    await page.goto(`/player?id=${mp4Id}`);
+
+    const video = page.locator('#video');
+    await expect(video).toBeVisible({ timeout: 10000 });
+
+    // Wait for video element readyState >= HAVE_CURRENT_DATA (2)
+    await page.waitForFunction(() => {
+      const v = document.querySelector('video');
+      return v && v.readyState >= 2;
+    }, { timeout: 15000 });
+
+    // Assert video is not in error state
+    const videoError = await page.evaluate(() => {
+      const v = document.querySelector('video');
+      return v && v.error ? { code: v.error.code, message: v.error.message } : null;
+    });
+    expect(videoError).toBeNull();
+
+    // Verify time advances by at least 2.5 seconds
+    const initialTime = await page.evaluate(() => document.querySelector('video').currentTime);
+    await page.waitForFunction(
+      (init) => {
+        const v = document.querySelector('video');
+        return v && v.currentTime >= init + 2.5;
+      },
+      initialTime,
+      { timeout: 12000 }
+    );
+
+    const progressedTime = await page.evaluate(() => document.querySelector('video').currentTime);
+    expect(progressedTime).toBeGreaterThan(initialTime + 2.0);
+
+    // Verify seeking in native fMP4 stream
+    await page.keyboard.press('ArrowRight'); // Seek +10s
+    await page.waitForFunction(
+      (prev) => {
+        const v = document.querySelector('video');
+        return v && v.currentTime >= prev + 5.0;
+      },
+      progressedTime,
+      { timeout: 10000 }
+    );
+
+    const postSeekTime = await page.evaluate(() => document.querySelector('video').currentTime);
+    expect(postSeekTime).toBeGreaterThan(progressedTime + 4.0);
   });
 });

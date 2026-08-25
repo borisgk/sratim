@@ -1,10 +1,23 @@
 const std = @import("std");
 const ebml = @import("ebml.zig");
 
-/// Parses a Matroska Cues element to find the nearest previous video keyframe timestamp in seconds.
-pub fn parseCues(r: *std.Io.Reader, cues_elem: ebml.ElementHeader, timestamp_scale: f64, start_time: f64, video_track_num: ?u64) !f64 {
+pub const CueSeekResult = struct {
+    pts_sec: f64,
+    cluster_offset: u64,
+};
+
+/// Parses a Matroska Cues element to find the nearest previous video keyframe timestamp and cluster byte offset.
+pub fn parseCuesWithOffset(
+    r: *std.Io.Reader,
+    cues_elem: ebml.ElementHeader,
+    timestamp_scale: f64,
+    segment_data_pos: u64,
+    start_time: f64,
+    video_track_num: ?u64,
+) !CueSeekResult {
     var cues_rem = cues_elem.size;
     var best_ts_sec: f64 = 0.0;
+    var best_cluster_offset: u64 = 0;
 
     while (cues_rem > 0) {
         const sub = (try ebml.readElementHeader(r)) orelse break;
@@ -14,6 +27,7 @@ pub fn parseCues(r: *std.Io.Reader, cues_elem: ebml.ElementHeader, timestamp_sca
         if (sub.id == ebml.ID_CUE_POINT) {
             var cp_rem = sub.size;
             var cue_time_raw: ?u64 = null;
+            var cue_cluster_pos_raw: ?u64 = null;
             var cue_track_match: bool = (video_track_num == null);
 
             while (cp_rem > 0) {
@@ -35,6 +49,8 @@ pub fn parseCues(r: *std.Io.Reader, cues_elem: ebml.ElementHeader, timestamp_sca
                             if (video_track_num != null and track_num == video_track_num.?) {
                                 cue_track_match = true;
                             }
+                        } else if (ctp_child.id == ebml.ID_CUE_CLUSTER_POSITION) {
+                            cue_cluster_pos_raw = try ebml.readUint(r, ctp_child.size);
                         } else {
                             try ebml.skipBytes(r, ctp_child.size);
                         }
@@ -49,10 +65,12 @@ pub fn parseCues(r: *std.Io.Reader, cues_elem: ebml.ElementHeader, timestamp_sca
             if (cue_time_raw) |raw| {
                 if (cue_track_match) {
                     const ts_sec = (@as(f64, @floatFromInt(raw)) * timestamp_scale) / 1_000_000_000.0;
+                    const cluster_abs_offset = if (cue_cluster_pos_raw) |pos| segment_data_pos + pos else 0;
                     if (ts_sec <= start_time) {
                         best_ts_sec = ts_sec;
+                        best_cluster_offset = cluster_abs_offset;
                     } else {
-                        return best_ts_sec;
+                        return CueSeekResult{ .pts_sec = best_ts_sec, .cluster_offset = best_cluster_offset };
                     }
                 }
             }
@@ -62,12 +80,18 @@ pub fn parseCues(r: *std.Io.Reader, cues_elem: ebml.ElementHeader, timestamp_sca
         if (sub.size != ebml.UNKNOWN_SIZE) cues_rem -= sub.size;
     }
 
-    return best_ts_sec;
+    return CueSeekResult{ .pts_sec = best_ts_sec, .cluster_offset = best_cluster_offset };
+}
+
+/// Parses a Matroska Cues element to find the nearest previous video keyframe timestamp in seconds.
+pub fn parseCues(r: *std.Io.Reader, cues_elem: ebml.ElementHeader, timestamp_scale: f64, start_time: f64, video_track_num: ?u64) !f64 {
+    const res = try parseCuesWithOffset(r, cues_elem, timestamp_scale, 0, start_time, video_track_num);
+    return res.pts_sec;
 }
 
 /// Pure Zig keyframe PTS finder for Matroska files.
-/// Inspects Cues (or Cluster headers) to find the nearest previous keyframe timestamp in seconds.
-pub fn getKeyframePts(io: std.Io, file_path: []const u8, start_time: f64) !f64 {
+/// Inspects Cues (or Cluster headers) to find the nearest previous keyframe timestamp and cluster byte offset.
+pub fn findCueSeekPosition(io: std.Io, file_path: []const u8, start_time: f64) !CueSeekResult {
     const file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
     defer file.close(io);
 
@@ -87,9 +111,10 @@ pub fn getKeyframePts(io: std.Io, file_path: []const u8, start_time: f64) !f64 {
     var cues_pos: ?u64 = null;
     var video_track_num: ?u64 = null;
 
-    var best_cluster_time: ?f64 = null;
+    var first_cluster_pos: ?u64 = null;
 
     while (true) {
+        const elem_pos = file_reader.logicalPos();
         const elem = (try ebml.readElementHeader(r)) orelse break;
 
         if (elem.id == ebml.ID_SEEK_HEAD) {
@@ -180,59 +205,17 @@ pub fn getKeyframePts(io: std.Io, file_path: []const u8, start_time: f64) !f64 {
                 if (sub.size != ebml.UNKNOWN_SIZE) tracks_rem -= sub.size;
             }
         } else if (elem.id == ebml.ID_CUES) {
-            return parseCues(r, elem, timestamp_scale, start_time, video_track_num);
+            return parseCuesWithOffset(r, elem, timestamp_scale, segment_data_pos, start_time, video_track_num);
         } else if (elem.id == ebml.ID_CLUSTER) {
-            // If we encounter a cluster and haven't jumped to Cues yet
+            if (first_cluster_pos == null) first_cluster_pos = elem_pos;
             if (cues_pos) |pos| {
                 file_reader.seekTo(pos) catch {};
-                const cue_elem = (try ebml.readElementHeader(r)) orelse return start_time;
+                const cue_elem = (try ebml.readElementHeader(r)) orelse return CueSeekResult{ .pts_sec = 0.0, .cluster_offset = first_cluster_pos.? };
                 if (cue_elem.id == ebml.ID_CUES) {
-                    return parseCues(r, cue_elem, timestamp_scale, start_time, video_track_num);
+                    return parseCuesWithOffset(r, cue_elem, timestamp_scale, segment_data_pos, start_time, video_track_num);
                 }
             }
-
-            // Fallback: scan cluster timestamps
-            var cluster_elem: ?ebml.ElementHeader = elem;
-            while (cluster_elem) |ce| {
-                var cl_rem = ce.size;
-                while (cl_rem > 0) {
-                    const sub = (try ebml.readElementHeader(r)) orelse break;
-                    cl_rem -= sub.header_size;
-                    if (sub.size != ebml.UNKNOWN_SIZE and sub.size > cl_rem) break;
-
-                    if (sub.id == ebml.ID_CLUSTER_TIMESTAMP) {
-                        const cl_ts = try ebml.readUint(r, sub.size);
-                        const ts_sec = (@as(f64, @floatFromInt(cl_ts)) * timestamp_scale) / 1_000_000_000.0;
-                        if (ts_sec <= start_time) {
-                            best_cluster_time = ts_sec;
-                        } else {
-                            return best_cluster_time orelse start_time;
-                        }
-                        cl_rem -= sub.size;
-                        break;
-                    } else {
-                        try ebml.skipBytes(r, sub.size);
-                        cl_rem -= sub.size;
-                    }
-                }
-
-                if (ce.size != ebml.UNKNOWN_SIZE) {
-                    try ebml.skipBytes(r, cl_rem);
-                }
-
-                // Read next cluster
-                cluster_elem = null;
-                while (true) {
-                    const next = (try ebml.readElementHeader(r)) orelse break;
-                    if (next.id == ebml.ID_CLUSTER) {
-                        cluster_elem = next;
-                        break;
-                    } else if (next.size != ebml.UNKNOWN_SIZE) {
-                        try ebml.skipBytes(r, next.size);
-                    }
-                }
-            }
-            return best_cluster_time orelse start_time;
+            return CueSeekResult{ .pts_sec = 0.0, .cluster_offset = first_cluster_pos.? };
         } else {
             if (elem.size != ebml.UNKNOWN_SIZE) {
                 try ebml.skipBytes(r, elem.size);
@@ -242,13 +225,19 @@ pub fn getKeyframePts(io: std.Io, file_path: []const u8, start_time: f64) !f64 {
 
     if (cues_pos) |pos| {
         file_reader.seekTo(pos) catch {};
-        const cue_elem = (try ebml.readElementHeader(r)) orelse return start_time;
+        const cue_elem = (try ebml.readElementHeader(r)) orelse return CueSeekResult{ .pts_sec = 0.0, .cluster_offset = first_cluster_pos orelse 0 };
         if (cue_elem.id == ebml.ID_CUES) {
-            return parseCues(r, cue_elem, timestamp_scale, start_time, video_track_num);
+            return parseCuesWithOffset(r, cue_elem, timestamp_scale, segment_data_pos, start_time, video_track_num);
         }
     }
 
-    return start_time;
+    return CueSeekResult{ .pts_sec = 0.0, .cluster_offset = first_cluster_pos orelse 0 };
+}
+
+/// Pure Zig keyframe PTS finder for Matroska files.
+pub fn getKeyframePts(io: std.Io, file_path: []const u8, start_time: f64) !f64 {
+    const res = findCueSeekPosition(io, file_path, start_time) catch return start_time;
+    return res.pts_sec;
 }
 
 test "parseCues binary parsing" {

@@ -6,6 +6,7 @@ const media_metadata = @import("../../../media/metadata.zig");
 const config_mod = @import("../../../config.zig");
 const utils = @import("../../utils.zig");
 const common = @import("common.zig");
+const isobmff = @import("../../../media/native/isobmff.zig");
 
 /// Handles the media stream endpoint (/stream).
 pub fn handleStream(
@@ -63,21 +64,24 @@ pub fn handleStream(
     var actual_start_buf: [32]u8 = undefined;
     const actual_start_str = try std.fmt.bufPrint(&actual_start_buf, "{d:.3}", .{actual_start});
 
+    const is_native = (config.media_engine.streamer == .native);
+
     var resp = try request.respondStreaming(resp_buf, .{
         .respond_options = .{
             .status = .ok,
             .extra_headers = &.{
                 .{ .name = "content-type", .value = "video/mp4" },
                 .{ .name = "access-control-allow-origin", .value = "*" },
-                .{ .name = "access-control-expose-headers", .value = "x-actual-start-time" },
+                .{ .name = "access-control-expose-headers", .value = "x-actual-start-time, x-stream-engine" },
                 .{ .name = "accept-ranges", .value = "bytes" },
                 .{ .name = "x-actual-start-time", .value = actual_start_str },
+                .{ .name = "x-stream-engine", .value = if (is_native) "native-fmp4" else "ffmpeg" },
             },
         },
     });
 
     var stream_ctx = streamer.HttpStreamContext{ .writer = &resp };
-    streamer.streamMedia(resolved.?.resolved_path, start_time, audio_idx, &stream_ctx) catch |e| {
+    streamer.streamMedia(allocator, io, resolved.?.resolved_path, start_time, audio_idx, &stream_ctx, config.media_engine.streamer) catch |e| {
         if (e != error.ConnectionDropped) {
             std.debug.print("Stream error: {}\n", .{e});
         }

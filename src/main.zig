@@ -92,4 +92,9 @@ test {
     _ = @import("media/native/metadata.zig");
     _ = @import("media/native/detector.zig");
     _ = @import("media/native/isobmff.zig");
+    _ = @import("media/native/fmp4_muxer.zig");
+    _ = @import("media/native/mp4_streamer.zig");
+    _ = @import("media/native/mkv/track_parser.zig");
+    _ = @import("media/native/mkv/gop_builder.zig");
+    _ = @import("media/native/mkv/mkv_streamer.zig");
 }

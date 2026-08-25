@@ -6,6 +6,7 @@ pub const codecs = @import("codecs.zig");
 
 const detector = @import("detector.zig");
 const subtitles = @import("subtitles.zig");
+const isobmff = @import("isobmff.zig");
 
 pub const AudioTrack = struct {
     id: usize,
@@ -45,6 +46,99 @@ pub fn getMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]con
     const file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
     defer file.close(io);
 
+    var probe_buf: [1024]u8 = undefined;
+    var file_reader = file.reader(io, &probe_buf);
+    var magic_buf: [16]u8 = undefined;
+    const bytes_read = file_reader.interface.readSliceShort(&magic_buf) catch 0;
+
+    if (bytes_read >= 8 and isobmff.isMp4Container(magic_buf[0..bytes_read])) {
+        return getMp4MediaInfo(allocator, io, file_path);
+    }
+
+    return getMatroskaMediaInfo(allocator, io, file_path);
+}
+
+fn getMp4MediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8) !MediaInfo {
+    var media = try isobmff.parseMp4Media(allocator, io, file_path);
+    defer media.deinit(allocator);
+
+    var duration_sec: f64 = 0.0;
+    if (media.video_track) |vt| {
+        if (vt.timescale > 0) {
+            duration_sec = @as(f64, @floatFromInt(vt.duration)) / @as(f64, @floatFromInt(vt.timescale));
+        }
+    } else if (media.audio_tracks.len > 0) {
+        if (media.audio_tracks[0].timescale > 0) {
+            duration_sec = @as(f64, @floatFromInt(media.audio_tracks[0].duration)) / @as(f64, @floatFromInt(media.audio_tracks[0].timescale));
+        }
+    }
+
+    var codec_res = codecs.CodecResult{ .static_str = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\"" };
+    if (media.video_track) |vt| {
+        if (vt.stsd_raw.len >= 24) {
+            const fourcc = vt.stsd_raw[20..24].*;
+            codec_res = try codecs.getVideoCodecStringFromFourCC(allocator, fourcc, vt.width, vt.height);
+        }
+    }
+    errdefer if (codec_res.dynamic_str) |s| allocator.free(s);
+
+    var audio_tracks = std.ArrayList(AudioTrack).empty;
+    errdefer {
+        for (audio_tracks.items) |track| allocator.free(track.label);
+        audio_tracks.deinit(allocator);
+    }
+
+    for (media.audio_tracks, 0..) |at, idx| {
+        const lang_name = languages.getLanguageName(at.language[0..3]);
+        const label = if (lang_name) |ln|
+            try std.fmt.allocPrint(allocator, "Audio Track {d} ({s})", .{ idx + 1, ln })
+        else
+            try std.fmt.allocPrint(allocator, "Audio Track {d}", .{ idx + 1 });
+
+        try audio_tracks.append(allocator, .{
+            .id = at.stream_idx,
+            .label = label,
+        });
+    }
+
+    var subtitle_tracks = std.ArrayList(SubtitleTrack).empty;
+    errdefer {
+        for (subtitle_tracks.items) |track| {
+            allocator.free(track.label);
+            allocator.free(track.language);
+        }
+        subtitle_tracks.deinit(allocator);
+    }
+
+    for (media.subtitle_tracks, 0..) |st, idx| {
+        const lang_name = languages.getLanguageName(st.language[0..3]);
+        const label = if (lang_name) |ln|
+            try std.fmt.allocPrint(allocator, "Subtitle Track {d} ({s})", .{ idx + 1, ln })
+        else
+            try std.fmt.allocPrint(allocator, "Subtitle Track {d}", .{ idx + 1 });
+
+        const lang_dup = try allocator.dupe(u8, if (lang_name) |ln| ln else st.language[0..3]);
+
+        try subtitle_tracks.append(allocator, .{
+            .id = st.stream_idx,
+            .label = label,
+            .language = lang_dup,
+        });
+    }
+
+    return MediaInfo{
+        .duration = duration_sec,
+        .codec_str = codec_res.getStr().?,
+        .dynamic_codec_str = codec_res.dynamic_str,
+        .audio_tracks = try audio_tracks.toOwnedSlice(allocator),
+        .subtitle_tracks = try subtitle_tracks.toOwnedSlice(allocator),
+    };
+}
+
+fn getMatroskaMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8) !MediaInfo {
+    const file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
+    defer file.close(io);
+
     var file_buf: [65536]u8 = undefined;
     var file_reader = file.reader(io, &file_buf);
     const r = &file_reader.interface;
@@ -75,6 +169,7 @@ pub fn getMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]con
     }
 
     var current_stream_idx: usize = 0;
+    var has_found_video_track = false;
 
     while (true) {
         const elem = (try ebml.readElementHeader(r)) orelse break;
@@ -163,7 +258,8 @@ pub fn getMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]con
                     }
 
                     if (t_type) |tt| {
-                        if (tt == 1) { // Video
+                        if (tt == 1 and !has_found_video_track) { // Video
+                            has_found_video_track = true;
                             if (codec_id_str) |cid| {
                                 const cres = try codecs.getVideoCodecString(allocator, cid, video_width, video_height);
                                 if (cres.dynamic_str) |dyn| {

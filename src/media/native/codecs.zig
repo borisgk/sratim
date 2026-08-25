@@ -31,6 +31,28 @@ pub fn getVideoCodecString(allocator: std.mem.Allocator, codec_id: []const u8, w
     return CodecResult{};
 }
 
+/// Computes browser-compatible video MIME codec string based on ISOBMFF 4-character FourCC and resolution.
+pub fn getVideoCodecStringFromFourCC(allocator: std.mem.Allocator, fourcc: [4]u8, width: u32, height: u32) !CodecResult {
+    if (std.mem.eql(u8, &fourcc, "avc1")) {
+        return CodecResult{ .static_str = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\"" };
+    } else if (std.mem.eql(u8, &fourcc, "hev1") or std.mem.eql(u8, &fourcc, "hvc1")) {
+        const luma = width * height;
+        const min_level: u32 = if (luma > 8_912_896) 156
+            else if (luma > 2_228_224) 150
+            else if (luma > 983_040) 120
+            else 93;
+        const dynamic_str = try std.fmt.allocPrint(allocator,
+            "video/mp4; codecs=\"{s}.2.4.L{d}.B0, mp4a.40.2\"",
+            .{ fourcc, min_level });
+        return CodecResult{ .dynamic_str = dynamic_str };
+    } else if (std.mem.eql(u8, &fourcc, "av01")) {
+        return CodecResult{ .static_str = "video/mp4; codecs=\"av01.0.05M.08, mp4a.40.2\"" };
+    } else if (std.mem.eql(u8, &fourcc, "vp09")) {
+        return CodecResult{ .static_str = "video/mp4; codecs=\"vp09.00.10.08, mp4a.40.2\"" };
+    }
+    return CodecResult{ .static_str = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\"" };
+}
+
 test "getVideoCodecString for AVC, HEVC, AV1, VP9" {
     const allocator = std.testing.allocator;
 

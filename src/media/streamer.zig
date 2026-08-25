@@ -2,6 +2,10 @@ const std = @import("std");
 const c = @import("../core/c.zig").c;
 
 const transcoder = @import("transcoder.zig");
+const isobmff = @import("native/isobmff.zig");
+const mp4_streamer = @import("native/mp4_streamer.zig");
+const mkv_streamer = @import("native/mkv/mkv_streamer.zig");
+const config_mod = @import("../config.zig");
 
 /// Context passed to the custom FFmpeg AVIO writer.
 /// Used to bridge FFmpeg's blocking writes into Zig's asynchronous-capable standard HTTP body writer.
@@ -26,12 +30,45 @@ pub fn write_packet(ptr: ?*anyopaque, buf: [*c]const u8, buf_size: c_int) callco
     return buf_size;
 }
 
+/// The main streaming pipeline dispatcher.
+pub fn streamMedia(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    file_path: []const u8,
+    start_time: f64,
+    audio_idx_requested: c_int,
+    http_ctx: *HttpStreamContext,
+    mode: config_mod.EngineMode,
+) !void {
+    if (mode == .native) {
+        const file = std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only }) catch |err| return err;
+        defer file.close(io);
 
+        var file_buf: [1024]u8 = undefined;
+        var file_reader = file.reader(io, &file_buf);
+        var magic_buf: [16]u8 = undefined;
+        const bytes_read = file_reader.interface.readSliceShort(&magic_buf) catch 0;
+        if (bytes_read >= 8 and isobmff.isMp4Container(magic_buf[0..bytes_read])) {
+            std.debug.print("[Streamer] Using native MP4 fMP4 slicer for: {s} (start: {d:.2}s)\n", .{ file_path, start_time });
+            const z_path = try allocator.dupeZ(u8, file_path);
+            defer allocator.free(z_path);
+            return mp4_streamer.streamMp4(allocator, io, z_path, start_time, audio_idx_requested, http_ctx);
+        } else {
+            const z_path = try allocator.dupeZ(u8, file_path);
+            defer allocator.free(z_path);
+            if (mkv_streamer.canStreamMkvNatively(allocator, io, z_path, audio_idx_requested)) {
+                std.debug.print("[Streamer] Using native MKV fMP4 slicer for: {s} (start: {d:.2}s)\n", .{ file_path, start_time });
+                return mkv_streamer.streamMkv(allocator, io, z_path, start_time, audio_idx_requested, http_ctx);
+            }
+        }
+    }
 
-/// The main streaming pipeline.
-/// Opens an input media file (e.g., MKV), reads streams, dynamically transcodes incompatible audio to AAC,
-/// remuxes video natively (e.g., H.264), and pipes the fragmented MP4 output over HTTP.
-pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: c_int, http_ctx: *HttpStreamContext) !void {
+    std.debug.print("[Streamer] Using FFmpeg pipeline for: {s} (start: {d:.2}s)\n", .{ file_path, start_time });
+    return streamMediaFfmpeg(file_path, start_time, audio_idx_requested, http_ctx);
+}
+
+/// FFmpeg streaming pipeline for MKV containers and ffmpeg engine mode.
+pub fn streamMediaFfmpeg(file_path: []const u8, start_time: f64, audio_idx_requested: c_int, http_ctx: *HttpStreamContext) !void {
     var in_fmt_ctx: ?*c.AVFormatContext = c.avformat_alloc_context();
     if (in_fmt_ctx != null) {
         in_fmt_ctx.?.flags |= c.AVFMT_FLAG_GENPTS;
@@ -260,7 +297,6 @@ pub fn streamMedia(file_path: []const u8, start_time: f64, audio_idx_requested: 
 const native_metadata = @import("native/metadata.zig");
 const ffmpeg_metadata = @import("ffmpeg_metadata.zig");
 const subtitles_mod = @import("subtitles.zig");
-const config_mod = @import("../config.zig");
 
 pub const SubtitleTrack = native_metadata.SubtitleTrack;
 pub const AudioTrack = native_metadata.AudioTrack;
