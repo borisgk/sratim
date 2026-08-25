@@ -1,5 +1,6 @@
 const std = @import("std");
 const ebml = @import("ebml.zig");
+const isobmff = @import("isobmff.zig");
 
 pub fn formatVttTime(writer: anytype, total_seconds: f64) !void {
     const sec_val = if (total_seconds < 0) 0.0 else total_seconds;
@@ -10,6 +11,32 @@ pub fn formatVttTime(writer: anytype, total_seconds: f64) !void {
     const ms = total_ms % 1000;
 
     try writer.print("{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}", .{ hours, mins, secs, ms });
+}
+
+pub fn cleanMovText(out: *std.ArrayList(u8), allocator: std.mem.Allocator, raw_sample: []const u8) !void {
+    if (raw_sample.len < 2) return;
+    const text_len: usize = @intCast(std.mem.readInt(u16, raw_sample[0..2], .big));
+    if (text_len == 0) return;
+    const available_text_len = @min(text_len, raw_sample.len - 2);
+    const text_slice = raw_sample[2 .. 2 + available_text_len];
+
+    var i: usize = 0;
+    while (i < text_slice.len) {
+        if (text_slice[i] == '\r') {
+            if (i + 1 < text_slice.len and text_slice[i + 1] == '\n') {
+                try out.append(allocator, '\n');
+                i += 2;
+            } else {
+                try out.append(allocator, '\n');
+                i += 1;
+            }
+        } else if (text_slice[i] != 0) {
+            try out.append(allocator, text_slice[i]);
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
 }
 
 pub fn cleanAssText(out: *std.ArrayList(u8), allocator: std.mem.Allocator, ass_raw: []const u8) !void {
@@ -80,6 +107,59 @@ pub fn cleanAssText(out: *std.ArrayList(u8), allocator: std.mem.Allocator, ass_r
     }
 }
 
+/// Peeks a small sample of text from an MP4 subtitle stream for language detection.
+pub fn peekMp4SubtitleSample(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    file_path: [:0]const u8,
+    target_stream_idx: usize,
+) !?[]u8 {
+    var track = (isobmff.parseMp4SubtitleTrack(allocator, io, file_path, target_stream_idx) catch null) orelse return null;
+    defer track.deinit(allocator);
+
+    if (track.samples.len == 0) return null;
+
+    const file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
+    defer file.close(io);
+
+    var file_buf: [65536]u8 = undefined;
+    var file_reader = file.reader(io, &file_buf);
+
+    var sample_buf = std.ArrayList(u8).empty;
+    defer sample_buf.deinit(allocator);
+
+    var text_buf = std.ArrayList(u8).empty;
+    defer text_buf.deinit(allocator);
+
+    var cues_collected: usize = 0;
+    for (track.samples) |sample| {
+        if (sample.size == 0) continue;
+
+        file_reader.seekTo(sample.offset) catch continue;
+        const sample_data = allocator.alloc(u8, sample.size) catch continue;
+        defer allocator.free(sample_data);
+
+        file_reader.interface.readSliceAll(sample_data) catch continue;
+
+        text_buf.clearRetainingCapacity();
+        cleanMovText(&text_buf, allocator, sample_data) catch continue;
+        const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
+        if (trimmed.len > 0) {
+            if (sample_buf.items.len > 0) try sample_buf.append(allocator, ' ');
+            try sample_buf.appendSlice(allocator, trimmed);
+            cues_collected += 1;
+            if (cues_collected >= 3 or sample_buf.items.len >= 300) {
+                return try sample_buf.toOwnedSlice(allocator);
+            }
+        }
+    }
+
+    if (sample_buf.items.len > 0) {
+        return try sample_buf.toOwnedSlice(allocator);
+    }
+    return null;
+}
+
 /// Peeks a small sample of text from a specific subtitle stream for language detection.
 pub fn peekSubtitleSample(
     allocator: std.mem.Allocator,
@@ -93,6 +173,14 @@ pub fn peekSubtitleSample(
     var file_buf: [65536]u8 = undefined;
     var file_reader = file.reader(io, &file_buf);
     const r = &file_reader.interface;
+
+    var magic_buf: [16]u8 = undefined;
+    r.readSliceAll(&magic_buf) catch return null;
+    if (isobmff.isMp4Container(&magic_buf)) {
+        return peekMp4SubtitleSample(allocator, io, file_path, target_stream_idx);
+    }
+
+    file_reader.seekTo(0) catch return null;
 
     const ebml_hdr = (try ebml.readElementHeader(r)) orelse return null;
     if (ebml_hdr.id != ebml.ID_EBML) return null;
@@ -638,6 +726,80 @@ fn parseClusters(
     }
 }
 
+/// Pure Zig extraction of embedded subtitles from an MP4/MOV file directly to a WebVTT writer.
+pub fn extractMp4SubtitlesVtt(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    writer: anytype,
+    file_path: [:0]const u8,
+    target_stream_idx: usize,
+    start_offset: f64,
+) !void {
+    var track = (try isobmff.parseMp4SubtitleTrack(allocator, io, file_path, target_stream_idx)) orelse return error.NoSubtitleStreamsFound;
+    defer track.deinit(allocator);
+
+    const file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
+    defer file.close(io);
+
+    var file_buf: [65536]u8 = undefined;
+    var file_reader = file.reader(io, &file_buf);
+
+    try writer.writeAll("WEBVTT\n\n");
+
+    var text_buf = std.ArrayList(u8).empty;
+    defer text_buf.deinit(allocator);
+
+    for (track.samples) |sample| {
+        if (sample.size == 0 or sample.end_sec < start_offset) continue;
+
+        try file_reader.seekTo(sample.offset);
+        const sample_data = try allocator.alloc(u8, sample.size);
+        defer allocator.free(sample_data);
+
+        try file_reader.interface.readSliceAll(sample_data);
+
+        text_buf.clearRetainingCapacity();
+        try cleanMovText(&text_buf, allocator, sample_data);
+        const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
+        if (trimmed.len > 0) {
+            try formatVttTime(writer, sample.start_sec);
+            try writer.writeAll(" --> ");
+            try formatVttTime(writer, sample.end_sec);
+            try writer.writeAll("\n");
+            try writer.writeAll(trimmed);
+            try writer.writeAll("\n\n");
+        }
+    }
+}
+
+/// Unified pure Zig subtitle extraction for Matroska (MKV) and ISOBMFF (MP4/MOV) files.
+pub fn extractNativeSubtitlesVtt(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    writer: anytype,
+    file_path: [:0]const u8,
+    target_stream_idx: usize,
+    start_offset: f64,
+) !void {
+    const file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
+    defer file.close(io);
+
+    var file_buf: [1024]u8 = undefined;
+    var file_reader = file.reader(io, &file_buf);
+    const r = &file_reader.interface;
+
+    var magic_buf: [16]u8 = undefined;
+    r.readSliceAll(&magic_buf) catch {
+        return extractMkvSubtitlesVtt(allocator, io, writer, file_path, target_stream_idx, start_offset);
+    };
+
+    if (isobmff.isMp4Container(&magic_buf)) {
+        return extractMp4SubtitlesVtt(allocator, io, writer, file_path, target_stream_idx, start_offset);
+    } else {
+        return extractMkvSubtitlesVtt(allocator, io, writer, file_path, target_stream_idx, start_offset);
+    }
+}
+
 test "formatVttTime" {
     var aw = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer aw.deinit();
@@ -654,6 +816,16 @@ test "cleanAssText" {
     try std.testing.expectEqualStrings("Hello\nWorld!", out.items);
 }
 
+test "cleanMovText" {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(std.testing.allocator);
+
+    // 2-byte big endian length 13 (0x000D) + "Hello\r\nWorld!"
+    const raw = "\x00\x0DHello\r\nWorld!";
+    try cleanMovText(&out, std.testing.allocator, raw);
+    try std.testing.expectEqualStrings("Hello\nWorld!", out.items);
+}
+
 test "extractMkvSubtitlesVtt from test_sync.mkv" {
     const allocator = std.testing.allocator;
     var threaded = std.Io.Threaded.init(allocator, .{});
@@ -667,5 +839,35 @@ test "extractMkvSubtitlesVtt from test_sync.mkv" {
     const vtt = aw.written();
     try std.testing.expect(std.mem.startsWith(u8, vtt, "WEBVTT\n\n"));
     try std.testing.expect(std.mem.indexOf(u8, vtt, "-->") != null);
+}
+
+test "extractNativeSubtitlesVtt from test_subs.mp4" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    defer aw.deinit();
+
+    try extractNativeSubtitlesVtt(allocator, io, &aw.writer, "tests/test_subs.mp4", 2, 0.0);
+    const vtt = aw.written();
+    try std.testing.expect(std.mem.startsWith(u8, vtt, "WEBVTT\n\n"));
+    try std.testing.expect(std.mem.indexOf(u8, vtt, "00:00:01.000 --> 00:00:03.000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, vtt, "Hello MP4 Subtitles!") != null);
+    try std.testing.expect(std.mem.indexOf(u8, vtt, "00:00:05.000 --> 00:00:07.000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, vtt, "Second MP4 Cue") != null);
+}
+
+test "peekSubtitleSample from test_subs.mp4" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const peek_text = (try peekSubtitleSample(allocator, io, "tests/test_subs.mp4", 2)) orelse return error.TestFailed;
+    defer allocator.free(peek_text);
+
+    try std.testing.expect(std.mem.indexOf(u8, peek_text, "Hello MP4 Subtitles!") != null);
 }
 

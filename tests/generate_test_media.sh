@@ -58,5 +58,17 @@ ffmpeg -v error -y \
   -metadata:s:s:1 title="Hebrew ASS" \
   "$OUTPUT"
 
+echo "Generating and muxing test_subs.mp4..."
+ffmpeg -v error -y \
+  -f lavfi -i testsrc=duration=10:size=640x360:rate=30 \
+  -f lavfi -i aevalsrc="sin(1000*2*PI*t)":duration=10:sample_rate=48000 \
+  -i test.srt \
+  -map 0:v -map 1:a -map 2:s \
+  -c:v libx264 -preset ultrafast \
+  -c:a aac -b:a 192k \
+  -c:s mov_text \
+  -metadata:s:s:0 title="English MP4" \
+  "test_subs.mp4"
+
 rm test.srt test.ass
-echo "Generated $OUTPUT successfully."
+echo "Generated $OUTPUT and test_subs.mp4 successfully."

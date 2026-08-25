@@ -91,4 +91,5 @@ test {
     _ = @import("media/metadata.zig");
     _ = @import("media/native/metadata.zig");
     _ = @import("media/native/detector.zig");
+    _ = @import("media/native/isobmff.zig");
 }

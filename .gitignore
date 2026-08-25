@@ -18,6 +18,7 @@ AGENTS.md
 plans/
 sync*
 tests/*.mkv
+tests/*.mp4
 tests/e2e-report/
 node_modules/
 test-results/

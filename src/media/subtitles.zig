@@ -90,15 +90,16 @@ fn cleanAssText(out: *std.ArrayList(u8), allocator: std.mem.Allocator, ass_raw: 
     }
 }
 
-/// Dispatches subtitle extraction based on configured EngineMode with graceful fallback.
+/// Dispatches subtitle extraction based on configured EngineMode.
+/// When mode is .native, uses pure Zig extractors without falling back to FFmpeg.
 pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: anytype, file_path: [:0]const u8, stream_idx: usize, start_offset: f64, mode: config_mod.EngineMode) !void {
     if (mode == .native) {
-        native_subtitles.extractMkvSubtitlesVtt(allocator, io, writer, file_path, stream_idx, start_offset) catch |err| {
+        native_subtitles.extractNativeSubtitlesVtt(allocator, io, writer, file_path, stream_idx, start_offset) catch |err| {
             if (err == error.WriteFailed or err == error.BrokenPipe or err == error.ConnectionResetByPeer or err == error.NotOpenForWriting) {
                 return err;
             }
-            std.debug.print("Native subtitle extraction failed ({}), falling back to FFmpeg...\n", .{err});
-            return extractSubtitlesVttFfmpeg(allocator, io, writer, file_path, stream_idx, start_offset);
+            std.debug.print("Native subtitle extraction failed: {}\n", .{err});
+            return err;
         };
         return;
     }
@@ -109,9 +110,6 @@ pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: any
 pub fn extractSubtitlesVttFfmpeg(allocator: std.mem.Allocator, io: std.Io, writer: anytype, file_path: [:0]const u8, stream_idx: usize, start_offset: f64) !void {
     _ = io;
     
-    const t0 = c.av_gettime();
-    var packet_count: usize = 0;
-    var cue_count: usize = 0;
     std.debug.print("Starting FFmpeg subtitle extraction for {s}, stream_idx: {}, start_offset: {d}\n", .{file_path, stream_idx, start_offset});
 
     var opts: ?*c.AVDictionary = null;
@@ -170,7 +168,6 @@ pub fn extractSubtitlesVttFfmpeg(allocator: std.mem.Allocator, io: std.Io, write
 
     while (c.av_read_frame(fmt_ctx.?, pkt) >= 0) {
         defer c.av_packet_unref(pkt);
-        packet_count += 1;
         std.Thread.yield() catch {};
 
         if (@as(usize, @intCast(pkt.*.stream_index)) != stream_idx) continue;
@@ -219,7 +216,6 @@ pub fn extractSubtitlesVttFfmpeg(allocator: std.mem.Allocator, io: std.Io, write
                     try writer.writeAll("\n");
                     try writer.writeAll(trimmed);
                     try writer.writeAll("\n\n");
-                    cue_count += 1;
                 }
                 continue;
             }
@@ -243,11 +239,62 @@ pub fn extractSubtitlesVttFfmpeg(allocator: std.mem.Allocator, io: std.Io, write
                 try writer.writeAll("\n");
                 try writer.writeAll(trimmed);
                 try writer.writeAll("\n\n");
-                cue_count += 1;
             }
         }
     }
-    const t1 = c.av_gettime();
-    const diff_ms = @as(f64, @floatFromInt(t1 - t0)) / 1000.0;
-    std.debug.print("Subtitle extraction completed in {d:.2}ms. Demuxed {} packets, output {} cues.\n", .{diff_ms, packet_count, cue_count});
+}
+
+test "extractSubtitlesVtt native vs ffmpeg on MKV and MP4" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // 1. Test native mode on MP4
+    {
+        var aw = std.Io.Writer.Allocating.init(allocator);
+        defer aw.deinit();
+        try extractSubtitlesVtt(allocator, io, &aw.writer, "tests/test_subs.mp4", 2, 0.0, .native);
+        const vtt = aw.written();
+        try std.testing.expect(std.mem.startsWith(u8, vtt, "WEBVTT\n\n"));
+        try std.testing.expect(std.mem.indexOf(u8, vtt, "Hello MP4 Subtitles!") != null);
+    }
+
+    // 2. Test ffmpeg mode on MP4
+    {
+        var aw = std.Io.Writer.Allocating.init(allocator);
+        defer aw.deinit();
+        try extractSubtitlesVtt(allocator, io, &aw.writer, "tests/test_subs.mp4", 2, 0.0, .ffmpeg);
+        const vtt = aw.written();
+        try std.testing.expect(std.mem.startsWith(u8, vtt, "WEBVTT\n\n"));
+        try std.testing.expect(std.mem.indexOf(u8, vtt, "Hello MP4 Subtitles!") != null);
+    }
+
+    // 3. Test native mode on MKV
+    {
+        var aw = std.Io.Writer.Allocating.init(allocator);
+        defer aw.deinit();
+        try extractSubtitlesVtt(allocator, io, &aw.writer, "tests/test_sync.mkv", 2, 0.0, .native);
+        const vtt = aw.written();
+        try std.testing.expect(std.mem.startsWith(u8, vtt, "WEBVTT\n\n"));
+        try std.testing.expect(std.mem.indexOf(u8, vtt, "SRT: 1.0s to 3.0s") != null);
+    }
+
+    // 4. Test ffmpeg mode on MKV
+    {
+        var aw = std.Io.Writer.Allocating.init(allocator);
+        defer aw.deinit();
+        try extractSubtitlesVtt(allocator, io, &aw.writer, "tests/test_sync.mkv", 2, 0.0, .ffmpeg);
+        const vtt = aw.written();
+        try std.testing.expect(std.mem.startsWith(u8, vtt, "WEBVTT\n\n"));
+        try std.testing.expect(std.mem.indexOf(u8, vtt, "SRT: 1.0s to 3.0s") != null);
+    }
+
+    // 5. Test strict error handling in native mode (invalid stream index fails without falling back)
+    {
+        var aw = std.Io.Writer.Allocating.init(allocator);
+        defer aw.deinit();
+        const res = extractSubtitlesVtt(allocator, io, &aw.writer, "tests/test_subs.mp4", 99, 0.0, .native);
+        try std.testing.expectError(error.NoSubtitleStreamsFound, res);
+    }
 }
