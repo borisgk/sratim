@@ -340,4 +340,51 @@ test.describe('Video Player Playback & Streaming Tests', () => {
     const progressedTime2 = await page.evaluate(() => document.querySelector('video').currentTime);
     expect(progressedTime2).toBeGreaterThan(initTime2 + 1.5);
   });
+
+  test('TC-10: Pure Zig AC-3 decoding, seeking, and multi-track audio switching on Along Came Polly', async ({ page }) => {
+    // Navigate to Along Came Polly (id 25, 5.1 AC-3 audio tracks)
+    await page.goto('/player?id=25');
+
+    const video = page.locator('#video');
+    await expect(video).toBeVisible({ timeout: 10000 });
+
+    // Wait for video playback startup
+    await page.waitForFunction(() => {
+      const v = document.querySelector('video');
+      return v && v.readyState >= 2;
+    }, { timeout: 15000 });
+
+    const startTime = await page.evaluate(() => document.querySelector('video').currentTime);
+
+    // Verify seeking with pure Zig AC-3 decoding
+    await page.keyboard.press('ArrowRight'); // Seek +10s
+    await page.waitForFunction(
+      (prev) => {
+        const v = document.querySelector('video');
+        return v && v.currentTime >= prev + 4.0;
+      },
+      startTime,
+      { timeout: 10000 }
+    );
+
+    const postSeekTime = await page.evaluate(() => document.querySelector('video').currentTime);
+    expect(postSeekTime).toBeGreaterThan(startTime + 3.0);
+
+    // Test audio track switching
+    const btnAudio = page.locator('#audiobtn');
+    if (await btnAudio.isVisible()) {
+      await btnAudio.click();
+      const trackButtons = page.locator('.audio-track-btn');
+      const count = await trackButtons.count();
+      if (count > 1) {
+        await trackButtons.nth(1).click();
+        await expect(trackButtons.nth(1)).toHaveClass(/active/);
+
+        // Confirm playback continues on new AC-3 track
+        await page.waitForTimeout(2000);
+        const isPaused = await page.evaluate(() => document.querySelector('video').paused);
+        expect(isPaused).toBe(false);
+      }
+    }
+  });
 });

@@ -68,7 +68,10 @@ pub fn streamMp4(
             const use_native_enc = (audio_transcoder_mode == .native);
             var audio_desc_buf: [128]u8 = undefined;
             const audio_desc = if (use_native_enc)
-                std.fmt.bufPrint(&audio_desc_buf, "Inline decode ({s}, {d}ch) -> Pure Zig AAC-LC", .{ &audio_fourcc, audio_channels }) catch "Inline decode -> Pure Zig AAC-LC"
+                (if (std.mem.eql(u8, &audio_fourcc, "ac-3"))
+                    std.fmt.bufPrint(&audio_desc_buf, "Pure Zig AC-3 ({d}ch) -> Pure Zig AAC-LC", .{audio_channels})
+                else
+                    std.fmt.bufPrint(&audio_desc_buf, "Inline decode ({s}, {d}ch) -> Pure Zig AAC-LC", .{ &audio_fourcc, audio_channels })) catch "Inline decode -> Pure Zig AAC-LC"
             else
                 std.fmt.bufPrint(&audio_desc_buf, "Inline FFmpeg ({s}, {d}ch -> Stereo AAC)", .{ &audio_fourcc, audio_channels }) catch "Inline FFmpeg";
             streamer.logStreamStatus(file_path, audio_idx_requested, "Native MP4 Slicer", "Zero-copy passthrough", audio_desc);

@@ -216,6 +216,7 @@ pub const StreamAudioTranscoder = struct {
     swr_in_rate: i32 = 0,
     swr_in_fmt: c.AVSampleFormat = c.AV_SAMPLE_FMT_NONE,
     native_aac_enc: aac_enc.AacEncoder = aac_enc.AacEncoder.init(48000, 192000),
+    native_ac3_dec: ?ac3_dec.Ac3Decoder = null,
     use_native_encoder: bool = true,
 
     pub fn mapCodecId(codec_name: []const u8) ?c.AVCodecID {
@@ -264,6 +265,10 @@ pub const StreamAudioTranscoder = struct {
         self.swr_in_channels = 0;
         self.swr_in_rate = 0;
         self.swr_in_fmt = c.AV_SAMPLE_FMT_NONE;
+        self.native_ac3_dec = if (use_native_encoder and av_codec_id == c.AV_CODEC_ID_AC3)
+            ac3_dec.Ac3Decoder.init()
+        else
+            null;
 
         // Decoder Context
         self.decode_ctx = c.avcodec_alloc_context3(dec) orelse return error.OutOfMemory;
@@ -399,6 +404,46 @@ pub const StreamAudioTranscoder = struct {
         raw_payload: []const u8,
         out_frames: *std.ArrayList(EncodedAacFrame),
     ) !void {
+        if (self.native_ac3_dec) |*ac3| {
+            var offset: usize = 0;
+            var decoded_any = false;
+            while (offset + 7 <= raw_payload.len) {
+                if (raw_payload[offset] != 0x0B or raw_payload[offset + 1] != 0x77) {
+                    offset += 1;
+                    continue;
+                }
+                const fscod: usize = (raw_payload[offset + 4] >> 6) & 3;
+                const frmsizecod: usize = raw_payload[offset + 4] & 0x3F;
+                if (fscod >= 3 or frmsizecod >= 38) {
+                    offset += 2;
+                    continue;
+                }
+                const frame_size = @as(usize, ac3_dec.FRAME_SIZE_TABLE[frmsizecod][fscod]) * 2;
+                if (offset + frame_size > raw_payload.len) break;
+
+                const frame_bytes = raw_payload[offset .. offset + frame_size];
+                var stereo_interleaved: [1536 * 2]f32 = undefined;
+                if (ac3.decodeFrame(frame_bytes, &stereo_interleaved)) |n_samples| {
+                    if (n_samples > 0) {
+                        var planar_l: [1536]f32 = undefined;
+                        var planar_r: [1536]f32 = undefined;
+                        for (0..n_samples) |i| {
+                            planar_l[i] = stereo_interleaved[i * 2 + 0];
+                            planar_r[i] = stereo_interleaved[i * 2 + 1];
+                        }
+                        var out_ptrs = [_][*c]u8{ @ptrCast(&planar_l), @ptrCast(&planar_r) };
+                        _ = c.av_audio_fifo_write(self.fifo, @ptrCast(&out_ptrs), @intCast(n_samples));
+                        decoded_any = true;
+                    }
+                } else |_| {}
+                offset += frame_size;
+            }
+            if (decoded_any) {
+                try self.drainFifo(allocator, out_frames);
+                return;
+            }
+        }
+
         c.av_packet_unref(self.in_pkt);
         self.in_pkt.*.data = @constCast(raw_payload.ptr);
         self.in_pkt.*.size = @intCast(raw_payload.len);
@@ -835,6 +880,84 @@ test "StreamAudioTranscoder decodes 6-channel AAC from Tuner.mkv and downmixes/e
     }
 }
 
+test "StreamAudioTranscoder decodes 6-channel AC3 from Polly.mkv and encodes to stereo AAC" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+    const test_file = "tests/Polly.mkv";
+
+    var in_fmt_ctx: ?*c.AVFormatContext = null;
+    if (c.avformat_open_input(&in_fmt_ctx, test_file, null, null) < 0) return;
+    defer c.avformat_close_input(&in_fmt_ctx);
+
+    if (c.avformat_find_stream_info(in_fmt_ctx.?, null) < 0) return error.StreamInfoFailed;
+
+    var audio_stream_idx: usize = 0;
+    var audio_stream: *c.AVStream = undefined;
+    for (0..in_fmt_ctx.?.nb_streams) |i| {
+        if (in_fmt_ctx.?.streams[i].*.codecpar.*.codec_type == c.AVMEDIA_TYPE_AUDIO) {
+            audio_stream_idx = i;
+            audio_stream = in_fmt_ctx.?.streams[i];
+            break;
+        }
+    }
+
+    const extradata_slice: ?[]const u8 = if (audio_stream.*.codecpar.*.extradata_size > 0)
+        audio_stream.*.codecpar.*.extradata[0..@intCast(audio_stream.*.codecpar.*.extradata_size)]
+    else
+        null;
+
+    var transcoder = try StreamAudioTranscoder.initFromCodec("A_AC3", extradata_slice, 6, 48000, true);
+    defer transcoder.deinit();
+
+    try testing.expect(transcoder.native_ac3_dec != null);
+
+    var pkt = c.av_packet_alloc() orelse return error.OutOfMemory;
+    defer c.av_packet_free(@ptrCast(&pkt));
+
+    var frames = std.ArrayList(EncodedAacFrame).empty;
+    defer {
+        for (frames.items) |f| allocator.free(f.data);
+        frames.deinit(allocator);
+    }
+
+    while (c.av_read_frame(in_fmt_ctx.?, pkt) >= 0) {
+        defer c.av_packet_unref(pkt);
+        if (pkt.*.stream_index == audio_stream_idx) {
+            const raw_data: []const u8 = pkt.*.data[0..@intCast(pkt.*.size)];
+            try transcoder.transcodePacket(allocator, raw_data, &frames);
+            if (frames.items.len >= 5) break;
+        }
+    }
+
+    try transcoder.flush(allocator, &frames);
+    try testing.expect(frames.items.len >= 5);
+
+    const dec = c.avcodec_find_decoder(c.AV_CODEC_ID_AAC) orelse return error.DecoderNotFound;
+    var dec_ctx = c.avcodec_alloc_context3(dec) orelse return error.OutOfMemory;
+    defer c.avcodec_free_context(&dec_ctx);
+    dec_ctx.*.sample_rate = 48000;
+    c.av_channel_layout_default(&dec_ctx.*.ch_layout, 2);
+    if (c.avcodec_open2(dec_ctx, dec, null) < 0) return error.DecoderOpenFailed;
+
+    var dec_pkt = c.av_packet_alloc() orelse return error.OutOfMemory;
+    defer c.av_packet_free(@ptrCast(&dec_pkt));
+    var dec_frame = c.av_frame_alloc() orelse return error.OutOfMemory;
+    defer c.av_frame_free(@ptrCast(&dec_frame));
+
+    for (frames.items) |f| {
+        const adts = aac_enc.AacEncoder.buildAdtsHeader(f.data.len, 48000, 2);
+        var full_buf: [4096]u8 = undefined;
+        @memcpy(full_buf[0..7], &adts);
+        @memcpy(full_buf[7 .. 7 + f.data.len], f.data);
+        dec_pkt.*.data = @ptrCast(&full_buf);
+        dec_pkt.*.size = @intCast(7 + f.data.len);
+        const send_ret = c.avcodec_send_packet(dec_ctx, dec_pkt);
+        try testing.expectEqual(@as(c_int, 0), send_ret);
+        _ = c.avcodec_receive_frame(dec_ctx, dec_frame);
+    }
+}
+
 test {
     std.testing.refAllDecls(aac_enc);
+    std.testing.refAllDecls(ac3_dec);
 }

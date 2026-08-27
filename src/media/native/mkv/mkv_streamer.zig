@@ -164,7 +164,10 @@ pub fn streamMkvGeneric(
         const use_native_enc = (audio_transcoder_mode == .native);
         var audio_desc_buf: [128]u8 = undefined;
         const audio_desc = if (use_native_enc)
-            std.fmt.bufPrint(&audio_desc_buf, "Inline decode ({s}, {d}ch) -> Pure Zig AAC-LC", .{ at.codec_id, at.channels }) catch "Inline decode -> Pure Zig AAC-LC"
+            (if (std.mem.eql(u8, at.codec_id, "A_AC3"))
+                std.fmt.bufPrint(&audio_desc_buf, "Pure Zig AC-3 ({d}ch) -> Pure Zig AAC-LC", .{at.channels})
+            else
+                std.fmt.bufPrint(&audio_desc_buf, "Inline decode ({s}, {d}ch) -> Pure Zig AAC-LC", .{ at.codec_id, at.channels })) catch "Inline decode -> Pure Zig AAC-LC"
         else
             std.fmt.bufPrint(&audio_desc_buf, "Inline FFmpeg ({s}, {d}ch -> Stereo AAC)", .{ at.codec_id, at.channels }) catch "Inline FFmpeg";
         streamer.logStreamStatus(file_path, audio_idx_requested, "Native MKV Slicer", "Zero-copy passthrough", audio_desc);
