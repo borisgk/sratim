@@ -39,6 +39,7 @@ pub fn streamMedia(
     audio_idx_requested: c_int,
     http_ctx: *HttpStreamContext,
     mode: config_mod.EngineMode,
+    audio_transcoder_mode: config_mod.EngineMode,
 ) !void {
     if (mode == .native) {
         const file = std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only }) catch |err| return err;
@@ -52,13 +53,13 @@ pub fn streamMedia(
             std.debug.print("[Streamer] Using native MP4 fMP4 slicer for: {s} (start: {d:.2}s)\n", .{ file_path, start_time });
             const z_path = try allocator.dupeZ(u8, file_path);
             defer allocator.free(z_path);
-            return mp4_streamer.streamMp4(allocator, io, z_path, start_time, audio_idx_requested, http_ctx);
+            return mp4_streamer.streamMp4(allocator, io, z_path, start_time, audio_idx_requested, http_ctx, audio_transcoder_mode);
         } else {
             const z_path = try allocator.dupeZ(u8, file_path);
             defer allocator.free(z_path);
             if (mkv_streamer.canStreamMkvNatively(allocator, io, z_path, audio_idx_requested)) {
                 std.debug.print("[Streamer] Using native MKV fMP4 slicer for: {s} (start: {d:.2}s)\n", .{ file_path, start_time });
-                return mkv_streamer.streamMkv(allocator, io, z_path, start_time, audio_idx_requested, http_ctx);
+                return mkv_streamer.streamMkv(allocator, io, z_path, start_time, audio_idx_requested, http_ctx, audio_transcoder_mode);
             }
         }
     }

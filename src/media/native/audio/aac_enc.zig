@@ -142,6 +142,8 @@ pub const AacEncoder = struct {
         try writer.writeBit(1);
 
         // ics_info:
+        // ics_reserved_bit = 0
+        try writer.writeBit(0);
         // window_sequence = 0 (ONLY_LONG_SEQUENCE)
         try writer.writeBits(0, 2);
         // window_shape = 0 (sine)
@@ -227,14 +229,12 @@ fn writeIndividualChannelStream(
     try writer.writeBits(global_gain, 8);
 
     // Section data:
-    // Codebook 11 (Esc codebook) used across all 49 bands
-    var sfb: usize = 0;
-    while (sfb < NUM_SFBS) {
-        const run: usize = @min(NUM_SFBS - sfb, 31);
-        try writer.writeBits(11, 4); // Codebook 11
-        try writer.writeBits(@intCast(run), 5); // Section length
-        sfb += run;
-    }
+    // All 49 scalefactor bands use Codebook 11 (Esc codebook).
+    // In AAC long windows, section length is written in 5-bit increments:
+    // A value of 31 is an escape meaning "add 31 and read another 5 bits".
+    try writer.writeBits(11, 4); // Codebook 11
+    try writer.writeBits(31, 5); // 31 (continuation escape)
+    try writer.writeBits(NUM_SFBS - 31, 5); // 18 (total section length = 49)
 
     // Scale factor data (differential encoding, codebook 12)
     var prev_sf = global_gain;

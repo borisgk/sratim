@@ -4,6 +4,7 @@ const fmp4_muxer = @import("fmp4_muxer.zig");
 const streamer = @import("../streamer.zig");
 const transcoder_mod = @import("../transcoder.zig");
 const track_parser = @import("mkv/track_parser.zig");
+const config_mod = @import("../../config.zig");
 
 /// Slices an existing MP4 file into a byte-compatible fMP4 stream starting at the nearest keyframe.
 pub fn streamMp4(
@@ -13,6 +14,7 @@ pub fn streamMp4(
     start_time: f64,
     audio_idx_requested: c_int,
     http_ctx: *streamer.HttpStreamContext,
+    audio_transcoder_mode: config_mod.EngineMode,
 ) !void {
     var media = try isobmff.parseMp4Media(allocator, io, file_path);
     defer media.deinit(allocator);
@@ -63,12 +65,18 @@ pub fn streamMp4(
 
     if (selected_audio_track) |at| {
         if (needs_audio_transcode) {
-            std.debug.print("[Streamer] [MP4 Slicer] Video: native zero-copy | Audio: inline decode ({s}, {d}ch) -> Pure Zig AAC-LC encoding\n", .{ &audio_fourcc, audio_channels });
+            const use_native_enc = (audio_transcoder_mode == .native);
+            if (use_native_enc) {
+                std.debug.print("[Streamer] [MP4 Slicer] Video: native zero-copy | Audio: inline decode ({s}, {d}ch) -> Pure Zig AAC-LC encoding\n", .{ &audio_fourcc, audio_channels });
+            } else {
+                std.debug.print("[Streamer] [MP4 Slicer] Video: native zero-copy | Audio: inline FFmpeg transcoding ({s}, {d}ch -> Stereo AAC)\n", .{ &audio_fourcc, audio_channels });
+            }
             audio_transcoder = try transcoder_mod.StreamAudioTranscoder.initFromCodec(
                 &audio_fourcc,
                 null,
                 audio_channels,
                 at.timescale,
+                use_native_enc,
             );
             synthetic_aac_stsd = try track_parser.buildAacStsd(allocator, &[_]u8{ 0x11, 0x90 }, 2, 48000);
             mux_audio_track_opt = isobmff.Mp4MediaTrack{

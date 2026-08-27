@@ -248,6 +248,7 @@ pub const StreamAudioTranscoder = struct {
         codec_private: ?[]const u8,
         channels: u16,
         sample_rate: u32,
+        use_native_encoder: bool,
     ) !*StreamAudioTranscoder {
         const av_codec_id = mapCodecId(codec_name) orelse return error.UnsupportedAudioCodec;
         const dec = c.avcodec_find_decoder(av_codec_id) orelse return error.DecoderNotFound;
@@ -256,6 +257,8 @@ pub const StreamAudioTranscoder = struct {
         var self = try allocator.create(StreamAudioTranscoder);
         errdefer allocator.destroy(self);
 
+        self.native_aac_enc = aac_enc.AacEncoder.init(48000, 192000);
+        self.use_native_encoder = use_native_encoder;
         self.swr_ctx = null;
         self.pts_counter = 0;
         self.swr_in_channels = 0;
@@ -632,7 +635,7 @@ test "StreamAudioTranscoder decodes and encodes AAC frames" {
     else
         null;
 
-    var transcoder = try StreamAudioTranscoder.initFromCodec("A_AAC", extradata_slice, 2, 48000);
+    var transcoder = try StreamAudioTranscoder.initFromCodec("A_AAC", extradata_slice, 2, 48000, true);
     defer transcoder.deinit();
 
     var pkt = c.av_packet_alloc() orelse return error.OutOfMemory;

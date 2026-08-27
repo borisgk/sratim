@@ -8,6 +8,7 @@ const isobmff = @import("../isobmff.zig");
 const fmp4_muxer = @import("../fmp4_muxer.zig");
 const streamer = @import("../../streamer.zig");
 const transcoder_mod = @import("../../transcoder.zig");
+const config_mod = @import("../../../config.zig");
 
 const MkvTrackInfo = types.MkvTrackInfo;
 const MkvBlock = types.MkvBlock;
@@ -30,25 +31,36 @@ pub fn canStreamMkvNatively(
         allocator.free(tracks);
     }
 
-    var video_track_opt: ?MkvTrackInfo = null;
-    var audio_track_opt: ?MkvTrackInfo = null;
-
+    var has_supported_video = false;
     for (tracks) |t| {
-        if (t.track_type == .Video and video_track_opt == null) {
-            video_track_opt = t;
-        } else if (t.track_type == .Audio) {
-            if (audio_idx_requested >= 0) {
-                if (@as(c_int, @intCast(t.stream_idx)) == audio_idx_requested) {
-                    audio_track_opt = t;
-                }
-            } else if (audio_track_opt == null) {
-                audio_track_opt = t;
+        if (t.track_type == .Video) {
+            if (std.mem.eql(u8, t.codec_id, "V_MPEG4/ISO/AVC") or std.mem.eql(u8, t.codec_id, "V_MPEGH/ISO/HEVC")) {
+                has_supported_video = true;
+                break;
             }
         }
     }
+    if (!has_supported_video) return false;
 
-    const video_trk = video_track_opt orelse return false;
-    if (video_trk.stsd_raw == null) return false;
+    // Check if the requested or first audio track is playable directly or transcodable
+    var audio_track_opt: ?*const MkvTrackInfo = null;
+    if (audio_idx_requested >= 0) {
+        const target_stream: usize = @intCast(audio_idx_requested);
+        for (tracks) |*t| {
+            if (t.track_type == .Audio and t.stream_idx == target_stream) {
+                audio_track_opt = t;
+                break;
+            }
+        }
+    }
+    if (audio_track_opt == null) {
+        for (tracks) |*t| {
+            if (t.track_type == .Audio) {
+                audio_track_opt = t;
+                break;
+            }
+        }
+    }
 
     if (audio_track_opt) |at| {
         const is_native_aac = (at.stsd_raw != null and at.channels <= 2);
@@ -67,8 +79,9 @@ pub fn streamMkv(
     start_time: f64,
     audio_idx_requested: c_int,
     http_ctx: *streamer.HttpStreamContext,
+    audio_transcoder_mode: config_mod.EngineMode,
 ) !void {
-    return streamMkvGeneric(allocator, io, file_path, start_time, audio_idx_requested, &http_ctx.writer.writer, &http_ctx.has_error, null);
+    return streamMkvGeneric(allocator, io, file_path, start_time, audio_idx_requested, &http_ctx.writer.writer, &http_ctx.has_error, null, audio_transcoder_mode);
 }
 
 pub fn streamMkvGeneric(
@@ -80,6 +93,7 @@ pub fn streamMkvGeneric(
     writer: *std.Io.Writer,
     has_error: *bool,
     max_fragments: ?usize,
+    audio_transcoder_mode: config_mod.EngineMode,
 ) !void {
     const tracks = try track_parser.parseMkvTracks(allocator, io, file_path);
     defer {
@@ -90,27 +104,39 @@ pub fn streamMkvGeneric(
         allocator.free(tracks);
     }
 
-    var video_track_opt: ?MkvTrackInfo = null;
-    var audio_track_opt: ?MkvTrackInfo = null;
+    // 1. Identify video and audio tracks
+    var video_track_opt: ?*const MkvTrackInfo = null;
+    var audio_track_opt: ?*const MkvTrackInfo = null;
 
-    for (tracks) |t| {
+    for (tracks) |*t| {
         if (t.track_type == .Video and video_track_opt == null) {
-            video_track_opt = t;
-        } else if (t.track_type == .Audio) {
-            if (audio_idx_requested >= 0) {
-                if (@as(c_int, @intCast(t.stream_idx)) == audio_idx_requested) {
-                    audio_track_opt = t;
-                }
-            } else if (audio_track_opt == null) {
+            if (std.mem.eql(u8, t.codec_id, "V_MPEG4/ISO/AVC") or std.mem.eql(u8, t.codec_id, "V_MPEGH/ISO/HEVC")) {
+                video_track_opt = t;
+            }
+        }
+    }
+    const video_trk = video_track_opt orelse return error.NoSupportedVideoTrack;
+    const video_stsd = video_trk.stsd_raw orelse return error.NoStsdHeader;
+
+    if (audio_idx_requested >= 0) {
+        const target_stream: usize = @intCast(audio_idx_requested);
+        for (tracks) |*t| {
+            if (t.track_type == .Audio and t.stream_idx == target_stream) {
                 audio_track_opt = t;
+                break;
+            }
+        }
+    }
+    if (audio_track_opt == null) {
+        for (tracks) |*t| {
+            if (t.track_type == .Audio) {
+                audio_track_opt = t;
+                break;
             }
         }
     }
 
-    const video_trk = video_track_opt orelse return error.NoVideoTrackFound;
-    const video_stsd = video_trk.stsd_raw orelse return error.UnsupportedVideoCodec;
-
-    // 1. Resolve seek offset using Cues table
+    // Resolve seek offset using Cues table
     var seek_cluster_offset: u64 = 0;
     var seek_keyframe_pts_sec: f64 = 0.0;
 
@@ -121,7 +147,7 @@ pub fn streamMkvGeneric(
         }
     }
 
-    // 2. Set up audio transcoding if needed
+    // 2. Setup Audio Transcoder if needed
     const needs_audio_transcode = if (audio_track_opt) |at|
         (at.stsd_raw == null or at.channels > 2)
     else
@@ -135,12 +161,18 @@ pub fn streamMkvGeneric(
 
     if (needs_audio_transcode) {
         const at = audio_track_opt.?;
-        std.debug.print("[Streamer] [MKV Slicer] Video: native zero-copy | Audio: inline decode ({s}, {d}ch) -> Pure Zig AAC-LC encoding\n", .{ at.codec_id, at.channels });
+        const use_native_enc = (audio_transcoder_mode == .native);
+        if (use_native_enc) {
+            std.debug.print("[Streamer] [MKV Slicer] Video: native zero-copy | Audio: inline decode ({s}, {d}ch) -> Pure Zig AAC-LC encoding\n", .{ at.codec_id, at.channels });
+        } else {
+            std.debug.print("[Streamer] [MKV Slicer] Video: native zero-copy | Audio: inline FFmpeg transcoding ({s}, {d}ch -> Stereo AAC)\n", .{ at.codec_id, at.channels });
+        }
         audio_transcoder = try transcoder_mod.StreamAudioTranscoder.initFromCodec(
             at.codec_id,
             at.codec_private,
             at.channels,
             at.sample_rate,
+            use_native_enc,
         );
         synthetic_aac_stsd = try track_parser.buildAacStsd(allocator, &[_]u8{ 0x11, 0x90 }, 2, 48000);
     } else if (audio_track_opt != null) {
@@ -435,6 +467,7 @@ test "generate MKV fMP4 fragments for Sof Ha Olam Smola" {
         &out_writer.interface,
         &has_error,
         3, // 3 fragments
+        .native,
     );
     try out_writer.flush();
 }
@@ -460,6 +493,7 @@ test "generate MKV fMP4 fragments with AC3 audio transcoding" {
         &out_writer.interface,
         &has_error,
         3, // 3 fragments
+        .native,
     );
     try out_writer.flush();
 }
@@ -484,6 +518,7 @@ test "generate MKV fMP4 fragments for Tuner.mkv with 5.1 AAC downmixing" {
         &out_writer.interface,
         &has_error,
         3, // 3 fragments
+        .native,
     );
     try out_writer.flush();
 }
@@ -508,6 +543,7 @@ test "generate MKV fMP4 fragments for Along Came Polly with AC3 5.1" {
         &out_writer.interface,
         &has_error,
         3, // 3 fragments
+        .native,
     );
     try out_writer.flush();
 }
@@ -532,6 +568,7 @@ test "generate MKV fMP4 fragments for Night at the Museum with DTS 5.1" {
         &out_writer.interface,
         &has_error,
         3, // 3 fragments
+        .native,
     );
     try out_writer.flush();
 }
