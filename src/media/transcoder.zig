@@ -3,6 +3,7 @@ const c = @import("../core/c.zig").c;
 pub const dsp = @import("native/audio/dsp.zig");
 pub const mdct = @import("native/audio/mdct.zig");
 pub const ac3_dec = @import("native/audio/ac3_dec.zig");
+pub const aac_enc = @import("native/audio/aac_enc.zig");
 
 /// AudioTranscoder handles on-the-fly audio transcoding using FFmpeg's C API.
 /// It decodes incoming audio packets (e.g., AC3), resamples them (e.g., to 48kHz stereo),
@@ -214,6 +215,8 @@ pub const StreamAudioTranscoder = struct {
     swr_in_channels: i32 = 0,
     swr_in_rate: i32 = 0,
     swr_in_fmt: c.AVSampleFormat = c.AV_SAMPLE_FMT_NONE,
+    native_aac_enc: aac_enc.AacEncoder = aac_enc.AacEncoder.init(48000, 192000),
+    use_native_encoder: bool = true,
 
     pub fn mapCodecId(codec_name: []const u8) ?c.AVCodecID {
         if (std.mem.eql(u8, codec_name, "A_AC3") or std.mem.eql(u8, codec_name, "ac-3") or std.mem.eql(u8, codec_name, "sac3")) {
@@ -416,6 +419,27 @@ pub const StreamAudioTranscoder = struct {
     }
 
     fn drainFifo(self: *StreamAudioTranscoder, allocator: std.mem.Allocator, out_frames: *std.ArrayList(EncodedAacFrame)) !void {
+        if (self.use_native_encoder) {
+            while (c.av_audio_fifo_size(self.fifo) >= 1024) {
+                var planar_buf: [2][1024]f32 = undefined;
+                var out_ptrs = [_][*c]u8{ @ptrCast(&planar_buf[0]), @ptrCast(&planar_buf[1]) };
+                _ = c.av_audio_fifo_read(self.fifo, @ptrCast(&out_ptrs), 1024);
+
+                var aac_frame_buf: [2048]u8 = undefined;
+                const aac_len = try self.native_aac_enc.encodeFrame(&planar_buf[0], &planar_buf[1], &aac_frame_buf);
+
+                const frame_buf = try allocator.alloc(u8, aac_len);
+                errdefer allocator.free(frame_buf);
+                @memcpy(frame_buf, aac_frame_buf[0..aac_len]);
+
+                try out_frames.append(allocator, EncodedAacFrame{
+                    .data = frame_buf,
+                    .sample_count = 1024,
+                });
+            }
+            return;
+        }
+
         while (c.av_audio_fifo_size(self.fifo) >= self.encode_ctx.*.frame_size) {
             _ = c.av_audio_fifo_read(self.fifo, @ptrCast(&self.frame_out.*.data), self.encode_ctx.*.frame_size);
             self.frame_out.*.pts = self.pts_counter;
@@ -442,6 +466,27 @@ pub const StreamAudioTranscoder = struct {
     pub fn flush(self: *StreamAudioTranscoder, allocator: std.mem.Allocator, out_frames: *std.ArrayList(EncodedAacFrame)) !void {
         const remaining_samples = c.av_audio_fifo_size(self.fifo);
         if (remaining_samples > 0) {
+            if (self.use_native_encoder) {
+                var planar_buf: [2][1024]f32 = undefined;
+                @memset(&planar_buf[0], 0.0);
+                @memset(&planar_buf[1], 0.0);
+                var out_ptrs = [_][*c]u8{ @ptrCast(&planar_buf[0]), @ptrCast(&planar_buf[1]) };
+                _ = c.av_audio_fifo_read(self.fifo, @ptrCast(&out_ptrs), remaining_samples);
+
+                var aac_frame_buf: [2048]u8 = undefined;
+                const aac_len = try self.native_aac_enc.encodeFrame(&planar_buf[0], &planar_buf[1], &aac_frame_buf);
+
+                const frame_buf = try allocator.alloc(u8, aac_len);
+                errdefer allocator.free(frame_buf);
+                @memcpy(frame_buf, aac_frame_buf[0..aac_len]);
+
+                try out_frames.append(allocator, EncodedAacFrame{
+                    .data = frame_buf,
+                    .sample_count = 1024,
+                });
+                return;
+            }
+
             @memset(self.frame_out.*.data[0][0 .. @intCast(self.encode_ctx.*.frame_size * 4)], 0);
             @memset(self.frame_out.*.data[1][0 .. @intCast(self.encode_ctx.*.frame_size * 4)], 0);
             _ = c.av_audio_fifo_read(self.fifo, @ptrCast(&self.frame_out.*.data), remaining_samples);
@@ -463,18 +508,20 @@ pub const StreamAudioTranscoder = struct {
             }
         }
 
-        _ = c.avcodec_send_frame(self.encode_ctx, null);
-        while (c.avcodec_receive_packet(self.encode_ctx, self.out_pkt) >= 0) {
-            defer c.av_packet_unref(self.out_pkt);
-            const aac_len: usize = @intCast(self.out_pkt.*.size);
-            const frame_buf = try allocator.alloc(u8, aac_len);
-            errdefer allocator.free(frame_buf);
-            @memcpy(frame_buf, self.out_pkt.*.data[0..aac_len]);
+        if (!self.use_native_encoder) {
+            _ = c.avcodec_send_frame(self.encode_ctx, null);
+            while (c.avcodec_receive_packet(self.encode_ctx, self.out_pkt) >= 0) {
+                defer c.av_packet_unref(self.out_pkt);
+                const aac_len: usize = @intCast(self.out_pkt.*.size);
+                const frame_buf = try allocator.alloc(u8, aac_len);
+                errdefer allocator.free(frame_buf);
+                @memcpy(frame_buf, self.out_pkt.*.data[0..aac_len]);
 
-            try out_frames.append(allocator, EncodedAacFrame{
-                .data = frame_buf,
-                .sample_count = 1024,
-            });
+                try out_frames.append(allocator, EncodedAacFrame{
+                    .data = frame_buf,
+                    .sample_count = 1024,
+                });
+            }
         }
     }
 

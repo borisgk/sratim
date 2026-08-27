@@ -63,7 +63,7 @@ pub fn streamMp4(
 
     if (selected_audio_track) |at| {
         if (needs_audio_transcode) {
-            std.debug.print("[Streamer] [MP4 Slicer] Video: native zero-copy | Audio: inline FFmpeg transcoding ({s}, {d}ch -> Stereo AAC)\n", .{ &audio_fourcc, audio_channels });
+            std.debug.print("[Streamer] [MP4 Slicer] Video: native zero-copy | Audio: inline decode ({s}, {d}ch) -> Pure Zig AAC-LC encoding\n", .{ &audio_fourcc, audio_channels });
             audio_transcoder = try transcoder_mod.StreamAudioTranscoder.initFromCodec(
                 &audio_fourcc,
                 null,

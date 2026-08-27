@@ -86,38 +86,29 @@ pub const MdctEngine = struct {
     /// Computes forward MDCT: in (2N time samples) -> out (N frequency bins).
     pub fn mdct(comptime N: usize, in: []const f32, out: []f32) void {
         const N2 = N / 2;
-        const N4 = N / 4;
 
+        var y: [N]f32 = undefined;
+        // 1. TDAC Folding: 2N samples -> N samples
+        for (0..N2) |n| {
+            y[n] = -in[3 * N2 + n] - in[3 * N2 - 1 - n];
+            y[N2 + n] = in[n] - in[2 * N2 - 1 - n];
+        }
+
+        // 2. Pre-twiddle: N real samples -> N/2 complex samples
         var buf: [N2]Complex = undefined;
-
-        // 1. Time-domain pre-twiddle & folding
-        for (0..N4) |n| {
-            const rot_angle: f32 = -std.math.pi * (@as(f32, @floatFromInt(n)) + 0.125) / @as(f32, @floatFromInt(N2));
+        for (0..N2) |n| {
+            const rot_angle: f32 = -2.0 * std.math.pi * (@as(f32, @floatFromInt(n)) + 0.125) / @as(f32, @floatFromInt(N));
             const twiddle = Complex{ .re = @cos(rot_angle), .im = @sin(rot_angle) };
-
-            const x0 = -in[3 * N4 + 2 * n] - in[3 * N4 - 1 - 2 * n];
-            const x1 = in[N4 - 1 - 2 * n] - in[N4 + 2 * n];
-
-            buf[n] = (Complex{ .re = x0, .im = x1 }).mul(twiddle);
+            const c_in = Complex{ .re = y[2 * n], .im = -y[N - 1 - 2 * n] };
+            buf[n] = c_in.mul(twiddle);
         }
 
-        for (0..N4) |n| {
-            const idx = N4 + n;
-            const rot_angle: f32 = -std.math.pi * (@as(f32, @floatFromInt(idx)) + 0.125) / @as(f32, @floatFromInt(N2));
-            const twiddle = Complex{ .re = @cos(rot_angle), .im = @sin(rot_angle) };
-
-            const x0 = in[N4 + 2 * n] - in[N4 - 1 - 2 * n];
-            const x1 = in[7 * N4 - 1 - 2 * n] - in[7 * N4 + 2 * n];
-
-            buf[idx] = (Complex{ .re = x0, .im = x1 }).mul(twiddle);
-        }
-
-        // 2. N/2-point FFT
+        // 3. N/2-point FFT
         fft(buf[0..N2]);
 
-        // 3. Post-twiddle to frequency bins
+        // 4. Post-twiddle to spectral frequency bins
         for (0..N2) |k| {
-            const rot_angle: f32 = -std.math.pi * (@as(f32, @floatFromInt(k)) + 0.125) / @as(f32, @floatFromInt(N2));
+            const rot_angle: f32 = -2.0 * std.math.pi * (@as(f32, @floatFromInt(k)) + 0.125) / @as(f32, @floatFromInt(N));
             const twiddle = Complex{ .re = @cos(rot_angle), .im = @sin(rot_angle) };
             const post = buf[k].mul(twiddle);
 
@@ -129,43 +120,36 @@ pub const MdctEngine = struct {
     /// Computes inverse MDCT (IMDCT): in (N frequency bins) -> out (2N time samples).
     pub fn imdct(comptime N: usize, in: []const f32, out: []f32) void {
         const N2 = N / 2;
-        const N4 = N / 4;
-
-        var buf: [N2]Complex = undefined;
 
         // 1. Pre-twiddle frequency bins
+        var buf: [N2]Complex = undefined;
         for (0..N2) |k| {
-            const rot_angle: f32 = std.math.pi * (@as(f32, @floatFromInt(k)) + 0.125) / @as(f32, @floatFromInt(N2));
+            const rot_angle: f32 = 2.0 * std.math.pi * (@as(f32, @floatFromInt(k)) + 0.125) / @as(f32, @floatFromInt(N));
             const twiddle = Complex{ .re = @cos(rot_angle), .im = @sin(rot_angle) };
-            const in_c = Complex{ .re = in[2 * k], .im = -in[N - 1 - 2 * k] };
+            const in_c = Complex{ .re = -in[2 * k], .im = in[N - 1 - 2 * k] };
             buf[k] = in_c.mul(twiddle);
         }
 
         // 2. N/2-point IFFT
         ifft(buf[0..N2]);
 
-        // 3. Post-twiddle and time unfolding
-        for (0..N4) |n| {
-            const rot_angle: f32 = std.math.pi * (@as(f32, @floatFromInt(n)) + 0.125) / @as(f32, @floatFromInt(N2));
+        // 3. Post-twiddle
+        var y: [N]f32 = undefined;
+        for (0..N2) |n| {
+            const rot_angle: f32 = 2.0 * std.math.pi * (@as(f32, @floatFromInt(n)) + 0.125) / @as(f32, @floatFromInt(N));
             const twiddle = Complex{ .re = @cos(rot_angle), .im = @sin(rot_angle) };
             const post = buf[n].mul(twiddle);
 
-            out[N4 + 2 * n] = -post.re;
-            out[N4 - 1 - 2 * n] = -post.re;
-            out[3 * N4 + 2 * n] = post.im;
-            out[3 * N4 - 1 - 2 * n] = -post.im;
+            y[2 * n] = post.re;
+            y[N - 1 - 2 * n] = -post.im;
         }
 
-        for (0..N4) |n| {
-            const idx = N4 + n;
-            const rot_angle: f32 = std.math.pi * (@as(f32, @floatFromInt(idx)) + 0.125) / @as(f32, @floatFromInt(N2));
-            const twiddle = Complex{ .re = @cos(rot_angle), .im = @sin(rot_angle) };
-            const post = buf[idx].mul(twiddle);
-
-            out[7 * N4 + 2 * n] = -post.re;
-            out[7 * N4 - 1 - 2 * n] = post.re;
-            out[5 * N4 + 2 * n] = -post.im;
-            out[5 * N4 - 1 - 2 * n] = -post.im;
+        // 4. Time unfolding: N samples -> 2N samples
+        for (0..N2) |n| {
+            out[n] = y[N2 + n];
+            out[2 * N2 - 1 - n] = -y[N2 + n];
+            out[2 * N2 + n] = -y[N2 - 1 - n];
+            out[4 * N2 - 1 - n] = -y[N2 - 1 - n];
         }
     }
 };

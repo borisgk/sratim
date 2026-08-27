@@ -135,7 +135,7 @@ pub fn streamMkvGeneric(
 
     if (needs_audio_transcode) {
         const at = audio_track_opt.?;
-        std.debug.print("[Streamer] [MKV Slicer] Video: native zero-copy | Audio: inline FFmpeg transcoding ({s}, {d}ch -> Stereo AAC)\n", .{ at.codec_id, at.channels });
+        std.debug.print("[Streamer] [MKV Slicer] Video: native zero-copy | Audio: inline decode ({s}, {d}ch) -> Pure Zig AAC-LC encoding\n", .{ at.codec_id, at.channels });
         audio_transcoder = try transcoder_mod.StreamAudioTranscoder.initFromCodec(
             at.codec_id,
             at.codec_private,

@@ -292,4 +292,52 @@ test.describe('Video Player Playback & Streaming Tests', () => {
     const overlay = page.locator('#subtitle-overlay');
     await expect(overlay).toBeAttached();
   });
+
+  test('TC-09: Pure Zig AAC-LC encoding playback and audio progression on multichannel media', async ({ page }) => {
+    // 1. Test Along Came Polly (id 25, 5.1 AC3 audio track)
+    await page.goto('/player?id=25');
+
+    const video = page.locator('#video');
+    await expect(video).toBeVisible({ timeout: 10000 });
+
+    await page.waitForFunction(() => {
+      const v = document.querySelector('video');
+      return v && v.readyState >= 2;
+    }, { timeout: 15000 });
+
+    const initTime = await page.evaluate(() => document.querySelector('video').currentTime);
+    await page.waitForFunction(
+      (init) => {
+        const v = document.querySelector('video');
+        return v && v.currentTime >= init + 2.0;
+      },
+      initTime,
+      { timeout: 10000 }
+    );
+
+    const progressedTime = await page.evaluate(() => document.querySelector('video').currentTime);
+    expect(progressedTime).toBeGreaterThan(initTime + 1.5);
+
+    // 2. Test Tuner (id 26, 5.1 AAC audio track)
+    await page.goto('/player?id=26');
+    await expect(video).toBeVisible({ timeout: 10000 });
+
+    await page.waitForFunction(() => {
+      const v = document.querySelector('video');
+      return v && v.readyState >= 2;
+    }, { timeout: 15000 });
+
+    const initTime2 = await page.evaluate(() => document.querySelector('video').currentTime);
+    await page.waitForFunction(
+      (init) => {
+        const v = document.querySelector('video');
+        return v && v.currentTime >= init + 2.0;
+      },
+      initTime2,
+      { timeout: 10000 }
+    );
+
+    const progressedTime2 = await page.evaluate(() => document.querySelector('video').currentTime);
+    expect(progressedTime2).toBeGreaterThan(initTime2 + 1.5);
+  });
 });
