@@ -162,11 +162,13 @@ pub fn streamMkvGeneric(
     if (needs_audio_transcode) {
         const at = audio_track_opt.?;
         const use_native_enc = (audio_transcoder_mode == .native);
-        if (use_native_enc) {
-            std.debug.print("[Streamer] [MKV Slicer] Video: native zero-copy | Audio: inline decode ({s}, {d}ch) -> Pure Zig AAC-LC encoding\n", .{ at.codec_id, at.channels });
-        } else {
-            std.debug.print("[Streamer] [MKV Slicer] Video: native zero-copy | Audio: inline FFmpeg transcoding ({s}, {d}ch -> Stereo AAC)\n", .{ at.codec_id, at.channels });
-        }
+        var audio_desc_buf: [128]u8 = undefined;
+        const audio_desc = if (use_native_enc)
+            std.fmt.bufPrint(&audio_desc_buf, "Inline decode ({s}, {d}ch) -> Pure Zig AAC-LC", .{ at.codec_id, at.channels }) catch "Inline decode -> Pure Zig AAC-LC"
+        else
+            std.fmt.bufPrint(&audio_desc_buf, "Inline FFmpeg ({s}, {d}ch -> Stereo AAC)", .{ at.codec_id, at.channels }) catch "Inline FFmpeg";
+        streamer.logStreamStatus(file_path, audio_idx_requested, "Native MKV Slicer", "Zero-copy passthrough", audio_desc);
+
         audio_transcoder = try transcoder_mod.StreamAudioTranscoder.initFromCodec(
             at.codec_id,
             at.codec_private,
@@ -176,9 +178,9 @@ pub fn streamMkvGeneric(
         );
         synthetic_aac_stsd = try track_parser.buildAacStsd(allocator, &[_]u8{ 0x11, 0x90 }, 2, 48000);
     } else if (audio_track_opt != null) {
-        std.debug.print("[Streamer] [MKV Slicer] 100% Pure Zig native stream (Video + Stereo AAC passthrough)\n", .{});
+        streamer.logStreamStatus(file_path, audio_idx_requested, "Native MKV Slicer", "Zero-copy passthrough", "Zero-copy passthrough (Stereo AAC)");
     } else {
-        std.debug.print("[Streamer] [MKV Slicer] 100% Pure Zig native stream (Video only, no audio track)\n", .{});
+        streamer.logStreamStatus(file_path, audio_idx_requested, "Native MKV Slicer", "Zero-copy passthrough", "None (no audio track)");
     }
 
     // 3. Build initialization segment (ftyp + moov)

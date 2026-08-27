@@ -66,11 +66,13 @@ pub fn streamMp4(
     if (selected_audio_track) |at| {
         if (needs_audio_transcode) {
             const use_native_enc = (audio_transcoder_mode == .native);
-            if (use_native_enc) {
-                std.debug.print("[Streamer] [MP4 Slicer] Video: native zero-copy | Audio: inline decode ({s}, {d}ch) -> Pure Zig AAC-LC encoding\n", .{ &audio_fourcc, audio_channels });
-            } else {
-                std.debug.print("[Streamer] [MP4 Slicer] Video: native zero-copy | Audio: inline FFmpeg transcoding ({s}, {d}ch -> Stereo AAC)\n", .{ &audio_fourcc, audio_channels });
-            }
+            var audio_desc_buf: [128]u8 = undefined;
+            const audio_desc = if (use_native_enc)
+                std.fmt.bufPrint(&audio_desc_buf, "Inline decode ({s}, {d}ch) -> Pure Zig AAC-LC", .{ &audio_fourcc, audio_channels }) catch "Inline decode -> Pure Zig AAC-LC"
+            else
+                std.fmt.bufPrint(&audio_desc_buf, "Inline FFmpeg ({s}, {d}ch -> Stereo AAC)", .{ &audio_fourcc, audio_channels }) catch "Inline FFmpeg";
+            streamer.logStreamStatus(file_path, audio_idx_requested, "Native MP4 Slicer", "Zero-copy passthrough", audio_desc);
+
             audio_transcoder = try transcoder_mod.StreamAudioTranscoder.initFromCodec(
                 &audio_fourcc,
                 null,
@@ -90,10 +92,10 @@ pub fn streamMp4(
                 .sync_sample_indices = &.{},
             };
         } else {
-            std.debug.print("[Streamer] [MP4 Slicer] 100% Pure Zig native stream (Video + Stereo AAC passthrough)\n", .{});
+            streamer.logStreamStatus(file_path, audio_idx_requested, "Native MP4 Slicer", "Zero-copy passthrough", "Zero-copy passthrough (Stereo AAC)");
         }
     } else {
-        std.debug.print("[Streamer] [MP4 Slicer] 100% Pure Zig native stream (Video only, no audio track)\n", .{});
+        streamer.logStreamStatus(file_path, audio_idx_requested, "Native MP4 Slicer", "Zero-copy passthrough", "None (no audio track)");
     }
 
     // 2. Resolve seek keyframe for video

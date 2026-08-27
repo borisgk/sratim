@@ -30,6 +30,41 @@ pub fn write_packet(ptr: ?*anyopaque, buf: [*c]const u8, buf_size: c_int) callco
     return buf_size;
 }
 
+var log_mutex: std.atomic.Mutex = .unlocked;
+var last_logged_path_buf: [1024]u8 = undefined;
+var last_logged_path_len: usize = 0;
+var last_logged_audio: c_int = -999;
+
+pub fn logStreamStatus(
+    file_path: []const u8,
+    audio_idx: c_int,
+    engine: []const u8,
+    video_info: []const u8,
+    audio_info: []const u8,
+) void {
+    while (!log_mutex.tryLock()) {
+        std.atomic.spinLoopHint();
+    }
+    defer log_mutex.unlock();
+
+    const last_path = last_logged_path_buf[0..last_logged_path_len];
+    if (std.mem.eql(u8, file_path, last_path) and audio_idx == last_logged_audio) {
+        return;
+    }
+
+    const copy_len = @min(file_path.len, last_logged_path_buf.len);
+    @memcpy(last_logged_path_buf[0..copy_len], file_path[0..copy_len]);
+    last_logged_path_len = copy_len;
+    last_logged_audio = audio_idx;
+
+    std.debug.print("[Streamer] File: {s} | Engine: {s} | Video: {s} | Audio: {s}\n", .{
+        file_path,
+        engine,
+        video_info,
+        audio_info,
+    });
+}
+
 /// The main streaming pipeline dispatcher.
 pub fn streamMedia(
     allocator: std.mem.Allocator,
@@ -50,7 +85,6 @@ pub fn streamMedia(
         var magic_buf: [16]u8 = undefined;
         const bytes_read = file_reader.interface.readSliceShort(&magic_buf) catch 0;
         if (bytes_read >= 8 and isobmff.isMp4Container(magic_buf[0..bytes_read])) {
-            std.debug.print("[Streamer] Using native MP4 fMP4 slicer for: {s} (start: {d:.2}s)\n", .{ file_path, start_time });
             const z_path = try allocator.dupeZ(u8, file_path);
             defer allocator.free(z_path);
             return mp4_streamer.streamMp4(allocator, io, z_path, start_time, audio_idx_requested, http_ctx, audio_transcoder_mode);
@@ -58,13 +92,12 @@ pub fn streamMedia(
             const z_path = try allocator.dupeZ(u8, file_path);
             defer allocator.free(z_path);
             if (mkv_streamer.canStreamMkvNatively(allocator, io, z_path, audio_idx_requested)) {
-                std.debug.print("[Streamer] Using native MKV fMP4 slicer for: {s} (start: {d:.2}s)\n", .{ file_path, start_time });
                 return mkv_streamer.streamMkv(allocator, io, z_path, start_time, audio_idx_requested, http_ctx, audio_transcoder_mode);
             }
         }
     }
 
-    std.debug.print("[Streamer] Using FFmpeg pipeline for: {s} (start: {d:.2}s)\n", .{ file_path, start_time });
+    logStreamStatus(file_path, audio_idx_requested, "FFmpeg Pipeline", "Transcode/Transmux", "FFmpeg Transcode");
     return streamMediaFfmpeg(file_path, start_time, audio_idx_requested, http_ctx);
 }
 
