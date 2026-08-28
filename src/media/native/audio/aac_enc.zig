@@ -100,16 +100,17 @@ pub const AacEncoder = struct {
         std.debug.assert(in_l.len >= 1024);
         std.debug.assert(in_r.len >= 1024);
 
-        // 1. Prepare 2048-point windowed time samples
+        // 1. Prepare 2048-point windowed time samples scaled to 16-bit PCM domain (32768.0)
+        const PCM_SCALE: f32 = 32768.0;
         var windowed_l: [2048]f32 = undefined;
         var windowed_r: [2048]f32 = undefined;
 
         for (0..1024) |i| {
-            windowed_l[i] = self.prev_samples_l[i] * SINE_WINDOW_2048[i];
-            windowed_r[i] = self.prev_samples_r[i] * SINE_WINDOW_2048[i];
+            windowed_l[i] = self.prev_samples_l[i] * PCM_SCALE * SINE_WINDOW_2048[i];
+            windowed_r[i] = self.prev_samples_r[i] * PCM_SCALE * SINE_WINDOW_2048[i];
 
-            windowed_l[1024 + i] = in_l[i] * SINE_WINDOW_2048[1024 + i];
-            windowed_r[1024 + i] = in_r[i] * SINE_WINDOW_2048[1024 + i];
+            windowed_l[1024 + i] = in_l[i] * PCM_SCALE * SINE_WINDOW_2048[1024 + i];
+            windowed_r[1024 + i] = in_r[i] * PCM_SCALE * SINE_WINDOW_2048[1024 + i];
         }
 
         // Save current samples for next frame's overlap
@@ -192,9 +193,31 @@ pub const AacEncoder = struct {
 };
 
 fn quantizeChannel(spec: []const f32, sf: []u8, quant: []i16) void {
+    // Determine overall peak to seed initial global gain
+    var global_max: f32 = 0.0;
+    for (spec) |s| {
+        const a = @abs(s);
+        if (a > global_max) global_max = a;
+    }
+
+    const init_sf: u8 = if (global_max > 1e-4) blk: {
+        const log2_m = std.math.log2(@as(f64, global_max));
+        const raw = @as(i32, @intFromFloat(std.math.round(84.0 + 4.0 * log2_m)));
+        break :blk @intCast(std.math.clamp(raw, 50, 200));
+    } else 100;
+
+    var prev_sf: u8 = init_sf;
+
     for (0..NUM_SFBS) |b| {
         const start = SWB_OFFSET_48000[b];
         const end = SWB_OFFSET_48000[b + 1];
+
+        // Zero out ultrasonic frequencies > 18 kHz (band 42+) to save bitrate and prevent noise
+        if (b >= 42) {
+            sf[b] = prev_sf;
+            for (start..end) |k| quant[k] = 0;
+            continue;
+        }
 
         var max_val: f32 = 0.0;
         for (start..end) |k| {
@@ -202,19 +225,40 @@ fn quantizeChannel(spec: []const f32, sf: []u8, quant: []i16) void {
             if (val > max_val) max_val = val;
         }
 
-        const calculated_sf: u8 = if (max_val > 1e-6)
-            @intCast(std.math.clamp(@as(i32, @intFromFloat(100.0 + 16.0 / 3.0 * std.math.log2(max_val * 4.0 + 1.0))), 0, 255))
-        else
-            100;
-        sf[b] = calculated_sf;
+        if (max_val < 1e-4) {
+            sf[b] = prev_sf;
+            for (start..end) |k| quant[k] = 0;
+            continue;
+        }
 
-        const factor = @as(f32, @floatCast(std.math.pow(f64, 2.0, -0.1875 * (@as(f64, @floatFromInt(calculated_sf)) - 100.0))));
+        // Target peak quantizer q_max ~ 8 (q_max^(4/3) = 16):
+        // sf = round(84.0 + 4.0 * log2(max_val))
+        const log2_max = std.math.log2(@as(f64, max_val));
+        const raw_sf = @as(i32, @intFromFloat(std.math.round(84.0 + 4.0 * log2_max)));
+        const target_sf: u8 = @intCast(std.math.clamp(raw_sf, 40, 210));
+
+        // Limit delta between bands to +/- 12 for smooth bitstream efficiency
+        const clamped_sf: u8 = @intCast(std.math.clamp(
+            @as(i32, target_sf),
+            @as(i32, prev_sf) - 12,
+            @as(i32, prev_sf) + 12,
+        ));
+        sf[b] = clamped_sf;
+        prev_sf = clamped_sf;
+
+        // step_scale = 2^(-0.25 * (sf - 100))
+        const step_scale = @as(f32, @floatCast(std.math.pow(f64, 2.0, -0.25 * (@as(f64, @floatFromInt(clamped_sf)) - 100.0))));
 
         for (start..end) |k| {
             const s = spec[k];
-            const scaled = @abs(s) * factor;
-            const q = std.math.clamp(@as(i32, @intFromFloat(std.math.pow(f32, scaled, 0.75) + 0.4054)), 0, 8191);
-            quant[k] = if (s < 0.0) @intCast(-q) else @intCast(q);
+            const scaled = @abs(s) * step_scale;
+            if (scaled < 0.01) {
+                quant[k] = 0;
+            } else {
+                const q_float = std.math.pow(f32, scaled, 0.75) + 0.4054;
+                const q = std.math.clamp(@as(i32, @intFromFloat(q_float)), 0, 8191);
+                quant[k] = if (s < 0.0) @intCast(-q) else @intCast(q);
+            }
         }
     }
 }
@@ -292,12 +336,15 @@ fn writeCodebook11Pair(writer: *BitWriter, x: i16, y: i16) !void {
 }
 
 fn writeEsc(writer: *BitWriter, val: u32) !void {
-    const coef = @min(val, (1 << 13) - 1);
-    const len: usize = 31 - @as(usize, @clz(coef)); // floor(log2(coef)), where coef >= 16 so len >= 4
-    const esc_len = len - 4 + 1;
+    const coef: u32 = @min(val, 8191);
+    if (coef < 16) return;
+    const len = std.math.log2_int(u32, coef); // floor(log2(coef)), where coef >= 16 so len >= 4
+    const N = len - 4;
+    const esc_len = N + 1;
     const esc_prefix: u32 = (@as(u32, 1) << @intCast(esc_len)) - 2;
     try writer.writeBits(esc_prefix, esc_len);
-    try writer.writeBits(coef & ((@as(u32, 1) << @intCast(len)) - 1), len);
+    const suffix: u32 = coef - (@as(u32, 1) << @intCast(len));
+    try writer.writeBits(suffix, len);
 }
 
 // ISO/IEC 14496-3 Table 4.128: Scalefactor Huffman Codebook
@@ -469,14 +516,23 @@ test "AacEncoder frame is decodable by libavcodec AAC decoder" {
         return error.SendPacketFailed;
     }
 
+    // Encode and send second frame to drain decoder delay
+    const raw_len2 = try enc.encodeFrame(&in_l, &in_r, &raw_buf);
+    const adts_hdr2 = AacEncoder.buildAdtsHeader(raw_len2, 48000, 2);
+    @memcpy(packet_buf[0..7], &adts_hdr2);
+    @memcpy(packet_buf[7 .. 7 + raw_len2], raw_buf[0..raw_len2]);
+    pkt.*.data = @ptrCast(&packet_buf);
+    pkt.*.size = @intCast(raw_len2 + 7);
+    _ = c.avcodec_send_packet(dec_ctx, pkt);
+
     var frame = c.av_frame_alloc() orelse return error.OutOfMemory;
     defer c.av_frame_free(@ptrCast(&frame));
 
-    const rec_ret = c.avcodec_receive_frame(dec_ctx, frame);
-    if (rec_ret < 0 and rec_ret != c.AVERROR(c.EAGAIN)) {
-        var err_buf: [128]u8 = undefined;
-        _ = c.av_strerror(rec_ret, &err_buf, err_buf.len);
-        std.debug.print("avcodec_receive_frame failed: {s}\n", .{err_buf});
-        return error.ReceiveFrameFailed;
+    var max_amp: f32 = 0.0;
+    while (c.avcodec_receive_frame(dec_ctx, frame) >= 0) {
+        const nb: usize = @intCast(frame.*.nb_samples);
+        const data = @as([*c][*c]f32, @ptrCast(&frame.*.data));
+        for (data[0][0..nb]) |s| max_amp = @max(max_amp, @abs(s));
     }
+    try std.testing.expect(max_amp > 0.2);
 }
