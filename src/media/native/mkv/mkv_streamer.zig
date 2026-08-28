@@ -137,6 +137,9 @@ pub fn streamMkvGeneric(
     }
 
     // Resolve seek offset using Cues table
+    var tv_start: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv_start, null);
+    const start_wall_time = @as(i64, tv_start.sec) * 1000 + @divTrunc(tv_start.usec, 1000);
     var seek_cluster_offset: u64 = 0;
     var seek_keyframe_pts_sec: f64 = 0.0;
 
@@ -287,13 +290,23 @@ pub fn streamMkvGeneric(
             const blk = (try block_rdr.readNextBlock(&current_file_pos)) orelse break;
 
             if (blk.track_num == video_trk.track_num) {
-                if (blk.is_keyframe and pending_video_blocks.items.len > 0) {
+                if (pending_video_blocks.items.len == 0) {
+                    // First block of stream MUST be a keyframe
+                    if (!blk.is_keyframe) continue;
+                } else if (blk.is_keyframe) {
                     // Next GOP keyframe reached
                     next_gop_keyframe = blk;
                     break;
                 }
                 try pending_video_blocks.append(allocator, blk);
             } else if (audio_track_opt != null and blk.track_num == audio_track_opt.?.track_num) {
+                // Do not accumulate audio preceding the first video keyframe on seek
+                if (pending_video_blocks.items.len == 0) continue;
+                if (seq_num == 1) {
+                    const kf_pts = pending_video_blocks.items[0].pts_ms;
+                    if (blk.pts_ms + 25 < kf_pts) continue;
+                }
+
                 if (needs_audio_transcode) {
                     payload_reader.seekTo(blk.payload_offset) catch {
                         has_error.* = true;
@@ -365,6 +378,17 @@ pub fn streamMkvGeneric(
         const base_video_dts = v_samples[0].dts - seek_base_video_dts.?;
         const base_audio_dts = running_audio_samples;
         running_audio_samples += @as(u64, a_samples.items.len) * 1024;
+
+        if (seq_num == 1) {
+            var tv_now: std.c.timeval = undefined;
+            _ = std.c.gettimeofday(&tv_now, null);
+            const now_ms = @as(i64, tv_now.sec) * 1000 + @divTrunc(tv_now.usec, 1000);
+            std.debug.print("[TIMING] Frag 1 generated in {} ms (V_bytes={}, A_bytes={})\n", .{
+                now_ms - start_wall_time,
+                total_v_bytes,
+                total_a_bytes,
+            });
+        }
 
         // Build and write Fragment Header (moof + mdat header)
         const frag_hdr = try fmp4_muxer.buildFragmentHeader(
@@ -577,3 +601,60 @@ test "generate MKV fMP4 fragments for Night at the Museum with DTS 5.1" {
     );
     try out_writer.flush();
 }
+
+test "generate MKV fMP4 fragments for Fiddler on the Roof with AC3 2.0" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const out_file = std.Io.Dir.cwd().createFile(io, "tmp/mkv_test_fiddler_out.mp4", .{}) catch return;
+    defer out_file.close(io);
+
+    var out_buf: [65536]u8 = undefined;
+    var out_writer = out_file.writer(io, &out_buf);
+
+    var has_error = false;
+    try streamMkvGeneric(
+        allocator,
+        io,
+        "/Users/borisk/Movies/Sratim/Movies/Fiddler.on.the.Roof.1971.1080p.BluRay.x264-DiVULGED.mkv",
+        0.0,
+        2, // AC3 2.0 commentary track
+        &out_writer.interface,
+        &has_error,
+        3, // 3 fragments
+        .native,
+    );
+    try out_writer.flush();
+}
+
+test "compare seek in Sof Ha Olam Smola AAC vs AC3" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const file_path = "/Users/borisk/Movies/Sratim/Movies/Sof Ha Olam Smola (2004).mkv";
+
+    const seek_res = cues.findCueSeekPosition(io, file_path, 60.0) catch return;
+    _ = seek_res;
+
+    // Track 2: AAC (passthrough)
+    {
+        const out_file = std.Io.Dir.cwd().createFile(io, "tmp/seek_sof_aac.mp4", .{}) catch return;
+        defer out_file.close(io);
+        var out_buf: [65536]u8 = undefined;
+        var out_writer = out_file.writer(io, &out_buf);
+        var has_error = false;
+        try streamMkvGeneric(allocator, io, file_path, 60.0, 2, &out_writer.interface, &has_error, 2, .native);
+        try out_writer.flush();
+    }
+
+    // Track 1: AC3 (transcode)
+    {
+        const out_file = std.Io.Dir.cwd().createFile(io, "tmp/seek_sof_ac3.mp4", .{}) catch return;
+        defer out_file.close(io);
+        var out_buf: [65536]u8 = undefined;
+        var out_writer = out_file.writer(io, &out_buf);
+        var has_error = false;
+        try streamMkvGeneric(allocator, io, file_path, 60.0, 1, &out_writer.interface, &has_error, 2, .native);
+        try out_writer.flush();
+    }
+}
+

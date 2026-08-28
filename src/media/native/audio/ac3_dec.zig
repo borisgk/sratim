@@ -934,7 +934,11 @@ pub const Ac3Decoder = struct {
                     if (self.acmod == 2) _ = try reader.readBit(); // phsflginu
                     self.cplbegf = try reader.readBits(usize, 4);
                     self.cplendf = try reader.readBits(usize, 4);
+                    if (self.cplendf + 3 < self.cplbegf) return error.InvalidBitstream;
                     const ncplsubnd = self.cplendf + 3 - self.cplbegf;
+                    if (ncplsubnd == 0 or ncplsubnd > 18) return error.InvalidBitstream;
+                    if (self.cplbegf >= CPL_BND_TAB.len) return error.InvalidBitstream;
+
                     self.ncplbnd = ncplsubnd;
                     self.cplstrtbnd = CPL_BND_TAB[self.cplbegf];
                     self.cplstrtmant = self.cplbegf * 12 + 37;
@@ -944,7 +948,7 @@ pub const Ac3Decoder = struct {
                     for (0..ncplsubnd - 1) |i| {
                         if ((try reader.readBit()) == 1) {
                             self.cplbndstrc |= @as(u32, 1) << @intCast(i);
-                            self.ncplbnd -= 1;
+                            if (self.ncplbnd > 1) self.ncplbnd -= 1;
                         }
                     }
                 } else {
@@ -1007,17 +1011,22 @@ pub const Ac3Decoder = struct {
 
             if (cplexpstr != EXP_REUSE) {
                 do_bit_alloc |= 64;
+                if (cplexpstr < 1 or cplexpstr > 3) return error.InvalidBitstream;
+                if (self.cplendmant <= self.cplstrtmant) return error.InvalidBitstream;
                 const shift: u3 = @intCast(cplexpstr - 1);
                 const ncplgrps = (self.cplendmant - self.cplstrtmant) / (@as(usize, 3) << shift);
                 const cplabsexp = @as(u8, @intCast((try reader.readBits(u8, 4)) << 1));
+                if (self.cplstrtmant >= self.cpl_exp.len) return error.InvalidBitstream;
                 _ = try parseExponents(&reader, cplexpstr, ncplgrps, cplabsexp, self.cpl_exp[self.cplstrtmant..]);
             }
 
             for (0..nfchans) |i| {
                 if (chexpstr[i] != EXP_REUSE) {
                     do_bit_alloc |= @as(u32, 1) << @intCast(i);
+                    if (chexpstr[i] < 1 or chexpstr[i] > 3) return error.InvalidBitstream;
                     const shift: u3 = @intCast(chexpstr[i] - 1);
                     const grp_size = @as(usize, 3) << shift;
+                    if (self.endmant[i] + grp_size < 4) return error.InvalidBitstream;
                     const nchgrps = (self.endmant[i] + grp_size - 4) / grp_size;
                     self.fbw_exp[i][0] = try reader.readBits(u8, 4);
                     _ = try parseExponents(&reader, chexpstr[i], nchgrps, self.fbw_exp[i][0], self.fbw_exp[i][1..]);
@@ -1204,3 +1213,5 @@ test "Ac3Decoder decodes 10 frames from polly_5s.ac3 with high correlation to FF
     std.debug.print("\nNative Ac3Decoder correlation with FFmpeg: {d:.6}\n", .{corr});
     try testing.expect(corr > 0.95);
 }
+
+

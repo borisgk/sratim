@@ -959,31 +959,7 @@ test "StreamAudioTranscoder decodes 6-channel AC3 from Polly.mkv and encodes to 
 
 test "Inspect native AAC roundtrip decoded PCM levels" {
     const testing = std.testing;
-    const file = std.Io.Dir.cwd().openFile(testing.io, "tmp/polly_5s.ac3", .{}) catch return;
-    defer file.close(testing.io);
-
-    var buf: [15360]u8 = undefined;
-    var reader = file.reader(testing.io, &buf);
-    _ = try reader.interface.readSliceShort(&buf);
-
-    var ac3 = ac3_dec.Ac3Decoder.init();
     var encoder = aac_enc.AacEncoder.init(48000, 192000);
-
-    var full_pcm_l: [15360]f32 = undefined;
-    var full_pcm_r: [15360]f32 = undefined;
-
-    for (0..10) |f| {
-        const in_bytes = buf[f * 1536 .. (f + 1) * 1536];
-        var stereo: [1536 * 2]f32 = undefined;
-        _ = try ac3.decodeFrame(in_bytes, &stereo);
-        for (0..1536) |i| {
-            full_pcm_l[f * 1536 + i] = stereo[i * 2 + 0];
-            full_pcm_r[f * 1536 + i] = stereo[i * 2 + 1];
-        }
-    }
-
-    var max_in_pcm: f32 = 0.0;
-    for (full_pcm_l) |s| max_in_pcm = @max(max_in_pcm, @abs(s));
 
     const dec = c.avcodec_find_decoder(c.AV_CODEC_ID_AAC) orelse return error.DecoderNotFound;
     var dec_ctx = c.avcodec_alloc_context3(dec) orelse return error.OutOfMemory;
@@ -997,16 +973,25 @@ test "Inspect native AAC roundtrip decoded PCM levels" {
     var dec_frame = c.av_frame_alloc() orelse return error.OutOfMemory;
     defer c.av_frame_free(@ptrCast(&dec_frame));
 
+    const INPUT_AMP: f32 = 0.5;
     var max_out_pcm: f32 = 0.0;
     var num_decoded_frames: usize = 0;
 
-    for (0..14) |f| {
-        const start = f * 1024;
-        const l = full_pcm_l[start .. start + 1024];
-        const r = full_pcm_r[start .. start + 1024];
+    var decoded_samples = std.ArrayList(f32).empty;
+    defer decoded_samples.deinit(testing.allocator);
+
+    for (0..10) |f| {
+        var in_l: [1024]f32 = undefined;
+        var in_r: [1024]f32 = undefined;
+        for (0..1024) |i| {
+            const sample_idx = f * 1024 + i;
+            const t = @as(f32, @floatFromInt(sample_idx)) / 48000.0;
+            in_l[i] = INPUT_AMP * @sin(2.0 * std.math.pi * 440.0 * t);
+            in_r[i] = INPUT_AMP * @sin(2.0 * std.math.pi * 440.0 * t);
+        }
 
         var aac_buf: [2048]u8 = undefined;
-        const aac_len = try encoder.encodeFrame(l, r, &aac_buf);
+        const aac_len = try encoder.encodeFrame(&in_l, &in_r, &aac_buf);
 
         const adts = aac_enc.AacEncoder.buildAdtsHeader(aac_len, 48000, 2);
         var full_buf: [4096]u8 = undefined;
@@ -1015,22 +1000,43 @@ test "Inspect native AAC roundtrip decoded PCM levels" {
 
         dec_pkt.*.data = @ptrCast(&full_buf);
         dec_pkt.*.size = @intCast(7 + aac_len);
-
         _ = c.avcodec_send_packet(dec_ctx, dec_pkt);
 
         while (c.avcodec_receive_frame(dec_ctx, dec_frame) >= 0) {
             num_decoded_frames += 1;
-            const nb_samples: usize = @intCast(dec_frame.*.nb_samples);
-            const fltp_data = @as([*c][*c]f32, @ptrCast(&dec_frame.*.data));
-            const decoded_l = fltp_data[0][0..nb_samples];
-            for (decoded_l) |s| {
+            const nb: usize = @intCast(dec_frame.*.nb_samples);
+            const data = @as([*c][*c]f32, @ptrCast(&dec_frame.*.data));
+            for (data[0][0..nb]) |s| {
                 max_out_pcm = @max(max_out_pcm, @abs(s));
+                try decoded_samples.append(testing.allocator, s);
             }
         }
     }
 
-    try testing.expect(num_decoded_frames >= 10);
-    try testing.expect(max_out_pcm > 0.01);
+    // Measure correlation on steady-state frames (skip first 1024 samples of decoder priming)
+    var dot: f64 = 0;
+    var norm_in: f64 = 0;
+    var norm_out: f64 = 0;
+    if (decoded_samples.items.len >= 4096) {
+        // AAC decoder delay is exactly 1024 samples
+        const DELAY = 1024;
+        for (1024..decoded_samples.items.len - 1024) |idx| {
+            const in_t = @as(f32, @floatFromInt(idx)) / 48000.0;
+            const expected = INPUT_AMP * @sin(2.0 * std.math.pi * 440.0 * in_t);
+            const actual = decoded_samples.items[idx + DELAY];
+            dot += @as(f64, expected) * @as(f64, actual);
+            norm_in += @as(f64, expected) * @as(f64, expected);
+            norm_out += @as(f64, actual) * @as(f64, actual);
+        }
+    }
+    const corr = if (norm_in > 0 and norm_out > 0) dot / (@sqrt(norm_in) * @sqrt(norm_out)) else 0.0;
+    std.debug.print("\nNative AAC -> libavcodec decoded correlation: {d:.4}, max_out={d:.4}\n", .{ corr, max_out_pcm });
+
+    // Decoded amplitude should be close to input (roundtrip ratio ~1.0)
+    try testing.expect(num_decoded_frames >= 5);
+    try testing.expect(max_out_pcm > INPUT_AMP * 0.7);
+    try testing.expect(max_out_pcm < INPUT_AMP * 1.5);
+    try testing.expect(corr > 0.85);
 }
 
 test {

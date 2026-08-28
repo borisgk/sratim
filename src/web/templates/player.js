@@ -42,10 +42,16 @@
         let currentSubtitleIdx = -1;
         let abortController = null;
         let currentObjectUrl = null;
-        let lastReportedPosition = -100;
+        let currentMediaSource = null;
         let currentSourceBuffer = null;
+        let pendingSeekTime = null;
+        let seekDebounceTimeout = null;
+        let lastReportedPosition = -100;
 
         function getAbsoluteTime() {
+            if (pendingSeekTime !== null) {
+                return pendingSeekTime;
+            }
             if (video.readyState < 1) {
                 return currentSeekTime;
             }
@@ -312,7 +318,39 @@
                 return false;
             },
 
+            seek(targetTime) {
+                if (seekDebounceTimeout) {
+                    clearTimeout(seekDebounceTimeout);
+                    seekDebounceTimeout = null;
+                }
+                pendingSeekTime = targetTime;
+                const relativeTime = targetTime - currentSeekTime;
+                if (relativeTime >= 0 && this.isTimeInBuffer(relativeTime)) {
+                    video.currentTime = relativeTime;
+                    pendingSeekTime = null;
+                } else {
+                    this.loadVideo(targetTime);
+                }
+            },
+
+            seekDebounced(targetTime) {
+                if (seekDebounceTimeout) {
+                    clearTimeout(seekDebounceTimeout);
+                }
+                const relativeTime = targetTime - currentSeekTime;
+                if (relativeTime >= 0 && this.isTimeInBuffer(relativeTime)) {
+                    video.currentTime = relativeTime;
+                    pendingSeekTime = null;
+                    return;
+                }
+                seekDebounceTimeout = setTimeout(() => {
+                    seekDebounceTimeout = null;
+                    this.loadVideo(targetTime);
+                }, 150);
+            },
+
             async fetchAndAppend(sourceBuffer, startTime, signal) {
+                let onUpdateEnd = null;
                 try {
                     const audioParam = currentAudioIdx >= 0 ? `&audio=${currentAudioIdx}` : '';
                     const response = await fetch(`/stream?${MEDIA_QUERY}&start=${startTime}${audioParam}`, { signal });
@@ -325,10 +363,11 @@
 
                     let queue = [];
                     let isAppending = false;
+                    let hasInitializedPlayback = false;
                     let isQuotaExceeded = false;
 
                     function processQueue() {
-                        if (isAppending || queue.length === 0 || signal.aborted) return;
+                        if (isAppending || queue.length === 0 || signal.aborted || sourceBuffer.updating) return;
                         isAppending = true;
 
                         let totalLen = 0;
@@ -351,15 +390,23 @@
                                 isQuotaExceeded = true;
                                 setTimeout(processQueue, 1000);
                             } else {
+                                isAppending = false;
                                 console.error('Append error:', e);
                             }
                         }
                     }
 
-                    sourceBuffer.addEventListener('updateend', () => {
+                    onUpdateEnd = () => {
                         isAppending = false;
+                        if (!hasInitializedPlayback && sourceBuffer.buffered.length > 0) {
+                            hasInitializedPlayback = true;
+                            video.currentTime = 0;
+                            pendingSeekTime = null;
+                            video.play().catch(e => console.error("Play failed:", e));
+                        }
                         processQueue();
-                    });
+                    };
+                    sourceBuffer.addEventListener('updateend', onUpdateEnd);
 
                     while (!signal.aborted) {
                         if (isQuotaExceeded || queue.length > 50) {
@@ -383,11 +430,21 @@
                     }
                 } catch (e) {
                     if (e.name !== 'AbortError') console.error('Fetch error:', e);
+                } finally {
+                    if (onUpdateEnd) {
+                        try {
+                            sourceBuffer.removeEventListener('updateend', onUpdateEnd);
+                        } catch (e) {}
+                    }
                 }
             },
 
             loadVideo(startTime, retryCount) {
-                currentSeekTime = startTime;
+                if (seekDebounceTimeout) {
+                    clearTimeout(seekDebounceTimeout);
+                    seekDebounceTimeout = null;
+                }
+                pendingSeekTime = startTime;
                 retryCount = retryCount || 0;
 
                 if (currentSubtitleIdx !== -1) {
@@ -398,6 +455,49 @@
                 abortController = new AbortController();
                 const signal = abortController.signal;
 
+                // Reuse existing open MediaSource to prevent tearing down the audio device / decoder context
+                if (currentMediaSource && currentMediaSource.readyState === 'open' && currentSourceBuffer) {
+                    const doSeek = () => {
+                        video.pause();
+                        try {
+                            currentSourceBuffer.abort();
+                        } catch (e) {}
+
+                        const startNewStream = () => {
+                            currentSeekTime = startTime;
+                            this.fetchAndAppend(currentSourceBuffer, startTime, signal);
+                        };
+
+                        if (currentSourceBuffer.buffered.length > 0) {
+                            const onRemoved = () => {
+                                currentSourceBuffer.removeEventListener('updateend', onRemoved);
+                                startNewStream();
+                            };
+                            currentSourceBuffer.addEventListener('updateend', onRemoved);
+                            try {
+                                currentSourceBuffer.remove(0, 1000000);
+                            } catch (e) {
+                                currentSourceBuffer.removeEventListener('updateend', onRemoved);
+                                startNewStream();
+                            }
+                        } else {
+                            startNewStream();
+                        }
+                    };
+
+                    if (currentSourceBuffer.updating) {
+                        const onEnd = () => {
+                            currentSourceBuffer.removeEventListener('updateend', onEnd);
+                            doSeek();
+                        };
+                        currentSourceBuffer.addEventListener('updateend', onEnd);
+                    } else {
+                        doSeek();
+                    }
+                    playpause.innerHTML = svgPause;
+                    return;
+                }
+
                 if (!MediaSource.isTypeSupported(codecStr)) {
                     console.error('Browser does not support codec via MSE:', codecStr);
                     return;
@@ -406,6 +506,7 @@
                 if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
 
                 const ms = new MediaSource();
+                currentMediaSource = ms;
                 currentObjectUrl = URL.createObjectURL(ms);
 
                 ms.addEventListener('sourceopen', () => {
@@ -419,8 +520,8 @@
                     }
                     const sb = ms.addSourceBuffer(codecStr);
                     currentSourceBuffer = sb;
+                    currentSeekTime = startTime;
                     this.fetchAndAppend(sb, startTime, signal);
-                    video.play().catch(e => console.error("Play failed:", e));
                 });
 
                 video.src = currentObjectUrl;
@@ -428,6 +529,11 @@
             },
 
             detach() {
+                if (seekDebounceTimeout) {
+                    clearTimeout(seekDebounceTimeout);
+                    seekDebounceTimeout = null;
+                }
+                pendingSeekTime = null;
                 video.pause();
                 video.src = '';
                 video.removeAttribute('src');
@@ -440,6 +546,7 @@
                     abortController.abort();
                     abortController = null;
                 }
+                currentMediaSource = null;
                 currentSourceBuffer = null;
             }
         };
@@ -637,7 +744,12 @@
         // =========================================================================
         function initControls() {
             video.addEventListener('play', () => {
+                playpause.innerHTML = svgPause;
                 WatchTracker.sendEvent('start', getAbsoluteTime());
+            });
+
+            video.addEventListener('pause', () => {
+                playpause.innerHTML = svgPlay;
             });
 
             video.addEventListener('seeked', () => {
@@ -691,12 +803,9 @@
                     request.currentTime = 0;
                     CastController.castSession.loadMedia(request).catch(err => console.error("Cast seek failed:", err));
                 } else {
-                    const relativeTime = seekTo - currentSeekTime;
-                    if (relativeTime >= 0 && StreamEngine.isTimeInBuffer(relativeTime)) {
-                        video.currentTime = relativeTime;
-                    } else {
-                        StreamEngine.loadVideo(seekTo);
-                    }
+                    seekfill.style.width = (percentage * 100) + '%';
+                    timeCurrent.innerText = formatTime(seekTo);
+                    StreamEngine.seek(seekTo);
                 }
             });
 
@@ -722,13 +831,15 @@
                 if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
                     e.preventDefault();
                     const delta = e.key === 'ArrowRight' ? 10 : -10;
-                    const seekTo = Math.max(0, Math.min(DURATION, Math.floor(getAbsoluteTime() + delta)));
+                    const baseTime = pendingSeekTime !== null ? pendingSeekTime : getAbsoluteTime();
+                    const seekTo = Math.max(0, Math.min(DURATION, Math.floor(baseTime + delta)));
+                    pendingSeekTime = seekTo;
+                    seekfill.style.width = ((seekTo / DURATION) * 100) + '%';
+                    timeCurrent.innerText = formatTime(seekTo);
                     WatchTracker.sendEvent('seek', seekTo);
 
                     if (CastController.isCasting && CastController.castSession) {
                         CastController.startCastAbsoluteTime = seekTo;
-                        seekfill.style.width = ((seekTo / DURATION) * 100) + '%';
-                        timeCurrent.innerText = formatTime(seekTo);
                         const mediaUrl = CastController.getStreamUrl(seekTo);
                         const mediaInfo = new chrome.cast.media.MediaInfo(mediaUrl, 'video/mp4');
                         mediaInfo.streamType = chrome.cast.media.StreamType.BUFFERED;
@@ -738,13 +849,9 @@
                         const request = new chrome.cast.media.LoadRequest(mediaInfo);
                         request.currentTime = 0;
                         CastController.castSession.loadMedia(request).catch(err => console.error("Cast seek failed:", err));
+                        pendingSeekTime = null;
                     } else {
-                        const relativeTime = seekTo - currentSeekTime;
-                        if (relativeTime >= 0 && StreamEngine.isTimeInBuffer(relativeTime)) {
-                            video.currentTime = relativeTime;
-                        } else {
-                            StreamEngine.loadVideo(seekTo);
-                        }
+                        StreamEngine.seekDebounced(seekTo);
                     }
                 } else if (e.key === ' ') {
                     e.preventDefault();

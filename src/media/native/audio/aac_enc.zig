@@ -26,6 +26,7 @@ pub const SINE_WINDOW_2048 = blk: {
     break :blk w;
 };
 
+
 /// Bitstream writer for MSB-first packed AAC frames.
 pub const BitWriter = struct {
     buf: []u8,
@@ -192,7 +193,7 @@ pub const AacEncoder = struct {
     }
 };
 
-fn quantizeChannel(spec: []const f32, sf: []u8, quant: []i16) void {
+pub fn quantizeChannel(spec: []const f32, sf: []u8, quant: []i16) void {
     // Determine overall peak to seed initial global gain
     var global_max: f32 = 0.0;
     for (spec) |s| {
@@ -200,10 +201,19 @@ fn quantizeChannel(spec: []const f32, sf: []u8, quant: []i16) void {
         if (a > global_max) global_max = a;
     }
 
+    // Target peak quantizer Q_max ~ 13 (within codebook 11 range 0..16)
+    // Derivation: we want |q_peak|^(4/3) * step ≈ max_val
+    //   step = 2^(0.25*(sf-100))
+    //   q_peak = (max_val / step)^0.75
+    // Setting q_peak = 13: 13^(4/3) ≈ 30.3
+    //   sf = 100 + 4*log2(max_val / 30.3)
+    //   sf ≈ 80.2 + 4*log2(max_val)
+    const SF_OFFSET: f64 = 80.0;
+
     const init_sf: u8 = if (global_max > 1e-4) blk: {
         const log2_m = std.math.log2(@as(f64, global_max));
-        const raw = @as(i32, @intFromFloat(std.math.round(84.0 + 4.0 * log2_m)));
-        break :blk @intCast(std.math.clamp(raw, 50, 200));
+        const raw = @as(i32, @intFromFloat(std.math.round(SF_OFFSET + 4.0 * log2_m)));
+        break :blk @intCast(std.math.clamp(raw, 10, 240));
     } else 100;
 
     var prev_sf: u8 = init_sf;
@@ -231,17 +241,15 @@ fn quantizeChannel(spec: []const f32, sf: []u8, quant: []i16) void {
             continue;
         }
 
-        // Target peak quantizer q_max ~ 8 (q_max^(4/3) = 16):
-        // sf = round(84.0 + 4.0 * log2(max_val))
         const log2_max = std.math.log2(@as(f64, max_val));
-        const raw_sf = @as(i32, @intFromFloat(std.math.round(84.0 + 4.0 * log2_max)));
-        const target_sf: u8 = @intCast(std.math.clamp(raw_sf, 40, 210));
+        const raw_sf = @as(i32, @intFromFloat(std.math.round(SF_OFFSET + 4.0 * log2_max)));
+        const target_sf: u8 = @intCast(std.math.clamp(raw_sf, 10, 240));
 
-        // Limit delta between bands to +/- 12 for smooth bitstream efficiency
+        // Allow full Huffman codebook range for band deltas (±60)
         const clamped_sf: u8 = @intCast(std.math.clamp(
             @as(i32, target_sf),
-            @as(i32, prev_sf) - 12,
-            @as(i32, prev_sf) + 12,
+            @as(i32, prev_sf) - 60,
+            @as(i32, prev_sf) + 60,
         ));
         sf[b] = clamped_sf;
         prev_sf = clamped_sf;
@@ -263,7 +271,7 @@ fn quantizeChannel(spec: []const f32, sf: []u8, quant: []i16) void {
     }
 }
 
-fn writeIndividualChannelStream(
+pub fn writeIndividualChannelStream(
     writer: *BitWriter,
     global_gain: u8,
     sfs: []const u8,
@@ -536,3 +544,5 @@ test "AacEncoder frame is decodable by libavcodec AAC decoder" {
     }
     try std.testing.expect(max_amp > 0.2);
 }
+
+

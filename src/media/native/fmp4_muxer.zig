@@ -341,8 +341,9 @@ fn buildTrafBox(
         }
     }
 
+    const trun_version: u8 = if (has_ctts) 1 else 0;
     var trun_hdr: [12]u8 = undefined;
-    trun_hdr[0] = 0; // version 0
+    trun_hdr[0] = trun_version;
     std.mem.writeInt(u24, trun_hdr[1..4], @intCast(trun_flags), .big);
     std.mem.writeInt(u32, trun_hdr[4..8], @intCast(samples.len), .big);
     std.mem.writeInt(u32, trun_hdr[8..12], data_offset, .big);
@@ -363,7 +364,7 @@ fn buildTrafBox(
             row_len = 12;
 
             if (has_ctts) {
-                std.mem.writeInt(u32, row_buf[12..16], @bitCast(s.ctts_offset), .big);
+                std.mem.writeInt(i32, row_buf[12..16], s.ctts_offset, .big);
                 row_len = 16;
             }
         }
@@ -458,3 +459,52 @@ test "buildFragmentHeader moof and mdat structure" {
     try std.testing.expect(std.mem.indexOf(u8, frag_hdr, "trun") != null);
     try std.testing.expect(std.mem.indexOf(u8, frag_hdr, "mdat") != null);
 }
+
+test "trun box version 1 for negative CTTS offsets" {
+    const allocator = std.testing.allocator;
+
+    const mock_stsd = [_]u8{ 0, 0, 0, 16, 's', 't', 's', 'd', 0, 0, 0, 0, 0, 0, 0, 1 };
+    const stsd_raw = try allocator.dupe(u8, &mock_stsd);
+
+    const video_track = isobmff.Mp4MediaTrack{
+        .track_id = 1,
+        .stream_idx = 0,
+        .handler_type = "vide".*,
+        .timescale = 1000,
+        .duration = 10000,
+        .width = 640,
+        .height = 360,
+        .stsd_raw = stsd_raw,
+        .samples = &.{},
+        .sync_sample_indices = &.{},
+    };
+    var mut_video = video_track;
+    defer mut_video.deinit(allocator);
+
+    const video_samples = [_]isobmff.MediaSample{
+        .{ .dts_delta = 33, .dts = 0, .pts = 0, .pts_sec = 0.0, .offset = 100, .size = 500, .is_sync = true, .ctts_offset = 0 },
+        .{ .dts_delta = 33, .dts = 33, .pts = 100, .pts_sec = 0.1, .offset = 600, .size = 200, .is_sync = false, .ctts_offset = 67 },
+        .{ .dts_delta = 33, .dts = 66, .pts = 33, .pts_sec = 0.033, .offset = 800, .size = 200, .is_sync = false, .ctts_offset = -33 },
+    };
+
+    const frag_hdr = try buildFragmentHeader(
+        allocator,
+        1,
+        mut_video,
+        &video_samples,
+        0,
+        null,
+        &.{},
+        0,
+        900,
+        0,
+    );
+    defer allocator.free(frag_hdr);
+
+    const trun_pos = std.mem.indexOf(u8, frag_hdr, "trun").?;
+    const trun_box = frag_hdr[trun_pos - 4 ..];
+    // trun box layout: [0..4] size, [4..8] "trun", [8] version
+    const version = trun_box[8];
+    try std.testing.expectEqual(@as(u8, 1), version);
+}
+
