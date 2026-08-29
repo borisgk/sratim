@@ -159,6 +159,7 @@ jobs:
 
   deploy:
     name: Deploy to padre.rus9n.com
+    if: false # Temporarily disabled: production host (padre.rus9n.com) is down. Re-enable by removing or toggling this line.
     needs: release
     runs-on: ubuntu-latest
     environment:

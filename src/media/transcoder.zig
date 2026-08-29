@@ -332,6 +332,8 @@ test "StreamAudioTranscoder decodes 6-channel AC3 from Polly.mkv and encodes to 
     var transcoder = try StreamAudioTranscoder.initFromCodec("A_AC3", extradata_slice, 6, 48000, true);
     defer transcoder.deinit();
 
+    try testing.expect(transcoder.is_pure_native);
+    try testing.expect(transcoder.ffmpeg_state == null);
     try testing.expect(transcoder.native_ac3_dec != null);
 
     var pkt = c.av_packet_alloc() orelse return error.OutOfMemory;
