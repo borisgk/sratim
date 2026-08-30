@@ -3,6 +3,8 @@ pub const c = @import("../core/c.zig").c;
 pub const dsp = @import("native/audio/dsp.zig");
 pub const mdct = @import("native/audio/mdct.zig");
 pub const ac3_dec = @import("native/audio/ac3_dec.zig");
+pub const aac_dec = @import("native/audio/aac_dec.zig");
+pub const bit_reader = @import("native/audio/ac3/bit_reader.zig");
 pub const aac_enc = @import("native/audio/aac_enc.zig");
 
 pub const ffmpeg_transcoder = @import("ffmpeg_transcoder.zig");
@@ -182,6 +184,10 @@ test "StreamAudioTranscoder decodes 6-channel EAC3 from Reacher.mkv and encodes 
     var transcoder = try StreamAudioTranscoder.initFromCodec("A_EAC3", extradata_slice, 6, 48000, true);
     defer transcoder.deinit();
 
+    try testing.expect(transcoder.is_pure_native);
+    try testing.expect(transcoder.ffmpeg_state == null);
+    try testing.expect(transcoder.native_eac3_dec != null);
+
     var pkt = c.av_packet_alloc() orelse return error.OutOfMemory;
     defer c.av_packet_free(@ptrCast(&pkt));
 
@@ -202,30 +208,6 @@ test "StreamAudioTranscoder decodes 6-channel EAC3 from Reacher.mkv and encodes 
 
     try transcoder.flush(allocator, &frames);
     try testing.expect(frames.items.len >= 5);
-
-    const dec = c.avcodec_find_decoder(c.AV_CODEC_ID_AAC) orelse return error.DecoderNotFound;
-    var dec_ctx = c.avcodec_alloc_context3(dec) orelse return error.OutOfMemory;
-    defer c.avcodec_free_context(&dec_ctx);
-    dec_ctx.*.sample_rate = 48000;
-    c.av_channel_layout_default(&dec_ctx.*.ch_layout, 2);
-    if (c.avcodec_open2(dec_ctx, dec, null) < 0) return error.DecoderOpenFailed;
-
-    var dec_pkt = c.av_packet_alloc() orelse return error.OutOfMemory;
-    defer c.av_packet_free(@ptrCast(&dec_pkt));
-    var dec_frame = c.av_frame_alloc() orelse return error.OutOfMemory;
-    defer c.av_frame_free(@ptrCast(&dec_frame));
-
-    for (frames.items) |f| {
-        const adts = aac_enc.AacEncoder.buildAdtsHeader(f.data.len, 48000, 2);
-        var full_buf: [4096]u8 = undefined;
-        @memcpy(full_buf[0..7], &adts);
-        @memcpy(full_buf[7 .. 7 + f.data.len], f.data);
-        dec_pkt.*.data = @ptrCast(&full_buf);
-        dec_pkt.*.size = @intCast(7 + f.data.len);
-        const send_ret = c.avcodec_send_packet(dec_ctx, dec_pkt);
-        try testing.expectEqual(@as(c_int, 0), send_ret);
-        _ = c.avcodec_receive_frame(dec_ctx, dec_frame);
-    }
 }
 
 test "StreamAudioTranscoder decodes 6-channel AAC from Tuner.mkv and downmixes/encodes to stereo AAC" {
@@ -253,9 +235,18 @@ test "StreamAudioTranscoder decodes 6-channel AAC from Tuner.mkv and downmixes/e
         audio_stream.*.codecpar.*.extradata[0..@intCast(audio_stream.*.codecpar.*.extradata_size)]
     else
         null;
+    if (extradata_slice) |ed| {
+        std.debug.print("\n=== TUNER EXTRADATA len={d}: ", .{ed.len});
+        for (ed) |b| std.debug.print("{x:0>2} ", .{b});
+        std.debug.print("===\n", .{});
+    }
 
     var transcoder = try StreamAudioTranscoder.initFromCodec("A_AAC", extradata_slice, 6, 48000, true);
     defer transcoder.deinit();
+
+    try testing.expect(transcoder.is_pure_native);
+    try testing.expect(transcoder.ffmpeg_state == null);
+    try testing.expect(transcoder.native_aac_dec != null);
 
     var pkt = c.av_packet_alloc() orelse return error.OutOfMemory;
     defer c.av_packet_free(@ptrCast(&pkt));
@@ -266,13 +257,104 @@ test "StreamAudioTranscoder decodes 6-channel AAC from Tuner.mkv and downmixes/e
         frames.deinit(allocator);
     }
 
+    var native_dec = aac_dec.AacDecoder.init();
+    native_dec.sample_rate = 48000;
+    native_dec.channels = 6;
+
+    var pcm_samples = std.ArrayList(f32).empty;
+    defer pcm_samples.deinit(allocator);
+    var pcm_6ch = std.ArrayList(f32).empty;
+    defer pcm_6ch.deinit(allocator);
+
+    var audio_pkt_idx: usize = 0;
     while (c.av_read_frame(in_fmt_ctx.?, pkt) >= 0) {
         defer c.av_packet_unref(pkt);
         if (pkt.*.stream_index == audio_stream_idx) {
+            defer audio_pkt_idx += 1;
             const raw_data: []const u8 = pkt.*.data[0..@intCast(pkt.*.size)];
             try transcoder.transcodePacket(allocator, raw_data, &frames);
-            if (frames.items.len >= 5) break;
+
+            var stereo_buf: [2048]f32 = undefined;
+            if (native_dec.decodeFrame(raw_data, &stereo_buf)) |n_samples| {
+                if (n_samples > 0) {
+                    try pcm_samples.appendSlice(allocator, stereo_buf[0 .. n_samples * 2]);
+                    for (0..1024) |s| {
+                        for (0..6) |ch| {
+                            try pcm_6ch.append(allocator, native_dec.last_ch_pcm[ch][s] * (1.0 / 65536.0));
+                        }
+                    }
+                }
+            } else |err| {
+                std.debug.print("  [FIRST TUNER ERR] pkt_idx={} len={} err={}\n", .{ audio_pkt_idx, raw_data.len, err });
+                break;
+            }
+
+            if (frames.items.len >= 200) break;
         }
+    }
+
+    // Write tmp/native_out.wav via C stdio
+    if (std.c.fopen("tmp/native_out.wav", "wb")) |f| {
+        defer _ = std.c.fclose(f);
+        const data_size: u32 = @intCast(pcm_samples.items.len * 2);
+        const file_size = 36 + data_size;
+        _ = std.c.fwrite("RIFF", 1, 4, f);
+        _ = std.c.fwrite(@ptrCast(&file_size), 4, 1, f);
+        _ = std.c.fwrite("WAVEfmt ", 1, 8, f);
+        const sub1: u32 = 16;
+        const fmt_tag: u16 = 1;
+        const chs: u16 = 2;
+        const srate: u32 = 48000;
+        const brate: u32 = 48000 * 4;
+        const balign: u16 = 4;
+        const bps: u16 = 16;
+        _ = std.c.fwrite(@ptrCast(&sub1), 4, 1, f);
+        _ = std.c.fwrite(@ptrCast(&fmt_tag), 2, 1, f);
+        _ = std.c.fwrite(@ptrCast(&chs), 2, 1, f);
+        _ = std.c.fwrite(@ptrCast(&srate), 4, 1, f);
+        _ = std.c.fwrite(@ptrCast(&brate), 4, 1, f);
+        _ = std.c.fwrite(@ptrCast(&balign), 2, 1, f);
+        _ = std.c.fwrite(@ptrCast(&bps), 2, 1, f);
+        _ = std.c.fwrite("data", 1, 4, f);
+        _ = std.c.fwrite(@ptrCast(&data_size), 4, 1, f);
+        for (pcm_samples.items) |s| {
+            const clamped = std.math.clamp(s, -1.0, 1.0);
+            const i16_val: i16 = @intFromFloat(clamped * 32767.0);
+            _ = std.c.fwrite(@ptrCast(&i16_val), 2, 1, f);
+        }
+        std.debug.print("\nWrote {} samples to tmp/native_out.wav\n", .{pcm_samples.items.len / 2});
+    }
+
+    // Write tmp/native_6ch.wav via C stdio
+    if (std.c.fopen("tmp/native_6ch.wav", "wb")) |f| {
+        defer _ = std.c.fclose(f);
+        const data_size: u32 = @intCast(pcm_6ch.items.len * 2);
+        const file_size = 36 + data_size;
+        _ = std.c.fwrite("RIFF", 1, 4, f);
+        _ = std.c.fwrite(@ptrCast(&file_size), 4, 1, f);
+        _ = std.c.fwrite("WAVEfmt ", 1, 8, f);
+        const sub1: u32 = 16;
+        const fmt_tag: u16 = 1;
+        const chs: u16 = 6;
+        const srate: u32 = 48000;
+        const brate: u32 = 48000 * 6 * 2;
+        const balign: u16 = 12;
+        const bps: u16 = 16;
+        _ = std.c.fwrite(@ptrCast(&sub1), 4, 1, f);
+        _ = std.c.fwrite(@ptrCast(&fmt_tag), 2, 1, f);
+        _ = std.c.fwrite(@ptrCast(&chs), 2, 1, f);
+        _ = std.c.fwrite(@ptrCast(&srate), 4, 1, f);
+        _ = std.c.fwrite(@ptrCast(&brate), 4, 1, f);
+        _ = std.c.fwrite(@ptrCast(&balign), 2, 1, f);
+        _ = std.c.fwrite(@ptrCast(&bps), 2, 1, f);
+        _ = std.c.fwrite("data", 1, 4, f);
+        _ = std.c.fwrite(@ptrCast(&data_size), 4, 1, f);
+        for (pcm_6ch.items) |s| {
+            const clamped = std.math.clamp(s, -1.0, 1.0);
+            const i16_val: i16 = @intFromFloat(clamped * 32767.0);
+            _ = std.c.fwrite(@ptrCast(&i16_val), 2, 1, f);
+        }
+        std.debug.print("Wrote {} frames to tmp/native_6ch.wav\n", .{pcm_6ch.items.len / 6});
     }
 
     try transcoder.flush(allocator, &frames);

@@ -1,6 +1,8 @@
 const std = @import("std");
 pub const c = @import("../core/c.zig").c;
 pub const ac3_dec = @import("native/audio/ac3_dec.zig");
+pub const eac3_dec = @import("native/audio/eac3_dec.zig");
+pub const aac_dec = @import("native/audio/aac_dec.zig");
 pub const aac_enc = @import("native/audio/aac_enc.zig");
 pub const audio_fifo = @import("native/audio/fifo.zig");
 
@@ -201,12 +203,14 @@ pub const FfmpegAudioState = struct {
 
 /// Standalone audio transcoder that converts compressed audio packets (AC-3, DTS, E-AC-3, multichannel AAC)
 /// into standardized 48kHz Stereo AAC frames for native fMP4 container muxing.
-/// For AC-3, it operates 100% in pure Zig with zero FFmpeg dependencies.
+/// For AC-3, E-AC-3, and Multichannel AAC, it operates 100% in pure Zig with zero FFmpeg dependencies.
 pub const StreamAudioTranscoder = struct {
     is_pure_native: bool,
     native_fifo: audio_fifo.AudioFifo,
     native_aac_enc: aac_enc.AacEncoder,
     native_ac3_dec: ?ac3_dec.Ac3Decoder = null,
+    native_eac3_dec: ?eac3_dec.Eac3Decoder = null,
+    native_aac_dec: ?aac_dec.AacDecoder = null,
     use_native_encoder: bool = true,
     ffmpeg_state: ?*FfmpegAudioState = null,
 
@@ -238,7 +242,11 @@ pub const StreamAudioTranscoder = struct {
     pub fn isNativeSupportedCodec(codec_name: []const u8) bool {
         return std.mem.eql(u8, codec_name, "A_AC3") or
             std.mem.eql(u8, codec_name, "ac-3") or
-            std.mem.eql(u8, codec_name, "sac3");
+            std.mem.eql(u8, codec_name, "sac3") or
+            std.mem.eql(u8, codec_name, "A_EAC3") or
+            std.mem.eql(u8, codec_name, "ec-3") or
+            std.mem.eql(u8, codec_name, "A_AAC") or
+            std.mem.eql(u8, codec_name, "mp4a");
     }
 
     pub fn initFromCodec(
@@ -249,18 +257,30 @@ pub const StreamAudioTranscoder = struct {
         use_native_encoder: bool,
     ) !*StreamAudioTranscoder {
         const allocator = std.heap.c_allocator;
-        const is_ac3 = isNativeSupportedCodec(codec_name);
+        const is_ac3 = std.mem.eql(u8, codec_name, "A_AC3") or std.mem.eql(u8, codec_name, "ac-3") or std.mem.eql(u8, codec_name, "sac3");
+        const is_eac3 = std.mem.eql(u8, codec_name, "A_EAC3") or std.mem.eql(u8, codec_name, "ec-3");
+        const is_aac = std.mem.eql(u8, codec_name, "A_AAC") or std.mem.eql(u8, codec_name, "mp4a");
 
-        // 100% Pure Zig pipeline for AC-3: no FFmpeg contexts, FIFOs, frames, or packets
-        if (use_native_encoder and is_ac3) {
+        // 100% Pure Zig pipeline for AC-3, E-AC-3, and AAC: no FFmpeg contexts, FIFOs, frames, or packets
+        if (use_native_encoder and (is_ac3 or is_eac3 or is_aac)) {
             const self = try allocator.create(StreamAudioTranscoder);
             errdefer allocator.destroy(self);
+
+            var aac_dec_inst: ?aac_dec.AacDecoder = null;
+            if (is_aac) {
+                var d = aac_dec.AacDecoder.init();
+                d.sample_rate = sample_rate;
+                d.channels = channels;
+                aac_dec_inst = d;
+            }
 
             self.* = .{
                 .is_pure_native = true,
                 .native_fifo = audio_fifo.AudioFifo.init(allocator),
                 .native_aac_enc = aac_enc.AacEncoder.init(48000, 192000),
-                .native_ac3_dec = ac3_dec.Ac3Decoder.init(),
+                .native_ac3_dec = if (is_ac3) ac3_dec.Ac3Decoder.init() else null,
+                .native_eac3_dec = if (is_eac3) eac3_dec.Eac3Decoder.init() else null,
+                .native_aac_dec = aac_dec_inst,
                 .use_native_encoder = true,
                 .ffmpeg_state = null,
             };
@@ -336,6 +356,62 @@ pub const StreamAudioTranscoder = struct {
             return;
         }
 
+        // Pure Zig E-AC-3 decoding path
+        if (self.native_eac3_dec) |*eac3| {
+            var offset: usize = 0;
+            var decoded_any = false;
+            while (offset + 6 <= raw_payload.len) {
+                if (raw_payload[offset] != 0x0B or raw_payload[offset + 1] != 0x77) {
+                    offset += 1;
+                    continue;
+                }
+                const frmsiz: usize = (@as(usize, raw_payload[offset + 2] & 0x07) << 8) | @as(usize, raw_payload[offset + 3]);
+                const frame_size = (frmsiz + 1) * 2;
+                if (frame_size < 6 or offset + frame_size > raw_payload.len) {
+                    offset += 2;
+                    continue;
+                }
+
+                const frame_bytes = raw_payload[offset .. offset + frame_size];
+                var stereo_interleaved: [1536 * 2]f32 = undefined;
+                if (eac3.decodeFrame(frame_bytes, &stereo_interleaved)) |n_samples| {
+                    if (n_samples > 0) {
+                        var planar_l: [1536]f32 = undefined;
+                        var planar_r: [1536]f32 = undefined;
+                        for (0..n_samples) |i| {
+                            planar_l[i] = stereo_interleaved[i * 2 + 0];
+                            planar_r[i] = stereo_interleaved[i * 2 + 1];
+                        }
+                        try self.native_fifo.write(planar_l[0..n_samples], planar_r[0..n_samples]);
+                        decoded_any = true;
+                    }
+                } else |_| {}
+                offset += frame_size;
+            }
+            if (decoded_any) {
+                try self.drainNativeFifo(allocator, out_frames);
+            }
+            return;
+        }
+
+        // Pure Zig AAC decoding path
+        if (self.native_aac_dec) |*aac| {
+            var stereo_interleaved: [1024 * 2]f32 = undefined;
+            if (aac.decodeFrame(raw_payload, &stereo_interleaved)) |n_samples| {
+                if (n_samples > 0) {
+                    var planar_l: [1024]f32 = undefined;
+                    var planar_r: [1024]f32 = undefined;
+                    for (0..n_samples) |i| {
+                        planar_l[i] = stereo_interleaved[i * 2 + 0];
+                        planar_r[i] = stereo_interleaved[i * 2 + 1];
+                    }
+                    try self.native_fifo.write(planar_l[0..n_samples], planar_r[0..n_samples]);
+                    try self.drainNativeFifo(allocator, out_frames);
+                }
+            } else |_| {}
+            return;
+        }
+
         // FFmpeg decoding fallback
         const ff = self.ffmpeg_state orelse return error.FfmpegStateMissing;
 
@@ -376,7 +452,7 @@ pub const StreamAudioTranscoder = struct {
             var planar_r: [1024]f32 = undefined;
             _ = self.native_fifo.read(&planar_l, &planar_r);
 
-            var aac_frame_buf: [2048]u8 = undefined;
+            var aac_frame_buf: [8192]u8 = undefined;
             const aac_len = try self.native_aac_enc.encodeFrame(&planar_l, &planar_r, &aac_frame_buf);
 
             const frame_buf = try allocator.alloc(u8, aac_len);

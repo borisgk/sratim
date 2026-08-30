@@ -7,7 +7,7 @@ const imdct = @import("../imdct.zig");
 pub const BitReader = bit_reader.BitReader;
 const bitAllocate = bit_allocation.bitAllocate;
 
-fn parseExponents(reader: *BitReader, expstr: u2, ngrps: usize, exponent_in: u8, dest: []u8) !u8 {
+pub fn parseExponents(reader: *BitReader, expstr: u2, ngrps: usize, exponent_in: u8, dest: []u8) !u8 {
     var exponent = exponent_in;
     var dest_idx: usize = 0;
     var grp: usize = 0;
@@ -78,7 +78,7 @@ fn parseExponents(reader: *BitReader, expstr: u2, ngrps: usize, exponent_in: u8,
     return exponent;
 }
 
-fn parseDeltba(reader: *BitReader, deltba: []i8) !void {
+pub fn parseDeltba(reader: *BitReader, deltba: []i8) !void {
     @memset(deltba[0..@min(50, deltba.len)], 0);
     const deltnseg = try reader.readBits(usize, 3);
     var j: usize = 0;
@@ -95,7 +95,7 @@ fn parseDeltba(reader: *BitReader, deltba: []i8) !void {
     }
 }
 
-const Quantizer = struct {
+pub const Quantizer = struct {
     q1: [2]f32 = .{ 0.0, 0.0 },
     q2: [2]f32 = .{ 0.0, 0.0 },
     q4: f32 = 0.0,
@@ -110,7 +110,7 @@ const Quantizer = struct {
     }
 };
 
-inline fn ditherGen(lfsr_state: *u32) f32 {
+pub inline fn ditherGen(lfsr_state: *u32) f32 {
     const s = lfsr_state.*;
     const nstate: u16 = tables.DITHER_LUT[s >> 8] ^ @as(u16, @truncate(s << 8));
     lfsr_state.* = nstate;
@@ -118,7 +118,7 @@ inline fn ditherGen(lfsr_state: *u32) f32 {
     return @as(f32, @floatFromInt(signed_val));
 }
 
-fn coeffGet(
+pub fn coeffGet(
     reader: *BitReader,
     coeff: []f32,
     exp: []const u8,
@@ -200,7 +200,7 @@ fn coeffGet(
     }
 }
 
-fn coeffGetCoupling(
+pub fn coeffGetCoupling(
     reader: *BitReader,
     nfchans: usize,
     coeff_scale: []const f32,

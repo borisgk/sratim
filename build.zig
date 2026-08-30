@@ -125,6 +125,33 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_exe_tests.step);
 
+    // Dedicated test step for standalone AC-3 decoding validation with visual reporting
+    const ac3_tests = b.addTest(.{
+        .root_module = exe.root_module,
+        .filters = &.{"Ac3Decoder test_video_ac3"},
+    });
+    const run_ac3_tests = b.addRunArtifact(ac3_tests);
+    const test_ac3_step = b.step("test-ac3", "Run standalone AC-3 decoding test with visual reporting");
+    test_ac3_step.dependOn(&run_ac3_tests.step);
+
+    // Dedicated test step for standalone EAC-3 decoding validation with visual reporting
+    const eac3_tests = b.addTest(.{
+        .root_module = exe.root_module,
+        .filters = &.{"Eac3Decoder test_video_eac3"},
+    });
+    const run_eac3_tests = b.addRunArtifact(eac3_tests);
+    const test_eac3_step = b.step("test-eac3", "Run standalone EAC-3 decoding test with visual reporting");
+    test_eac3_step.dependOn(&run_eac3_tests.step);
+
+    // Dedicated test step for standalone AAC decoding validation with visual reporting
+    const aac_tests = b.addTest(.{
+        .root_module = exe.root_module,
+        .filters = &.{"AacDecoder test_video_aac"},
+    });
+    const run_aac_tests = b.addRunArtifact(aac_tests);
+    const test_aac_step = b.step("test-aac", "Run standalone AAC decoding test with visual reporting");
+    test_aac_step.dependOn(&run_aac_tests.step);
+
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
     // The Zig build system is entirely implemented in userland, which means

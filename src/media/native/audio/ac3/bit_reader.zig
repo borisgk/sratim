@@ -43,4 +43,22 @@ pub const BitReader = struct {
             return @as(i32, @intCast(u_val));
         }
     }
+
+    pub inline fn bitsLeft(self: *const BitReader) usize {
+        const total = self.bytes.len * 8;
+        return if (total > self.bit_offset) total - self.bit_offset else 0;
+    }
+
+    /// Aligns bit offset to next byte boundary (ISO/IEC 14496-3 byte_alignment())
+    pub inline fn byteAlign(self: *BitReader) void {
+        const rem = self.bit_offset & 7;
+        if (rem != 0) {
+            self.bit_offset += (8 - rem);
+        }
+    }
+
+    pub inline fn skipBits(self: *BitReader, count: usize) !void {
+        if (self.bit_offset + count > self.bytes.len * 8) return error.EndOfBitstream;
+        self.bit_offset += count;
+    }
 };

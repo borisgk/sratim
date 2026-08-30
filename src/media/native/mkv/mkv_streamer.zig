@@ -169,6 +169,10 @@ pub fn streamMkvGeneric(
         const audio_desc = if (use_native_enc)
             (if (std.mem.eql(u8, at.codec_id, "A_AC3"))
                 std.fmt.bufPrint(&audio_desc_buf, "Pure Zig AC-3 ({d}ch) -> Pure Zig AAC-LC", .{at.channels})
+            else if (std.mem.eql(u8, at.codec_id, "A_EAC3"))
+                std.fmt.bufPrint(&audio_desc_buf, "Pure Zig E-AC-3 ({d}ch) -> Pure Zig AAC-LC", .{at.channels})
+            else if (std.mem.eql(u8, at.codec_id, "A_AAC"))
+                std.fmt.bufPrint(&audio_desc_buf, "Pure Zig Multichannel AAC-LC ({d}ch) -> Pure Zig AAC-LC", .{at.channels})
             else
                 std.fmt.bufPrint(&audio_desc_buf, "Inline decode ({s}, {d}ch) -> Pure Zig AAC-LC", .{ at.codec_id, at.channels })) catch "Inline decode -> Pure Zig AAC-LC"
         else
@@ -546,10 +550,11 @@ test "generate MKV fMP4 fragments for Tuner.mkv with 5.1 AAC downmixing" {
         1, // 5.1 AAC track
         &out_writer.interface,
         &has_error,
-        3, // 3 fragments
+        50, // 50 fragments
         .native,
     );
     try out_writer.flush();
+    try std.testing.expect(!has_error);
 }
 
 test "generate MKV fMP4 fragments for Along Came Polly with AC3 5.1" {
@@ -656,5 +661,31 @@ test "compare seek in Sof Ha Olam Smola AAC vs AC3" {
         try streamMkvGeneric(allocator, io, file_path, 60.0, 1, &out_writer.interface, &has_error, 2, .native);
         try out_writer.flush();
     }
+}
+
+test "streamMkvGeneric on tests/Reacher.mkv with Pure Zig E-AC-3 transcode" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const file_path = "tests/Reacher.mkv";
+
+    const out_file = std.Io.Dir.cwd().createFile(io, "tmp/reacher_native_eac3.mp4", .{}) catch return;
+    defer out_file.close(io);
+    var out_buf: [65536]u8 = undefined;
+    var out_writer = out_file.writer(io, &out_buf);
+    var has_error = false;
+
+    try streamMkvGeneric(
+        allocator,
+        io,
+        file_path,
+        0.0,
+        1,
+        &out_writer.interface,
+        &has_error,
+        2,
+        .native,
+    );
+    try out_writer.flush();
+    try std.testing.expect(!has_error);
 }
 

@@ -97,4 +97,7 @@ test {
     _ = @import("media/native/mkv/track_parser.zig");
     _ = @import("media/native/mkv/gop_builder.zig");
     _ = @import("media/native/mkv/mkv_streamer.zig");
+    _ = @import("media/native/audio/test_ac3_mkv.zig");
+    _ = @import("media/native/audio/test_eac3_mkv.zig");
+    _ = @import("media/native/audio/test_aac_mkv.zig");
 }

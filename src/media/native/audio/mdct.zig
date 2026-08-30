@@ -175,39 +175,79 @@ pub const MdctEngine = struct {
         }
     }
 
-    /// Computes inverse MDCT (IMDCT): in (N frequency bins) -> out (2N time samples).
+    /// Computes inverse MDCT (IMDCT): in (N frequency bins) -> out (2N time samples)
+    /// by inverting the forward MDCT steps using the existing N/2-point IFFT and twiddle tables.
     pub fn imdct(comptime N: usize, in: []const f32, out: []f32) void {
-        const N2 = N / 2;
+        // N is the number of spectral coefficients (1024 or 128)
+        // N_time is 2*N (2048 or 256)
+        const N_time = 2 * N;
+        const N2 = N; // N
+        const N4 = N / 2; // N/2 = 512 (or 64)
+        const N8 = N / 4; // N/4 = 256 (or 32)
 
-        // 1. Pre-twiddle frequency bins
-        var buf: [N2]Complex = undefined;
-        for (0..N2) |k| {
-            const rot_angle: f32 = 2.0 * std.math.pi * (@as(f32, @floatFromInt(k)) + 0.125) / @as(f32, @floatFromInt(N));
-            const twiddle = Complex{ .re = @cos(rot_angle), .im = @sin(rot_angle) };
-            const in_c = Complex{ .re = -in[2 * k], .im = in[N - 1 - 2 * k] };
-            buf[k] = in_c.mul(twiddle);
+        var z1: [N4]Complex = undefined;
+
+        // Step 1: Pre-IFFT complex multiplication (Duhamel / FAAD2)
+        // sincos[k] = exp(j * 2*pi*(k + 1/8) / N_time)
+        const pi2_over_ntime = 2.0 * std.math.pi / @as(f32, @floatFromInt(N_time));
+        for (0..N4) |k| {
+            const angle = pi2_over_ntime * (@as(f32, @floatFromInt(k)) + 0.125);
+            const c = @cos(angle);
+            const s = @sin(angle);
+            const x1 = in[2 * k];
+            const x2 = in[N2 - 1 - 2 * k];
+            // ComplexMult(&IM(z1[k]), &RE(z1[k]), x1, x2, c, s):
+            // IM = x1 * c + x2 * s
+            // RE = x2 * c - x1 * s
+            z1[k].im = x1 * c + x2 * s;
+            z1[k].re = x2 * c - x1 * s;
         }
 
-        // 2. N/2-point IFFT
-        ifft(buf[0..N2]);
+        // Step 2: Complex IFFT of size N4
+        ifft(z1[0..N4]);
 
-        // 3. Post-twiddle
-        var y: [N]f32 = undefined;
-        for (0..N2) |n| {
-            const rot_angle: f32 = 2.0 * std.math.pi * (@as(f32, @floatFromInt(n)) + 0.125) / @as(f32, @floatFromInt(N));
-            const twiddle = Complex{ .re = @cos(rot_angle), .im = @sin(rot_angle) };
-            const post = buf[n].mul(twiddle);
-
-            y[2 * n] = post.re;
-            y[N - 1 - 2 * n] = -post.im;
+        // Step 3: Post-IFFT complex multiplication
+        // Note: IFFT introduces 1/N4 scale factor. In AAC IMDCT, overall factor is 2/N = 1/N4.
+        // So with ifft() already applying 1/N4, no extra scaling is needed.
+        for (0..N4) |k| {
+            const angle = pi2_over_ntime * (@as(f32, @floatFromInt(k)) + 0.125);
+            const c = @cos(angle);
+            const s = @sin(angle);
+            const rx = z1[k].re;
+            const ix = z1[k].im;
+            // ComplexMult(&IM(z1[k]), &RE(z1[k]), ix, rx, c, s):
+            // IM = ix * c + rx * s
+            // RE = rx * c - ix * s
+            z1[k].im = ix * c + rx * s;
+            z1[k].re = rx * c - ix * s;
         }
 
-        // 4. Time unfolding: N samples -> 2N samples
-        for (0..N2) |n| {
-            out[n] = y[N2 + n];
-            out[2 * N2 - 1 - n] = -y[N2 + n];
-            out[2 * N2 + n] = -y[N2 - 1 - n];
-            out[4 * N2 - 1 - n] = -y[N2 - 1 - n];
+        // Step 4: Reordering into 2N time samples (Duhamel / FAAD2)
+        var k: usize = 0;
+        while (k < N8) : (k += 2) {
+            out[2 * k] = z1[N8 + k].im;
+            out[2 + 2 * k] = z1[N8 + 1 + k].im;
+
+            out[1 + 2 * k] = -z1[N8 - 1 - k].re;
+            out[3 + 2 * k] = -z1[N8 - 2 - k].re;
+
+            out[N4 + 2 * k] = z1[k].re;
+            out[N4 + 2 + 2 * k] = z1[1 + k].re;
+
+            out[N4 + 1 + 2 * k] = -z1[N4 - 1 - k].im;
+            out[N4 + 3 + 2 * k] = -z1[N4 - 2 - k].im;
+
+            out[N2 + 2 * k] = z1[N8 + k].re;
+            out[N2 + 2 + 2 * k] = z1[N8 + 1 + k].re;
+
+            out[N2 + 1 + 2 * k] = -z1[N8 - 1 - k].im;
+            out[N2 + 3 + 2 * k] = -z1[N8 - 2 - k].im;
+
+            out[N2 + N4 + 2 * k] = -z1[k].im;
+            out[N2 + N4 + 2 + 2 * k] = -z1[1 + k].im;
+
+            out[N2 + N4 + 1 + 2 * k] = z1[N4 - 1 - k].re;
+            out[N2 + N4 + 3 + 2 * k] = z1[N4 - 2 - k].re;
         }
     }
 };
@@ -259,6 +299,118 @@ test "Verify MdctEngine against ISO AAC MDCT direct formula" {
         direct *= 2.0;
         try std.testing.expectApproxEqAbs(@as(f64, fast_out[k]), direct, 0.05);
     }
+}
+
+test "Verify MdctEngine.imdct against direct ISO AAC IMDCT formula" {
+    const N = 1024;
+    const TWO_N = 2048;
+    var spec: [N]f32 = [_]f32{0.0} ** N;
+    spec[1] = 1.0;
+
+    var imdct_out: [TWO_N]f32 = undefined;
+    MdctEngine.imdct(N, &spec, &imdct_out);
+
+    // Direct ISO formula:
+    // x[n] = (2.0 / N) * sum_{k=0}^{N-1} X[k] * cos( (pi/N) * (n + 0.5 + N/2) * (k + 0.5) )
+    for (0..TWO_N) |n| {
+        const fn_idx: f64 = @floatFromInt(n);
+        const fk: f64 = 1.0;
+        const angle = (std.math.pi / 1024.0) * (fn_idx + 0.5 + 512.0) * (fk + 0.5);
+        const direct = (2.0 / 1024.0) * 1.0 * @cos(angle);
+        try std.testing.expectApproxEqAbs(@as(f64, imdct_out[n]), direct, 0.00001);
+    }
+}
+
+test "Verify MdctEngine.imdct(128) against direct ISO AAC IMDCT formula" {
+    const N = 128;
+    const TWO_N = 256;
+    var spec: [N]f32 = [_]f32{0.0} ** N;
+    spec[1] = 1.0;
+
+    var imdct_out: [TWO_N]f32 = undefined;
+    MdctEngine.imdct(N, &spec, &imdct_out);
+
+    // Direct ISO formula:
+    // x[n] = (2.0 / N) * sum_{k=0}^{N-1} X[k] * cos( (pi/N) * (n + 0.5 + N/2) * (k + 0.5) )
+    for (0..TWO_N) |n| {
+        const fn_idx: f64 = @floatFromInt(n);
+        const fk: f64 = 1.0;
+        const angle = (std.math.pi / 128.0) * (fn_idx + 0.5 + 64.0) * (fk + 0.5);
+        const direct = (2.0 / 128.0) * 1.0 * @cos(angle);
+        try std.testing.expectApproxEqAbs(@as(f64, imdct_out[n]), direct, 0.00001);
+    }
+}
+
+test "MDCT to IMDCT perfect reconstruction (TDAC)" {
+    const N = 1024;
+    const TWO_N = 2048;
+
+    var sig: [3072]f32 = undefined;
+    for (0..3072) |i| {
+        const t = @as(f32, @floatFromInt(i)) / 48000.0;
+        sig[i] = @sin(2.0 * std.math.pi * 440.0 * t);
+    }
+
+    var win: [TWO_N]f32 = undefined;
+    for (0..TWO_N) |i| {
+        const angle: f64 = std.math.pi * (@as(f64, @floatFromInt(i)) + 0.5) / 2048.0;
+        win[i] = @floatCast(@sin(angle));
+    }
+
+    // Frame 0: analysis windowed
+    var f0_win: [TWO_N]f32 = undefined;
+    for (0..TWO_N) |i| f0_win[i] = sig[i] * win[i];
+    var spec0: [N]f32 = undefined;
+    // ISO AAC forward MDCT:
+    for (0..N) |k| {
+        var sum: f64 = 0;
+        const fk: f64 = @floatFromInt(k);
+        for (0..TWO_N) |n| {
+            const fn_idx: f64 = @floatFromInt(n);
+            const angle = (std.math.pi / 1024.0) * (fn_idx + 0.5 + 512.0) * (fk + 0.5);
+            sum += @as(f64, f0_win[n]) * @cos(angle);
+        }
+        spec0[k] = @floatCast(-2.0 * sum);
+    }
+
+    // Frame 1: analysis windowed
+    var f1_win: [TWO_N]f32 = undefined;
+    for (0..TWO_N) |i| f1_win[i] = sig[1024 + i] * win[i];
+    var spec1: [N]f32 = undefined;
+    for (0..N) |k| {
+        var sum: f64 = 0;
+        const fk: f64 = @floatFromInt(k);
+        for (0..TWO_N) |n| {
+            const fn_idx: f64 = @floatFromInt(n);
+            const angle = (std.math.pi / 1024.0) * (fn_idx + 0.5 + 512.0) * (fk + 0.5);
+            sum += @as(f64, f1_win[n]) * @cos(angle);
+        }
+        spec1[k] = @floatCast(-2.0 * sum);
+    }
+
+    // Synthesis IMDCT:
+    var time0: [TWO_N]f32 = undefined;
+    MdctEngine.imdct(N, &spec0, &time0);
+    var time1: [TWO_N]f32 = undefined;
+    MdctEngine.imdct(N, &spec1, &time1);
+
+    // Synthesis windowing:
+    for (0..TWO_N) |i| time0[i] *= win[i];
+    for (0..TWO_N) |i| time1[i] *= win[i];
+
+    // Reconstruct samples 1024..2048:
+    // ISO forward MDCT has factor -2.0, so the round-trip signal is scaled by -2.0.
+    var rec: [N]f32 = undefined;
+    for (0..N) |i| {
+        rec[i] = -(time0[1024 + i] + time1[i]) * 0.5;
+    }
+
+    var max_tdac_err: f32 = 0;
+    for (0..N) |i| {
+        const diff = @abs(rec[i] - sig[1024 + i]);
+        if (diff > max_tdac_err) max_tdac_err = diff;
+    }
+    try std.testing.expect(max_tdac_err < 0.0001);
 }
 
 

@@ -6,8 +6,8 @@ zig-pkg/
 .sratim/
 Action/
 Comedy/
-test_*.*
-test_*
+/test_*.*
+/test_*
 tmp/
 sratim.db*
 logs.db*
@@ -22,3 +22,4 @@ tests/*.mp4
 tests/e2e-report/
 node_modules/
 test-results/
+testvideo/
