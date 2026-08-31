@@ -67,6 +67,7 @@ pub fn handleStream(
     const actual_start_str = try std.fmt.bufPrint(&actual_start_buf, "{d:.3}", .{actual_start});
 
     const is_native = (config.media_engine.streamer == .native);
+    const audio_mode_str = if (config.media_engine.audio_transcoder == .native) "native-aac" else "ffmpeg";
 
     var resp = try request.respondStreaming(resp_buf, .{
         .respond_options = .{
@@ -74,10 +75,11 @@ pub fn handleStream(
             .extra_headers = &.{
                 .{ .name = "content-type", .value = "video/mp4" },
                 .{ .name = "access-control-allow-origin", .value = "*" },
-                .{ .name = "access-control-expose-headers", .value = "x-actual-start-time, x-stream-engine" },
+                .{ .name = "access-control-expose-headers", .value = "x-actual-start-time, x-stream-engine, x-audio-engine" },
                 .{ .name = "accept-ranges", .value = "bytes" },
                 .{ .name = "x-actual-start-time", .value = actual_start_str },
                 .{ .name = "x-stream-engine", .value = if (is_native) "native-fmp4" else "ffmpeg" },
+                .{ .name = "x-audio-engine", .value = audio_mode_str },
             },
         },
     });

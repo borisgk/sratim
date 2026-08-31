@@ -86,6 +86,8 @@ pub fn main() !void {
     }
 }
 
+const build_options = @import("build_options");
+
 test {
     _ = @import("media/subtitles.zig");
     _ = @import("media/metadata.zig");
@@ -97,7 +99,9 @@ test {
     _ = @import("media/native/mkv/track_parser.zig");
     _ = @import("media/native/mkv/gop_builder.zig");
     _ = @import("media/native/mkv/mkv_streamer.zig");
-    _ = @import("media/native/audio/test_ac3_mkv.zig");
-    _ = @import("media/native/audio/test_eac3_mkv.zig");
-    _ = @import("media/native/audio/test_aac_mkv.zig");
+    if (build_options.test_audio) {
+        _ = @import("media/native/audio/test_ac3_mkv.zig");
+        _ = @import("media/native/audio/test_eac3_mkv.zig");
+        _ = @import("media/native/audio/test_aac_mkv.zig");
+    }
 }

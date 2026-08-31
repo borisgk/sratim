@@ -156,7 +156,22 @@ pub fn handlePlayer(
     const lan_ip = lan_ip_opt orelse "";
     defer if (lan_ip_opt) |ip| allocator.free(ip);
 
-    const html_content = try html.generatePlayerHtml(allocator, media_query, media_info.duration, media_info.codec_str, json_out.items, sub_json_out.items, resume_pos, media_title, lan_ip);
+    const streamer_mode = if (config.media_engine.streamer == .native) "native-fmp4" else "ffmpeg";
+    const audio_mode = if (config.media_engine.audio_transcoder == .native) "native-aac" else "ffmpeg";
+
+    const html_content = try html.generatePlayerHtml(
+        allocator,
+        media_query,
+        media_info.duration,
+        media_info.codec_str,
+        json_out.items,
+        sub_json_out.items,
+        resume_pos,
+        media_title,
+        lan_ip,
+        streamer_mode,
+        audio_mode,
+    );
 
     try request.respond(html_content, .{
         .status = .ok,

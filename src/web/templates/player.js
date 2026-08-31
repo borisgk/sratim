@@ -354,6 +354,9 @@
                 try {
                     const audioParam = currentAudioIdx >= 0 ? `&audio=${currentAudioIdx}` : '';
                     const response = await fetch(`/stream?${MEDIA_QUERY}&start=${startTime}${audioParam}`, { signal });
+                    if (window.__onStreamResponse) {
+                        window.__onStreamResponse(response);
+                    }
                     const actualStartHeader = response.headers.get('x-actual-start-time');
                     if (actualStartHeader) {
                         currentSeekTime = parseFloat(actualStartHeader);
@@ -417,6 +420,7 @@
                         if (sourceBuffer.buffered.length > 0) {
                             const end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
                             if (end - video.currentTime > 120) {
+                                if (window.__onStreamState) window.__onStreamState('Buffer Full (Idle)');
                                 await new Promise(r => setTimeout(r, 1000));
                                 continue;
                             }
@@ -425,9 +429,14 @@
                         const { done, value } = await reader.read();
                         if (done) break;
 
+                        if (window.__onStreamChunk && value) {
+                            window.__onStreamChunk(value.byteLength);
+                        }
+
                         queue.push(value);
                         if (!isAppending) processQueue();
                     }
+                    if (window.__onStreamState) window.__onStreamState('Idle');
                 } catch (e) {
                     if (e.name !== 'AbortError') console.error('Fetch error:', e);
                 } finally {

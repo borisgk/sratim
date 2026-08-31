@@ -632,6 +632,32 @@ test "generate MKV fMP4 fragments for Fiddler on the Roof with AC3 2.0" {
     try out_writer.flush();
 }
 
+test "generate MKV fMP4 fragments for Fiddler on the Roof with DTS 5.1" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const out_file = std.Io.Dir.cwd().createFile(io, "tmp/mkv_test_fiddler_dts_out.mp4", .{}) catch return;
+    defer out_file.close(io);
+
+    var out_buf: [65536]u8 = undefined;
+    var out_writer = out_file.writer(io, &out_buf);
+
+    var has_error = false;
+    try streamMkvGeneric(
+        allocator,
+        io,
+        "/Users/borisk/Movies/Sratim/Movies/Fiddler.on.the.Roof.1971.1080p.BluRay.x264-DiVULGED.mkv",
+        0.0,
+        1, // DTS 5.1 track
+        &out_writer.interface,
+        &has_error,
+        3, // 3 fragments
+        .native,
+    );
+    try out_writer.flush();
+    try std.testing.expect(!has_error);
+}
+
 test "compare seek in Sof Ha Olam Smola AAC vs AC3" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;

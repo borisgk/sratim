@@ -28,6 +28,8 @@ pub fn generatePlayerHtml(
     start_position: f64,
     media_title: []const u8,
     server_lan_ip: []const u8,
+    streamer_mode: []const u8,
+    audio_transcoder_mode: []const u8,
 ) ![]u8 {
     const min = @as(u32, @intFromFloat(duration)) / 60;
     const sec = @as(u32, @intFromFloat(duration)) % 60;
@@ -50,9 +52,17 @@ pub fn generatePlayerHtml(
     });
     defer allocator.free(rendered_js);
 
+    const rendered_stats_js = try template_engine.render(allocator, @embedFile("../web/templates/stats.js"), .{
+        .STREAMER_MODE = streamer_mode,
+        .AUDIO_TRANSCODER_MODE = audio_transcoder_mode,
+    });
+    defer allocator.free(rendered_stats_js);
+
     return template_engine.render(allocator, @embedFile("../web/templates/player.html"), .{
         .PLAYER_CSS = @as([]const u8, @embedFile("../web/templates/player.css")),
+        .STATS_CSS = @as([]const u8, @embedFile("../web/templates/stats.css")),
         .PLAYER_JS = rendered_js,
+        .STATS_JS = rendered_stats_js,
         .TIME_STR = time_str,
     });
 }

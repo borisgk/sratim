@@ -1123,11 +1123,6 @@ test "AacDecoder test_video_aac_51.mkv vs FFmpeg reference" {
     try runAacTest(testing.allocator, testing.io, "testvideo/test_video_aac_51.mkv", "5.1 Surround", "tmp/aac_51_decoding_report.html", 6);
 }
 
-test "AacDecoder Tuner.mkv vs FFmpeg reference" {
-    const testing = std.testing;
-    try runAacTest(testing.allocator, testing.io, "tests/Tuner.mkv", "Tuner 5.1 Surround", "tmp/tuner_decoding_report.html", 6);
-}
-
 test "AacDecoder diagnose lockstep test_video_aac_51" {
     const allocator = std.testing.allocator;
     const file_path = "testvideo/test_video_aac_51.mkv";

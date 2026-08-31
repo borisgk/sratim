@@ -1,0 +1,181 @@
+/* =========================================================================
+   Statistics for Sysadmins (Stats for Nerds) Overlay Styles
+   Independent, modular styles for the player diagnostics overlay
+   ========================================================================= */
+
+.stats-panel {
+    position: absolute;
+    top: 24px;
+    left: 24px;
+    z-index: 30;
+    width: 440px;
+    max-width: calc(100% - 48px);
+    background: rgba(11, 15, 25, 0.88);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.65), 0 0 1px rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+    padding: 14px 16px;
+    color: #e2e8f0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    user-select: none;
+    box-sizing: border-box;
+    animation: statsFadeIn 0.15s ease-out;
+}
+
+@keyframes statsFadeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.97) translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.stats-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.stats-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.stats-icon {
+    display: inline-flex;
+    color: #38bdf8;
+}
+
+.stats-title {
+    font-weight: 700;
+    font-size: 11.5px;
+    letter-spacing: 0.6px;
+    color: #38bdf8;
+    text-transform: uppercase;
+}
+
+.stats-shortcut-badge {
+    font-size: 9.5px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #94a3b8;
+    padding: 1px 5px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.stats-close-btn {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+    transition: background 0.15s, color 0.15s;
+}
+
+.stats-close-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: #ffffff;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 4px 10px;
+    align-items: baseline;
+}
+
+.stats-label {
+    color: #94a3b8;
+    font-weight: 500;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+}
+
+.stats-value {
+    color: #f1f5f9;
+    font-variant-numeric: tabular-nums;
+    word-break: break-all;
+}
+
+.stats-value.highlight-green {
+    color: #34d399;
+}
+
+.stats-value.highlight-cyan {
+    color: #38bdf8;
+}
+
+.stats-value.highlight-amber {
+    color: #fbbf24;
+}
+
+.stats-value.highlight-rose {
+    color: #f43f5e;
+}
+
+/* Mini buffer gauge meter */
+.stats-meter-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+}
+
+.stats-meter-track {
+    flex: 1;
+    height: 5px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+}
+
+.stats-meter-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #10b981, #34d399);
+    transition: width 0.25s ease, background 0.25s ease;
+}
+
+.stats-badge-tag {
+    display: inline-block;
+    padding: 0px 5px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.stats-badge-native {
+    background: rgba(16, 185, 129, 0.2);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.stats-badge-ffmpeg {
+    background: rgba(245, 158, 11, 0.2);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}

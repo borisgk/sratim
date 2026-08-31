@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 pub const c = @import("../core/c.zig").c;
 pub const dsp = @import("native/audio/dsp.zig");
 pub const mdct = @import("native/audio/mdct.zig");
@@ -386,6 +387,7 @@ test "StreamAudioTranscoder decodes 6-channel AAC from Tuner.mkv and downmixes/e
 }
 
 test "StreamAudioTranscoder decodes 6-channel AC3 from Polly.mkv and encodes to stereo AAC" {
+    if (!build_options.test_audio) return;
     const testing = std.testing;
     const allocator = testing.allocator;
     const test_file = "tests/Polly.mkv";
@@ -465,6 +467,7 @@ test "StreamAudioTranscoder decodes 6-channel AC3 from Polly.mkv and encodes to 
 }
 
 test "Inspect native AAC roundtrip decoded PCM levels" {
+    if (!build_options.test_audio) return;
     const testing = std.testing;
     var encoder = aac_enc.AacEncoder.init(48000, 192000);
 

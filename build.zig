@@ -21,8 +21,10 @@ pub fn build(b: *std.Build) void {
     // target and optimize options) will be listed when running `zig build --help`
     // in this directory.
     const version = b.option([]const u8, "version", "Application version") orelse "development";
+    const test_audio = b.option(bool, "test-audio", "Run heavy audio transcoding tests (decodes full MKV videos)") orelse false;
     const options = b.addOptions();
     options.addOption([]const u8, "version", version);
+    options.addOption(bool, "test_audio", test_audio);
 
 
     // Here we define an executable. An executable needs to have a root module
@@ -125,9 +127,28 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_exe_tests.step);
 
+    // Dedicated module with test_audio = true for dedicated audio test steps
+    const audio_options = b.addOptions();
+    audio_options.addOption([]const u8, "version", version);
+    audio_options.addOption(bool, "test_audio", true);
+
+    const audio_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    audio_test_mod.addImport("httpx", httpx_dep.module("httpx"));
+    audio_test_mod.addOptions("build_options", audio_options);
+    audio_test_mod.link_libc = true;
+    audio_test_mod.linkSystemLibrary("libavformat", .{});
+    audio_test_mod.linkSystemLibrary("libavcodec", .{});
+    audio_test_mod.linkSystemLibrary("libavutil", .{});
+    audio_test_mod.linkSystemLibrary("libswresample", .{});
+    audio_test_mod.linkSystemLibrary("sqlite3", .{});
+
     // Dedicated test step for standalone AC-3 decoding validation with visual reporting
     const ac3_tests = b.addTest(.{
-        .root_module = exe.root_module,
+        .root_module = audio_test_mod,
         .filters = &.{"Ac3Decoder test_video_ac3"},
     });
     const run_ac3_tests = b.addRunArtifact(ac3_tests);
@@ -136,7 +157,7 @@ pub fn build(b: *std.Build) void {
 
     // Dedicated test step for standalone EAC-3 decoding validation with visual reporting
     const eac3_tests = b.addTest(.{
-        .root_module = exe.root_module,
+        .root_module = audio_test_mod,
         .filters = &.{"Eac3Decoder test_video_eac3"},
     });
     const run_eac3_tests = b.addRunArtifact(eac3_tests);
@@ -145,12 +166,21 @@ pub fn build(b: *std.Build) void {
 
     // Dedicated test step for standalone AAC decoding validation with visual reporting
     const aac_tests = b.addTest(.{
-        .root_module = exe.root_module,
+        .root_module = audio_test_mod,
         .filters = &.{"AacDecoder test_video_aac"},
     });
     const run_aac_tests = b.addRunArtifact(aac_tests);
     const test_aac_step = b.step("test-aac", "Run standalone AAC decoding test with visual reporting");
     test_aac_step.dependOn(&run_aac_tests.step);
+
+    // Dedicated test step for running all heavy audio transcoding tests
+    const all_audio_tests = b.addTest(.{
+        .root_module = audio_test_mod,
+        .filters = &.{ "Ac3Decoder", "Eac3Decoder", "AacDecoder", "StreamAudioTranscoder", "Inspect native AAC" },
+    });
+    const run_all_audio_tests = b.addRunArtifact(all_audio_tests);
+    const test_audio_step = b.step("test-audio", "Run all heavy audio transcoding tests");
+    test_audio_step.dependOn(&run_all_audio_tests.step);
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
