@@ -1,164 +1,19 @@
 const std = @import("std");
-const ebml = @import("ebml.zig");
 const isobmff = @import("isobmff.zig");
 
-pub fn formatVttTime(writer: anytype, total_seconds: f64) !void {
-    const sec_val = if (total_seconds < 0) 0.0 else total_seconds;
-    const total_ms: u64 = @intFromFloat(sec_val * 1000.0);
-    const hours = total_ms / (3600 * 1000);
-    const mins = (total_ms % (3600 * 1000)) / (60 * 1000);
-    const secs = (total_ms % (60 * 1000)) / 1000;
-    const ms = total_ms % 1000;
+pub const vtt = @import("subtitles/vtt.zig");
+pub const mkv = @import("subtitles/mkv.zig");
+pub const mp4 = @import("subtitles/mp4.zig");
 
-    try writer.print("{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}", .{ hours, mins, secs, ms });
-}
+// Re-export text formatting and cleaning helpers
+pub const formatVttTime = vtt.formatVttTime;
+pub const cleanMovText = vtt.cleanMovText;
+pub const cleanAssText = vtt.cleanAssText;
 
-pub fn cleanMovText(out: *std.ArrayList(u8), allocator: std.mem.Allocator, raw_sample: []const u8) !void {
-    if (raw_sample.len < 2) return;
-    const text_len: usize = @intCast(std.mem.readInt(u16, raw_sample[0..2], .big));
-    if (text_len == 0) return;
-    const available_text_len = @min(text_len, raw_sample.len - 2);
-    const text_slice = raw_sample[2 .. 2 + available_text_len];
-
-    var i: usize = 0;
-    while (i < text_slice.len) {
-        if (text_slice[i] == '\r') {
-            if (i + 1 < text_slice.len and text_slice[i + 1] == '\n') {
-                try out.append(allocator, '\n');
-                i += 2;
-            } else {
-                try out.append(allocator, '\n');
-                i += 1;
-            }
-        } else if (text_slice[i] != 0) {
-            try out.append(allocator, text_slice[i]);
-            i += 1;
-        } else {
-            i += 1;
-        }
-    }
-}
-
-pub fn cleanAssText(out: *std.ArrayList(u8), allocator: std.mem.Allocator, ass_raw: []const u8) !void {
-    var text = std.mem.trim(u8, ass_raw, " \t\r\n\x00");
-    if (text.len == 0) return;
-
-    var is_dialogue_prefix = false;
-
-    if (text.len >= 9 and std.ascii.eqlIgnoreCase(text[0..9], "dialogue:")) {
-        text = std.mem.trimStart(u8, text[9..], " \t");
-        is_dialogue_prefix = true;
-    } else if (text.len >= 8 and std.ascii.eqlIgnoreCase(text[0..8], "comment:")) {
-        text = std.mem.trimStart(u8, text[8..], " \t");
-        is_dialogue_prefix = true;
-    }
-
-    if (is_dialogue_prefix) {
-        var commas: usize = 0;
-        for (text, 0..) |ch, idx| {
-            if (ch == ',') {
-                commas += 1;
-                if (commas == 9) {
-                    text = text[idx + 1 ..];
-                    break;
-                }
-            }
-        }
-    } else {
-        var commas: usize = 0;
-        var eighth_comma_idx: ?usize = null;
-
-        for (text, 0..) |ch, idx| {
-            if (ch == ',') {
-                commas += 1;
-                if (commas == 8) {
-                    eighth_comma_idx = idx;
-                    break;
-                }
-            }
-        }
-
-        if (eighth_comma_idx) |idx| {
-            const prefix = text[0..idx];
-            if (std.mem.indexOf(u8, prefix, "Default") != null or
-                std.mem.indexOf(u8, prefix, "0,0,0") != null or
-                std.mem.indexOf(u8, prefix, "0:00:") != null)
-            {
-                text = text[idx + 1 ..];
-            }
-        }
-    }
-
-    var i: usize = 0;
-    while (i < text.len) {
-        if (text[i] == '{') {
-            while (i < text.len and text[i] != '}') : (i += 1) {}
-            if (i < text.len) i += 1;
-        } else if (i + 1 < text.len and text[i] == '\\' and (text[i + 1] == 'N' or text[i + 1] == 'n')) {
-            try out.append(allocator, '\n');
-            i += 2;
-        } else if (i + 1 < text.len and text[i] == '\\' and (text[i + 1] == 'h' or text[i + 1] == 'H')) {
-            try out.append(allocator, ' ');
-            i += 2;
-        } else {
-            try out.append(allocator, text[i]);
-            i += 1;
-        }
-    }
-}
-
-/// Peeks a small sample of text from an MP4 subtitle stream for language detection.
-pub fn peekMp4SubtitleSample(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    file_path: [:0]const u8,
-    target_stream_idx: usize,
-) !?[]u8 {
-    var track = (isobmff.parseMp4SubtitleTrack(allocator, io, file_path, target_stream_idx) catch null) orelse return null;
-    defer track.deinit(allocator);
-
-    if (track.samples.len == 0) return null;
-
-    const file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
-    defer file.close(io);
-
-    var file_buf: [65536]u8 = undefined;
-    var file_reader = file.reader(io, &file_buf);
-
-    var sample_buf = std.ArrayList(u8).empty;
-    defer sample_buf.deinit(allocator);
-
-    var text_buf = std.ArrayList(u8).empty;
-    defer text_buf.deinit(allocator);
-
-    var cues_collected: usize = 0;
-    for (track.samples) |sample| {
-        if (sample.size == 0) continue;
-
-        file_reader.seekTo(sample.offset) catch continue;
-        const sample_data = allocator.alloc(u8, sample.size) catch continue;
-        defer allocator.free(sample_data);
-
-        file_reader.interface.readSliceAll(sample_data) catch continue;
-
-        text_buf.clearRetainingCapacity();
-        cleanMovText(&text_buf, allocator, sample_data) catch continue;
-        const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
-        if (trimmed.len > 0) {
-            if (sample_buf.items.len > 0) try sample_buf.append(allocator, ' ');
-            try sample_buf.appendSlice(allocator, trimmed);
-            cues_collected += 1;
-            if (cues_collected >= 3 or sample_buf.items.len >= 300) {
-                return try sample_buf.toOwnedSlice(allocator);
-            }
-        }
-    }
-
-    if (sample_buf.items.len > 0) {
-        return try sample_buf.toOwnedSlice(allocator);
-    }
-    return null;
-}
+// Re-export container-specific extraction and peeking functions
+pub const extractMkvSubtitlesVtt = mkv.extractMkvSubtitlesVtt;
+pub const peekMp4SubtitleSample = mp4.peekMp4SubtitleSample;
+pub const extractMp4SubtitlesVtt = mp4.extractMp4SubtitlesVtt;
 
 /// Peeks a small sample of text from a specific subtitle stream for language detection.
 pub fn peekSubtitleSample(
@@ -170,560 +25,17 @@ pub fn peekSubtitleSample(
     const file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
     defer file.close(io);
 
-    var file_buf: [65536]u8 = undefined;
+    var file_buf: [1024]u8 = undefined;
     var file_reader = file.reader(io, &file_buf);
     const r = &file_reader.interface;
 
     var magic_buf: [16]u8 = undefined;
     r.readSliceAll(&magic_buf) catch return null;
+
     if (isobmff.isMp4Container(&magic_buf)) {
-        return peekMp4SubtitleSample(allocator, io, file_path, target_stream_idx);
-    }
-
-    file_reader.seekTo(0) catch return null;
-
-    const ebml_hdr = (try ebml.readElementHeader(r)) orelse return null;
-    if (ebml_hdr.id != ebml.ID_EBML) return null;
-    try ebml.skipBytes(r, ebml_hdr.size);
-
-    const seg_hdr = (try ebml.readElementHeader(r)) orelse return null;
-    if (seg_hdr.id != ebml.ID_SEGMENT) return null;
-
-    var current_stream_idx: usize = 0;
-    var target_track_num: ?u64 = null;
-    var first_cluster_elem: ?ebml.ElementHeader = null;
-
-    while (true) {
-        const elem = (try ebml.readElementHeader(r)) orelse break;
-
-        if (elem.id == ebml.ID_TRACKS) {
-            var tracks_rem = elem.size;
-            while (tracks_rem > 0) {
-                const sub = (try ebml.readElementHeader(r)) orelse break;
-                tracks_rem -= sub.header_size;
-                if (sub.size != ebml.UNKNOWN_SIZE and sub.size > tracks_rem) break;
-
-                if (sub.id == ebml.ID_TRACK_ENTRY) {
-                    var entry_rem = sub.size;
-                    var t_num: ?u64 = null;
-                    var t_type: ?u64 = null;
-
-                    while (entry_rem > 0) {
-                        const trk_child = (try ebml.readElementHeader(r)) orelse break;
-                        entry_rem -= trk_child.header_size;
-                        if (trk_child.size != ebml.UNKNOWN_SIZE and trk_child.size > entry_rem) break;
-
-                        if (trk_child.id == ebml.ID_TRACK_NUMBER) {
-                            t_num = try ebml.readUint(r, trk_child.size);
-                        } else if (trk_child.id == ebml.ID_TRACK_TYPE) {
-                            t_type = try ebml.readUint(r, trk_child.size);
-                        } else {
-                            try ebml.skipBytes(r, trk_child.size);
-                        }
-                        if (trk_child.size != ebml.UNKNOWN_SIZE) entry_rem -= trk_child.size;
-                    }
-
-                    if (t_type) |tt| {
-                        if (current_stream_idx == target_stream_idx and tt == 17) {
-                            if (t_num) |num| {
-                                target_track_num = num;
-                            }
-                        }
-                        current_stream_idx += 1;
-                    }
-                } else {
-                    try ebml.skipBytes(r, sub.size);
-                }
-                if (sub.size != ebml.UNKNOWN_SIZE) tracks_rem -= sub.size;
-            }
-        } else if (elem.id == ebml.ID_CLUSTER) {
-            if (first_cluster_elem == null) {
-                first_cluster_elem = elem;
-            }
-            break;
-        } else {
-            if (elem.size != ebml.UNKNOWN_SIZE) {
-                try ebml.skipBytes(r, elem.size);
-            }
-        }
-    }
-
-    if (target_track_num == null or first_cluster_elem == null) {
-        return null;
-    }
-
-    var sample_buf = std.ArrayList(u8).empty;
-    defer sample_buf.deinit(allocator);
-
-    var cues_collected: usize = 0;
-
-    var text_buf = std.ArrayList(u8).empty;
-    defer text_buf.deinit(allocator);
-
-    while (true) {
-        const sub = (ebml.readElementHeader(r) catch break) orelse break;
-
-        if (sub.id == ebml.ID_CLUSTER or sub.id == ebml.ID_SEGMENT) {
-            continue;
-        } else if (sub.id == ebml.ID_SIMPLE_BLOCK or sub.id == ebml.ID_BLOCK) {
-            if (sub.size < 4) {
-                if (sub.size != ebml.UNKNOWN_SIZE) try ebml.skipBytes(r, sub.size);
-                continue;
-            }
-
-            const peek_len: usize = @intCast(@min(sub.size, 16));
-            var header_buf: [16]u8 = undefined;
-            try r.readSliceAll(header_buf[0..peek_len]);
-
-            const track_res = ebml.decodeVint(header_buf[0..peek_len]) catch {
-                if (sub.size > peek_len) try ebml.skipBytes(r, sub.size - peek_len);
-                continue;
-            };
-
-            if (track_res.value != target_track_num.?) {
-                if (sub.size > peek_len) try ebml.skipBytes(r, sub.size - peek_len);
-                continue;
-            }
-
-            const hdr_len = track_res.len + 3;
-            if (sub.size < hdr_len) {
-                if (sub.size > peek_len) try ebml.skipBytes(r, sub.size - peek_len);
-                continue;
-            }
-
-            const payload_len: usize = @intCast(sub.size - hdr_len);
-            const payload = try allocator.alloc(u8, payload_len);
-            defer allocator.free(payload);
-
-            const already_in_hdr = if (peek_len > hdr_len) peek_len - hdr_len else 0;
-            if (already_in_hdr > 0) {
-                @memcpy(payload[0..already_in_hdr], header_buf[hdr_len..peek_len]);
-            }
-            const rem_to_read = payload_len - already_in_hdr;
-            if (rem_to_read > 0) {
-                try r.readSliceAll(payload[already_in_hdr..]);
-            }
-
-            text_buf.clearRetainingCapacity();
-            try cleanAssText(&text_buf, allocator, payload);
-            const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
-            if (trimmed.len > 0) {
-                if (sample_buf.items.len > 0) try sample_buf.append(allocator, ' ');
-                try sample_buf.appendSlice(allocator, trimmed);
-                cues_collected += 1;
-                if (cues_collected >= 3 or sample_buf.items.len >= 300) {
-                    return try sample_buf.toOwnedSlice(allocator);
-                }
-            }
-        } else if (sub.id == ebml.ID_BLOCK_GROUP) {
-            var bg_rem: u64 = sub.size;
-            var block_payload: ?[]u8 = null;
-            defer if (block_payload) |bp| allocator.free(bp);
-
-            while (bg_rem > 0) {
-                const bg_child = (ebml.readElementHeader(r) catch break) orelse break;
-                bg_rem -= bg_child.header_size;
-                if (bg_child.size != ebml.UNKNOWN_SIZE and bg_child.size > bg_rem) break;
-
-                if (bg_child.id == ebml.ID_BLOCK) {
-                    if (bg_child.size < 4) {
-                        try ebml.skipBytes(r, bg_child.size);
-                        bg_rem -= bg_child.size;
-                        continue;
-                    }
-
-                    const peek_len: usize = @intCast(@min(bg_child.size, 16));
-                    var header_buf: [16]u8 = undefined;
-                    try r.readSliceAll(header_buf[0..peek_len]);
-
-                    const track_res = ebml.decodeVint(header_buf[0..peek_len]) catch {
-                        try ebml.skipBytes(r, bg_child.size - peek_len);
-                        bg_rem -= bg_child.size;
-                        continue;
-                    };
-                    if (track_res.value == target_track_num.?) {
-                        const hdr_len = track_res.len + 3;
-                        if (bg_child.size >= hdr_len) {
-                            const payload_len: usize = @intCast(bg_child.size - hdr_len);
-                            const p_buf = try allocator.alloc(u8, payload_len);
-                            errdefer allocator.free(p_buf);
-
-                            const already_in_hdr = if (peek_len > hdr_len) peek_len - hdr_len else 0;
-                            if (already_in_hdr > 0) {
-                                @memcpy(p_buf[0..already_in_hdr], header_buf[hdr_len..peek_len]);
-                            }
-                            const rem_to_read = payload_len - already_in_hdr;
-                            if (rem_to_read > 0) {
-                                try r.readSliceAll(p_buf[already_in_hdr..]);
-                            }
-                            block_payload = p_buf;
-                        } else {
-                            try ebml.skipBytes(r, bg_child.size - peek_len);
-                        }
-                    } else {
-                        try ebml.skipBytes(r, bg_child.size - peek_len);
-                    }
-                    bg_rem -= bg_child.size;
-                } else {
-                    try ebml.skipBytes(r, bg_child.size);
-                    bg_rem -= bg_child.size;
-                }
-            }
-
-            if (block_payload) |bp| {
-                text_buf.clearRetainingCapacity();
-                try cleanAssText(&text_buf, allocator, bp);
-                const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
-                if (trimmed.len > 0) {
-                    if (sample_buf.items.len > 0) try sample_buf.append(allocator, ' ');
-                    try sample_buf.appendSlice(allocator, trimmed);
-                    cues_collected += 1;
-                    if (cues_collected >= 3 or sample_buf.items.len >= 300) {
-                        return try sample_buf.toOwnedSlice(allocator);
-                    }
-                }
-            }
-        } else {
-            if (sub.size != ebml.UNKNOWN_SIZE) {
-                try ebml.skipBytes(r, sub.size);
-            }
-        }
-    }
-
-    if (sample_buf.items.len > 0) {
-        return try sample_buf.toOwnedSlice(allocator);
-    }
-    return null;
-}
-
-/// Pure Zig extraction of embedded subtitles from an MKV file directly to a WebVTT writer.
-pub fn extractMkvSubtitlesVtt(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    writer: anytype,
-    file_path: [:0]const u8,
-    target_stream_idx: usize,
-    start_offset: f64,
-) !void {
-    const file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
-    defer file.close(io);
-
-    var file_buf: [65536]u8 = undefined;
-    var file_reader = file.reader(io, &file_buf);
-    const r = &file_reader.interface;
-
-    // Read EBML Header
-    const ebml_hdr = (try ebml.readElementHeader(r)) orelse return error.InvalidEbml;
-    if (ebml_hdr.id != ebml.ID_EBML) return error.NotMatroska;
-    try ebml.skipBytes(r, ebml_hdr.size);
-
-    // Read Segment Header
-    const seg_hdr = (try ebml.readElementHeader(r)) orelse return error.InvalidEbml;
-    if (seg_hdr.id != ebml.ID_SEGMENT) return error.NotMatroska;
-
-    var timestamp_scale: f64 = 1_000_000.0; // Default 1ms = 1,000,000 ns
-    var current_stream_idx: usize = 0;
-    var target_track_num: ?u64 = null;
-    var first_cluster_elem: ?ebml.ElementHeader = null;
-
-    // Scan segment level-1 elements
-    while (true) {
-        const elem = (try ebml.readElementHeader(r)) orelse break;
-
-        if (elem.id == ebml.ID_INFO) {
-            var info_rem = elem.size;
-            while (info_rem > 0) {
-                const sub = (try ebml.readElementHeader(r)) orelse break;
-                info_rem -= sub.header_size;
-                if (sub.size != ebml.UNKNOWN_SIZE and sub.size > info_rem) break;
-
-                if (sub.id == ebml.ID_TIMESTAMP_SCALE) {
-                    const val = try ebml.readUint(r, sub.size);
-                    timestamp_scale = @floatFromInt(val);
-                } else {
-                    try ebml.skipBytes(r, sub.size);
-                }
-                if (sub.size != ebml.UNKNOWN_SIZE) info_rem -= sub.size;
-            }
-        } else if (elem.id == ebml.ID_TRACKS) {
-            var tracks_rem = elem.size;
-            while (tracks_rem > 0) {
-                const sub = (try ebml.readElementHeader(r)) orelse break;
-                tracks_rem -= sub.header_size;
-                if (sub.size != ebml.UNKNOWN_SIZE and sub.size > tracks_rem) break;
-
-                if (sub.id == ebml.ID_TRACK_ENTRY) {
-                    var entry_rem = sub.size;
-                    var t_num: ?u64 = null;
-                    var t_type: ?u64 = null;
-
-                    while (entry_rem > 0) {
-                        const trk_child = (try ebml.readElementHeader(r)) orelse break;
-                        entry_rem -= trk_child.header_size;
-                        if (trk_child.size != ebml.UNKNOWN_SIZE and trk_child.size > entry_rem) break;
-
-                        if (trk_child.id == ebml.ID_TRACK_NUMBER) {
-                            t_num = try ebml.readUint(r, trk_child.size);
-                        } else if (trk_child.id == ebml.ID_TRACK_TYPE) {
-                            t_type = try ebml.readUint(r, trk_child.size);
-                        } else {
-                            try ebml.skipBytes(r, trk_child.size);
-                        }
-                        if (trk_child.size != ebml.UNKNOWN_SIZE) entry_rem -= trk_child.size;
-                    }
-
-                    if (t_type) |tt| {
-                        if (current_stream_idx == target_stream_idx and tt == 17) { // 17 = Subtitle
-                            if (t_num) |num| {
-                                target_track_num = num;
-                            }
-                        }
-                        current_stream_idx += 1;
-                    }
-                } else {
-                    try ebml.skipBytes(r, sub.size);
-                }
-                if (sub.size != ebml.UNKNOWN_SIZE) tracks_rem -= sub.size;
-            }
-        } else if (elem.id == ebml.ID_CLUSTER) {
-            // First cluster found - save it and break to start cluster scanning
-            if (first_cluster_elem == null) {
-                first_cluster_elem = elem;
-            }
-            break;
-        } else {
-            // Skip other level-1 elements
-            if (elem.size != ebml.UNKNOWN_SIZE) {
-                try ebml.skipBytes(r, elem.size);
-            }
-        }
-    }
-
-    if (target_track_num == null or first_cluster_elem == null) {
-        return error.NoSubtitleStreamsFound;
-    }
-
-    // Output standard WEBVTT header once before extracting cues
-    try writer.writeAll("WEBVTT\n\n");
-    try parseClusters(allocator, r, first_cluster_elem.?, timestamp_scale, target_track_num.?, start_offset, writer);
-}
-
-fn parseClusters(
-    allocator: std.mem.Allocator,
-    r: *std.Io.Reader,
-    first_cluster_elem: ebml.ElementHeader,
-    timestamp_scale: f64,
-    target_track_num: u64,
-    start_offset: f64,
-    writer: anytype,
-) !void {
-    _ = first_cluster_elem;
-    const time_multiplier = timestamp_scale / 1_000_000_000.0;
-
-    var text_buf = std.ArrayList(u8).empty;
-    defer text_buf.deinit(allocator);
-
-    var cluster_timestamp_raw: u64 = 0;
-
-    while (true) {
-        const sub = (ebml.readElementHeader(r) catch break) orelse break;
-
-        if (sub.id == ebml.ID_CLUSTER or sub.id == ebml.ID_SEGMENT) {
-            continue;
-        } else if (sub.id == ebml.ID_CLUSTER_TIMESTAMP) {
-            cluster_timestamp_raw = (ebml.readUint(r, sub.size) catch 0);
-        } else if (sub.id == ebml.ID_SIMPLE_BLOCK or sub.id == ebml.ID_BLOCK) {
-            if (sub.size < 4) {
-                if (sub.size != ebml.UNKNOWN_SIZE) try ebml.skipBytes(r, sub.size);
-                continue;
-            }
-
-            const peek_len: usize = @intCast(@min(sub.size, 16));
-            var header_buf: [16]u8 = undefined;
-            try r.readSliceAll(header_buf[0..peek_len]);
-
-            const track_res = ebml.decodeVint(header_buf[0..peek_len]) catch {
-                if (sub.size > peek_len) try ebml.skipBytes(r, sub.size - peek_len);
-                continue;
-            };
-
-            if (track_res.value != target_track_num) {
-                if (sub.size > peek_len) try ebml.skipBytes(r, sub.size - peek_len);
-                continue;
-            }
-
-            // Target subtitle track
-            const hdr_len = track_res.len + 3; // VINT + 2 bytes timecode + 1 byte flags
-            if (sub.size < hdr_len) {
-                if (sub.size > peek_len) try ebml.skipBytes(r, sub.size - peek_len);
-                continue;
-            }
-
-            const rel_timecode = std.mem.readInt(i16, header_buf[track_res.len..][0..2], .big);
-            const payload_len: usize = @intCast(sub.size - hdr_len);
-
-            const payload: []u8 = try allocator.alloc(u8, payload_len);
-            defer allocator.free(payload);
-
-            const already_in_hdr = if (peek_len > hdr_len) peek_len - hdr_len else 0;
-            if (already_in_hdr > 0) {
-                @memcpy(payload[0..already_in_hdr], header_buf[hdr_len..peek_len]);
-            }
-            const rem_to_read = payload_len - already_in_hdr;
-            if (rem_to_read > 0) {
-                try r.readSliceAll(payload[already_in_hdr..]);
-            }
-
-            const cue_start_sec = (@as(f64, @floatFromInt(cluster_timestamp_raw)) + @as(f64, @floatFromInt(rel_timecode))) * time_multiplier;
-            const cue_end_sec = cue_start_sec + 3.0; // Default 3 sec for SimpleBlock
-
-            if (cue_end_sec >= start_offset) {
-                text_buf.clearRetainingCapacity();
-                try cleanAssText(&text_buf, allocator, payload);
-                const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
-                if (trimmed.len > 0) {
-                    try formatVttTime(writer, cue_start_sec);
-                    try writer.writeAll(" --> ");
-                    try formatVttTime(writer, cue_end_sec);
-                    try writer.writeAll("\n");
-                    try writer.writeAll(trimmed);
-                    try writer.writeAll("\n\n");
-                }
-            }
-        } else if (sub.id == ebml.ID_BLOCK_GROUP) {
-            var bg_rem: u64 = sub.size;
-            var block_payload: ?[]u8 = null;
-            defer if (block_payload) |bp| allocator.free(bp);
-
-            var bg_track_num: ?u64 = null;
-            var bg_rel_timecode: i16 = 0;
-            var bg_duration_raw: ?u64 = null;
-
-            while (bg_rem > 0) {
-                const bg_child = (ebml.readElementHeader(r) catch break) orelse break;
-                bg_rem -= bg_child.header_size;
-                if (bg_child.size != ebml.UNKNOWN_SIZE and bg_child.size > bg_rem) break;
-
-                if (bg_child.id == ebml.ID_BLOCK) {
-                    if (bg_child.size < 4) {
-                        try ebml.skipBytes(r, bg_child.size);
-                        bg_rem -= bg_child.size;
-                        continue;
-                    }
-
-                    const peek_len: usize = @intCast(@min(bg_child.size, 16));
-                    var header_buf: [16]u8 = undefined;
-                    try r.readSliceAll(header_buf[0..peek_len]);
-
-                    const track_res = ebml.decodeVint(header_buf[0..peek_len]) catch {
-                        try ebml.skipBytes(r, bg_child.size - peek_len);
-                        bg_rem -= bg_child.size;
-                        continue;
-                    };
-                    bg_track_num = track_res.value;
-                    if (track_res.value == target_track_num) {
-                        const hdr_len = track_res.len + 3;
-                        if (bg_child.size >= hdr_len) {
-                            bg_rel_timecode = std.mem.readInt(i16, header_buf[track_res.len..][0..2], .big);
-                            const payload_len: usize = @intCast(bg_child.size - hdr_len);
-                            const p_buf = try allocator.alloc(u8, payload_len);
-                            errdefer allocator.free(p_buf);
-
-                            const already_in_hdr = if (peek_len > hdr_len) peek_len - hdr_len else 0;
-                            if (already_in_hdr > 0) {
-                                @memcpy(p_buf[0..already_in_hdr], header_buf[hdr_len..peek_len]);
-                            }
-                            const rem_to_read = payload_len - already_in_hdr;
-                            if (rem_to_read > 0) {
-                                try r.readSliceAll(p_buf[already_in_hdr..]);
-                            }
-                            block_payload = p_buf;
-                        } else {
-                            try ebml.skipBytes(r, bg_child.size - peek_len);
-                        }
-                    } else {
-                        try ebml.skipBytes(r, bg_child.size - peek_len);
-                    }
-                    bg_rem -= bg_child.size;
-                } else if (bg_child.id == ebml.ID_BLOCK_DURATION) {
-                    bg_duration_raw = try ebml.readUint(r, bg_child.size);
-                    bg_rem -= bg_child.size;
-                } else {
-                    try ebml.skipBytes(r, bg_child.size);
-                    bg_rem -= bg_child.size;
-                }
-            }
-
-            if (bg_track_num == target_track_num and block_payload != null) {
-                const cue_start_sec = (@as(f64, @floatFromInt(cluster_timestamp_raw)) + @as(f64, @floatFromInt(bg_rel_timecode))) * time_multiplier;
-                const cue_duration_sec = if (bg_duration_raw) |d| @as(f64, @floatFromInt(d)) * time_multiplier else 3.0;
-                const cue_end_sec = cue_start_sec + @max(0.5, cue_duration_sec);
-
-                if (cue_end_sec >= start_offset) {
-                    text_buf.clearRetainingCapacity();
-                    try cleanAssText(&text_buf, allocator, block_payload.?);
-                    const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
-                    if (trimmed.len > 0) {
-                        try formatVttTime(writer, cue_start_sec);
-                        try writer.writeAll(" --> ");
-                        try formatVttTime(writer, cue_end_sec);
-                        try writer.writeAll("\n");
-                        try writer.writeAll(trimmed);
-                        try writer.writeAll("\n\n");
-                    }
-                }
-            }
-        } else {
-            if (sub.size != ebml.UNKNOWN_SIZE) {
-                try ebml.skipBytes(r, sub.size);
-            }
-        }
-    }
-}
-
-/// Pure Zig extraction of embedded subtitles from an MP4/MOV file directly to a WebVTT writer.
-pub fn extractMp4SubtitlesVtt(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    writer: anytype,
-    file_path: [:0]const u8,
-    target_stream_idx: usize,
-    start_offset: f64,
-) !void {
-    var track = (try isobmff.parseMp4SubtitleTrack(allocator, io, file_path, target_stream_idx)) orelse return error.NoSubtitleStreamsFound;
-    defer track.deinit(allocator);
-
-    const file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
-    defer file.close(io);
-
-    var file_buf: [65536]u8 = undefined;
-    var file_reader = file.reader(io, &file_buf);
-
-    try writer.writeAll("WEBVTT\n\n");
-
-    var text_buf = std.ArrayList(u8).empty;
-    defer text_buf.deinit(allocator);
-
-    for (track.samples) |sample| {
-        if (sample.size == 0 or sample.end_sec < start_offset) continue;
-
-        try file_reader.seekTo(sample.offset);
-        const sample_data = try allocator.alloc(u8, sample.size);
-        defer allocator.free(sample_data);
-
-        try file_reader.interface.readSliceAll(sample_data);
-
-        text_buf.clearRetainingCapacity();
-        try cleanMovText(&text_buf, allocator, sample_data);
-        const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
-        if (trimmed.len > 0) {
-            try formatVttTime(writer, sample.start_sec);
-            try writer.writeAll(" --> ");
-            try formatVttTime(writer, sample.end_sec);
-            try writer.writeAll("\n");
-            try writer.writeAll(trimmed);
-            try writer.writeAll("\n\n");
-        }
+        return mp4.peekMp4SubtitleSample(allocator, io, file_path, target_stream_idx);
+    } else {
+        return mkv.peekMkvSubtitleSample(allocator, io, file_path, target_stream_idx);
     }
 }
 
@@ -745,40 +57,14 @@ pub fn extractNativeSubtitlesVtt(
 
     var magic_buf: [16]u8 = undefined;
     r.readSliceAll(&magic_buf) catch {
-        return extractMkvSubtitlesVtt(allocator, io, writer, file_path, target_stream_idx, start_offset);
+        return mkv.extractMkvSubtitlesVtt(allocator, io, writer, file_path, target_stream_idx, start_offset);
     };
 
     if (isobmff.isMp4Container(&magic_buf)) {
-        return extractMp4SubtitlesVtt(allocator, io, writer, file_path, target_stream_idx, start_offset);
+        return mp4.extractMp4SubtitlesVtt(allocator, io, writer, file_path, target_stream_idx, start_offset);
     } else {
-        return extractMkvSubtitlesVtt(allocator, io, writer, file_path, target_stream_idx, start_offset);
+        return mkv.extractMkvSubtitlesVtt(allocator, io, writer, file_path, target_stream_idx, start_offset);
     }
-}
-
-test "formatVttTime" {
-    var aw = std.Io.Writer.Allocating.init(std.testing.allocator);
-    defer aw.deinit();
-    try formatVttTime(&aw.writer, 3661.543);
-    try std.testing.expectEqualStrings("01:01:01.543", aw.written());
-}
-
-test "cleanAssText" {
-    var out = std.ArrayList(u8).empty;
-    defer out.deinit(std.testing.allocator);
-
-    const raw = "Dialogue: 0,0:01:00.00,0:01:05.00,Default,,0,0,0,,{\\an8}Hello\\NWorld!";
-    try cleanAssText(&out, std.testing.allocator, raw);
-    try std.testing.expectEqualStrings("Hello\nWorld!", out.items);
-}
-
-test "cleanMovText" {
-    var out = std.ArrayList(u8).empty;
-    defer out.deinit(std.testing.allocator);
-
-    // 2-byte big endian length 13 (0x000D) + "Hello\r\nWorld!"
-    const raw = "\x00\x0DHello\r\nWorld!";
-    try cleanMovText(&out, std.testing.allocator, raw);
-    try std.testing.expectEqualStrings("Hello\nWorld!", out.items);
 }
 
 test "extractMkvSubtitlesVtt from test_sync.mkv" {
@@ -791,9 +77,9 @@ test "extractMkvSubtitlesVtt from test_sync.mkv" {
     defer aw.deinit();
 
     try extractMkvSubtitlesVtt(allocator, io, &aw.writer, "tests/test_sync.mkv", 2, 0.0);
-    const vtt = aw.written();
-    try std.testing.expect(std.mem.startsWith(u8, vtt, "WEBVTT\n\n"));
-    try std.testing.expect(std.mem.indexOf(u8, vtt, "-->") != null);
+    const text = aw.written();
+    try std.testing.expect(std.mem.startsWith(u8, text, "WEBVTT\n\n"));
+    try std.testing.expect(std.mem.indexOf(u8, text, "-->") != null);
 }
 
 test "extractNativeSubtitlesVtt from test_subs.mp4" {
@@ -806,12 +92,12 @@ test "extractNativeSubtitlesVtt from test_subs.mp4" {
     defer aw.deinit();
 
     try extractNativeSubtitlesVtt(allocator, io, &aw.writer, "tests/test_subs.mp4", 2, 0.0);
-    const vtt = aw.written();
-    try std.testing.expect(std.mem.startsWith(u8, vtt, "WEBVTT\n\n"));
-    try std.testing.expect(std.mem.indexOf(u8, vtt, "00:00:01.000 --> 00:00:03.000") != null);
-    try std.testing.expect(std.mem.indexOf(u8, vtt, "Hello MP4 Subtitles!") != null);
-    try std.testing.expect(std.mem.indexOf(u8, vtt, "00:00:05.000 --> 00:00:07.000") != null);
-    try std.testing.expect(std.mem.indexOf(u8, vtt, "Second MP4 Cue") != null);
+    const text = aw.written();
+    try std.testing.expect(std.mem.startsWith(u8, text, "WEBVTT\n\n"));
+    try std.testing.expect(std.mem.indexOf(u8, text, "00:00:01.000 --> 00:00:03.000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Hello MP4 Subtitles!") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "00:00:05.000 --> 00:00:07.000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Second MP4 Cue") != null);
 }
 
 test "peekSubtitleSample from test_subs.mp4" {
@@ -839,9 +125,9 @@ test "extractMkvSubtitlesVtt from Ludwig S02E01" {
         var aw = std.Io.Writer.Allocating.init(allocator);
         defer aw.deinit();
         try extractNativeSubtitlesVtt(allocator, io, &aw.writer, path, 2, 0.0);
-        const vtt = aw.written();
-        try std.testing.expect(std.mem.startsWith(u8, vtt, "WEBVTT\n\n"));
-        try std.testing.expect(vtt.len > 100);
+        const text = aw.written();
+        try std.testing.expect(std.mem.startsWith(u8, text, "WEBVTT\n\n"));
+        try std.testing.expect(text.len > 100);
     }
 
     // Stream 3 (English SDH)
@@ -849,9 +135,9 @@ test "extractMkvSubtitlesVtt from Ludwig S02E01" {
         var aw = std.Io.Writer.Allocating.init(allocator);
         defer aw.deinit();
         try extractNativeSubtitlesVtt(allocator, io, &aw.writer, path, 3, 0.0);
-        const vtt = aw.written();
-        try std.testing.expect(std.mem.startsWith(u8, vtt, "WEBVTT\n\n"));
-        try std.testing.expect(vtt.len > 100);
+        const text = aw.written();
+        try std.testing.expect(std.mem.startsWith(u8, text, "WEBVTT\n\n"));
+        try std.testing.expect(text.len > 100);
     }
 }
 
@@ -867,4 +153,3 @@ test "peekSubtitleSample from Ludwig S02E01" {
 
     try std.testing.expect(peek_text.len > 0);
 }
-
