@@ -113,18 +113,6 @@ jobs:
       - name: Prepare Release Assets
         run: |
           chmod +x ./artifacts/*
-          # Create backward-compatibility copies for existing installation scripts
-          if [ -f ./artifacts/sratim-linux-x86_64-baseline ]; then
-            for legacy in \
-              sratim-debian11-x86_64-baseline \
-              sratim-debian12-x86_64-baseline \
-              sratim-debian13-x86_64-baseline \
-              sratim-ubuntu22.04-x86_64-baseline \
-              sratim-ubuntu24.04-x86_64-baseline \
-              sratim-ubuntu26.04-x86_64-baseline; do
-              cp ./artifacts/sratim-linux-x86_64-baseline ./artifacts/$legacy
-            done
-          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
