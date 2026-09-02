@@ -99,5 +99,6 @@ test {
         _ = @import("media/native/audio/test_ac3_mkv.zig");
         _ = @import("media/native/audio/test_eac3_mkv.zig");
         _ = @import("media/native/audio/test_aac_mkv.zig");
+        _ = @import("media/native/audio/test_mp3_mkv.zig");
     }
 }

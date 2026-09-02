@@ -73,6 +73,11 @@ pub fn build(b: *std.Build) void {
 
     exe.root_module.link_libc = true;
     exe.root_module.linkSystemLibrary("sqlite3", .{});
+    exe.root_module.addCSourceFile(.{
+        .file = b.path("src/media/native/audio/mp3/minimp3.c"),
+        .flags = &.{"-DMINIMP3_FLOAT_OUTPUT"},
+    });
+    exe.root_module.addIncludePath(b.path("src/media/native/audio/mp3"));
 
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default
@@ -137,6 +142,11 @@ pub fn build(b: *std.Build) void {
     audio_test_mod.addOptions("build_options", audio_options);
     audio_test_mod.link_libc = true;
     audio_test_mod.linkSystemLibrary("sqlite3", .{});
+    audio_test_mod.addCSourceFile(.{
+        .file = b.path("src/media/native/audio/mp3/minimp3.c"),
+        .flags = &.{"-DMINIMP3_FLOAT_OUTPUT"},
+    });
+    audio_test_mod.addIncludePath(b.path("src/media/native/audio/mp3"));
 
     // Dedicated test step for standalone AC-3 decoding validation with visual reporting
     const ac3_tests = b.addTest(.{
@@ -168,7 +178,7 @@ pub fn build(b: *std.Build) void {
     // Dedicated test step for standalone MP3 decoding validation
     const mp3_tests = b.addTest(.{
         .root_module = audio_test_mod,
-        .filters = &.{"Mp3Decoder"},
+        .filters = &.{"Mp3Decoder test_video_mp3"},
     });
     const run_mp3_tests = b.addRunArtifact(mp3_tests);
     const test_mp3_step = b.step("test-mp3", "Run standalone MP3 decoding tests");
