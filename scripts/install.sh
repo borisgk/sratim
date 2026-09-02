@@ -71,32 +71,22 @@ API_URL="https://api.github.com/repos/${REPO}/releases/latest"
 
 # Get the download URL based on architecture and OS
 if [ "$ARCH" = "x86_64" ]; then
-  if [ "$OS" = "debian" ]; then
-    case "$OS_VERSION" in
-      "11") DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-debian11-x86_64-baseline" | cut -d '"' -f 4) ;;
-      "12") DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-debian12-x86_64-baseline" | cut -d '"' -f 4) ;;
-      "13") DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-debian13-x86_64-baseline" | cut -d '"' -f 4) ;;
-      *)
-        log_warn "Debian version $OS_VERSION not explicitly supported. Falling back to Debian 12 binary."
-        DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-debian12-x86_64-baseline" | cut -d '"' -f 4)
-        ;;
-    esac
-  elif [ "$OS" = "ubuntu" ]; then
-    case "$OS_VERSION" in
-      "22.04") DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-ubuntu22.04-x86_64-baseline" | cut -d '"' -f 4) ;;
-      "24.04") DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-ubuntu24.04-x86_64-baseline" | cut -d '"' -f 4) ;;
-      "26.04") DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-ubuntu26.04-x86_64-baseline" | cut -d '"' -f 4) ;;
-      *)
-        log_warn "Ubuntu version $OS_VERSION not explicitly supported. Falling back to Ubuntu 24.04 binary."
-        DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-ubuntu24.04-x86_64-baseline" | cut -d '"' -f 4)
-        ;;
-    esac
-  else
-    # Fallback to Arch Linux Silvermont for padre server or unknown x86_64
-    DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-archlinux-x86_64-silvermont" | cut -d '"' -f 4)
+  # Check for specialized Silvermont / Celeron N3150 build on Arch or matching CPU
+  if [ "$OS" = "arch" ] || (grep -qi -E "N3150|Atom|Celeron" /proc/cpuinfo 2>/dev/null); then
+    DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-archlinux-x86_64-silvermont" | cut -d '"' -f 4 || true)
+  fi
+
+  # Default/Fallback to universal x86_64 baseline binary
+  if [ -z "${DOWNLOAD_URL:-}" ]; then
+    DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-linux-x86_64-baseline" | cut -d '"' -f 4 || true)
+  fi
+
+  # Backward compatibility fallback for older releases
+  if [ -z "${DOWNLOAD_URL:-}" ]; then
+    DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep -E "sratim-(debian12|ubuntu24.04)-x86_64-baseline" | head -n1 | cut -d '"' -f 4 || true)
   fi
 elif [ "$ARCH" = "aarch64" ]; then
-  DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-ubuntu-aarch64-neoverse_n1" | cut -d '"' -f 4)
+  DOWNLOAD_URL=$(curl -s "$API_URL" | grep "browser_download_url" | grep "sratim-ubuntu-aarch64-neoverse_n1" | cut -d '"' -f 4 || true)
 fi
 
 if [ -z "$DOWNLOAD_URL" ]; then

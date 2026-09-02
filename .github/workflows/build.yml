@@ -20,59 +20,24 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: Arch Linux x86_64
+          - name: Linux x86_64 (Baseline)
+            os: ubuntu-latest
+            container: ubuntu:22.04
+            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git libsqlite3-dev curl xz-utils pkg-config
+            zig_cpu: baseline
+            artifact_name: sratim-linux-x86_64-baseline
+            binary_name: sratim-linux-x86_64-baseline
+          - name: Arch Linux x86_64 (Silvermont)
             os: ubuntu-latest
             container: archlinux:base-devel
-            setup_cmd: pacman -Syu --needed --noconfirm git sqlite ffmpeg curl tar xz pkgconf
+            setup_cmd: pacman -Syu --needed --noconfirm git sqlite curl tar xz pkgconf
             zig_cpu: silvermont
             artifact_name: sratim-arch-n3150
             binary_name: sratim-archlinux-x86_64-silvermont
-          - name: Debian 11 (Bullseye) x86_64
-            os: ubuntu-latest
-            container: debian:11
-            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git libsqlite3-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev curl xz-utils pkg-config
-            zig_cpu: baseline
-            artifact_name: sratim-debian11-x86_64
-            binary_name: sratim-debian11-x86_64-baseline
-          - name: Debian 12 (Bookworm) x86_64
-            os: ubuntu-latest
-            container: debian:12
-            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git libsqlite3-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev curl xz-utils pkg-config
-            zig_cpu: baseline
-            artifact_name: sratim-debian12-x86_64
-            binary_name: sratim-debian12-x86_64-baseline
-          - name: Debian 13 (Trixie) x86_64
-            os: ubuntu-latest
-            container: debian:trixie
-            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git libsqlite3-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev curl xz-utils pkg-config
-            zig_cpu: baseline
-            artifact_name: sratim-debian13-x86_64
-            binary_name: sratim-debian13-x86_64-baseline
-          - name: Ubuntu 22.04 LTS x86_64
-            os: ubuntu-latest
-            container: ubuntu:22.04
-            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git libsqlite3-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev curl xz-utils pkg-config
-            zig_cpu: baseline
-            artifact_name: sratim-ubuntu22.04-x86_64
-            binary_name: sratim-ubuntu22.04-x86_64-baseline
-          - name: Ubuntu 24.04 LTS x86_64
-            os: ubuntu-latest
-            container: ubuntu:24.04
-            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git libsqlite3-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev curl xz-utils pkg-config
-            zig_cpu: baseline
-            artifact_name: sratim-ubuntu24.04-x86_64
-            binary_name: sratim-ubuntu24.04-x86_64-baseline
-          - name: Ubuntu 26.04 LTS x86_64
-            os: ubuntu-latest
-            container: ubuntu:26.04
-            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git libsqlite3-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev curl xz-utils pkg-config
-            zig_cpu: baseline
-            artifact_name: sratim-ubuntu26.04-x86_64
-            binary_name: sratim-ubuntu26.04-x86_64-baseline
           - name: Ubuntu 26.04 LTS ARM64 (Ampere)
             os: ubuntu-24.04-arm
             container: ubuntu:26.04
-            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git libsqlite3-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev curl xz-utils pkg-config
+            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git libsqlite3-dev curl xz-utils pkg-config
             zig_cpu: neoverse_n1
             artifact_name: sratim-ubuntu-aarch64
             binary_name: sratim-ubuntu-aarch64-neoverse_n1
@@ -148,6 +113,18 @@ jobs:
       - name: Prepare Release Assets
         run: |
           chmod +x ./artifacts/*
+          # Create backward-compatibility copies for existing installation scripts
+          if [ -f ./artifacts/sratim-linux-x86_64-baseline ]; then
+            for legacy in \
+              sratim-debian11-x86_64-baseline \
+              sratim-debian12-x86_64-baseline \
+              sratim-debian13-x86_64-baseline \
+              sratim-ubuntu22.04-x86_64-baseline \
+              sratim-ubuntu24.04-x86_64-baseline \
+              sratim-ubuntu26.04-x86_64-baseline; do
+              cp ./artifacts/sratim-linux-x86_64-baseline ./artifacts/$legacy
+            done
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
