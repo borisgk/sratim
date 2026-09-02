@@ -4,12 +4,12 @@ const types = @import("../mkv/types.zig");
 const block_reader = @import("../mkv/block_reader.zig");
 const eac3_dec = @import("eac3_dec.zig");
 const test_report = @import("test_report.zig");
-const c = @import("../../../core/c.zig").c;
 
 pub fn runEac3Test(
     allocator: std.mem.Allocator,
     io: std.Io,
     file_path: [:0]const u8,
+    ref_path: []const u8,
     label: []const u8,
     report_filename: []const u8,
     expected_channels: usize,
@@ -84,112 +84,27 @@ pub fn runEac3Test(
 
     try testing.expect(num_audio_frames > 0);
 
-    // 3. Decode the same file with FFmpeg libavcodec for reference
-    var in_fmt_ctx: ?*c.AVFormatContext = null;
-    const c_file_path = try allocator.dupeZ(u8, file_path);
-    defer allocator.free(c_file_path);
+    // 3. Load pre-transcoded reference audio PCM (f32le stereo)
+    const ref_file = try std.Io.Dir.cwd().openFile(io, ref_path, .{ .mode = .read_only });
+    defer ref_file.close(io);
 
-    if (c.avformat_open_input(&in_fmt_ctx, c_file_path.ptr, null, null) < 0) return error.OpenInputFailed;
-    defer c.avformat_close_input(&in_fmt_ctx);
+    const ref_stat = try ref_file.stat(io);
+    const ref_pcm = try allocator.alloc(f32, ref_stat.size / @sizeOf(f32));
+    defer allocator.free(ref_pcm);
 
-    if (c.avformat_find_stream_info(in_fmt_ctx.?, null) < 0) return error.FindStreamInfoFailed;
-
-    var ff_audio_stream_idx: ?usize = null;
-    for (0..in_fmt_ctx.?.nb_streams) |i| {
-        if (in_fmt_ctx.?.streams[i].*.codecpar.*.codec_type == c.AVMEDIA_TYPE_AUDIO) {
-            ff_audio_stream_idx = i;
-            break;
-        }
-    }
-    try testing.expect(ff_audio_stream_idx != null);
-    const audio_stream = in_fmt_ctx.?.streams[ff_audio_stream_idx.?];
-
-    const codec = c.avcodec_find_decoder(audio_stream.*.codecpar.*.codec_id) orelse return error.DecoderNotFound;
-    var codec_ctx = c.avcodec_alloc_context3(codec) orelse return error.OutOfMemory;
-    defer c.avcodec_free_context(&codec_ctx);
-
-    if (c.avcodec_parameters_to_context(codec_ctx, audio_stream.*.codecpar) < 0) return error.ParametersToContextFailed;
-
-    if (c.avcodec_open2(codec_ctx, codec, null) < 0) return error.OpenCodecFailed;
-
-    var pkt = c.av_packet_alloc() orelse return error.OutOfMemory;
-    defer c.av_packet_free(&pkt);
-
-    var frame = c.av_frame_alloc() orelse return error.OutOfMemory;
-    defer c.av_frame_free(&frame);
-
-    var ffmpeg_pcm = std.ArrayList(f32).empty;
-    defer ffmpeg_pcm.deinit(allocator);
-
-    const LEVEL_3DB: f32 = 0.7071067811865475;
-
-    while (c.av_read_frame(in_fmt_ctx.?, pkt) >= 0) {
-        defer c.av_packet_unref(pkt);
-        if (pkt.*.stream_index == @as(c_int, @intCast(ff_audio_stream_idx.?))) {
-            if (c.avcodec_send_packet(codec_ctx, pkt) < 0) return error.SendPacketFailed;
-            while (c.avcodec_receive_frame(codec_ctx, frame) == 0) {
-                const nb_samples: usize = @intCast(frame.*.nb_samples);
-                const data = @as([*c][*c]f32, @ptrCast(&frame.*.data));
-                const ch_count = if (@hasDecl(c, "AVChannelLayout")) frame.*.ch_layout.nb_channels else frame.*.channels;
-
-                if (ch_count >= 6) {
-                    // 5.1 Surround downmix to stereo (matching ITU-R BS.775 / Eac3Decoder downmix)
-                    const l = data[0];
-                    const r = data[1];
-                    const center = data[2];
-                    const ls = data[4];
-                    const rs = data[5];
-                    for (0..nb_samples) |s| {
-                        try ffmpeg_pcm.append(allocator, l[s] + center[s] * LEVEL_3DB + ls[s] * LEVEL_3DB);
-                        try ffmpeg_pcm.append(allocator, r[s] + center[s] * LEVEL_3DB + rs[s] * LEVEL_3DB);
-                    }
-                } else {
-                    // 2.0 Stereo
-                    const ch0 = data[0];
-                    const ch1 = data[1];
-                    for (0..nb_samples) |s| {
-                        try ffmpeg_pcm.append(allocator, ch0[s]);
-                        try ffmpeg_pcm.append(allocator, ch1[s]);
-                    }
-                }
-            }
-        }
-    }
-
-    _ = c.avcodec_send_packet(codec_ctx, null);
-    while (c.avcodec_receive_frame(codec_ctx, frame) == 0) {
-        const nb_samples: usize = @intCast(frame.*.nb_samples);
-        const data = @as([*c][*c]f32, @ptrCast(&frame.*.data));
-        const ch_count = if (@hasDecl(c, "AVChannelLayout")) frame.*.ch_layout.nb_channels else frame.*.channels;
-
-        if (ch_count >= 6) {
-            const l = data[0];
-            const r = data[1];
-            const center = data[2];
-            const ls = data[4];
-            const rs = data[5];
-            for (0..nb_samples) |s| {
-                try ffmpeg_pcm.append(allocator, l[s] + center[s] * LEVEL_3DB + ls[s] * LEVEL_3DB);
-                try ffmpeg_pcm.append(allocator, r[s] + center[s] * LEVEL_3DB + rs[s] * LEVEL_3DB);
-            }
-        } else {
-            const ch0 = data[0];
-            const ch1 = data[1];
-            for (0..nb_samples) |s| {
-                try ffmpeg_pcm.append(allocator, ch0[s]);
-                try ffmpeg_pcm.append(allocator, ch1[s]);
-            }
-        }
-    }
+    const ref_bytes = std.mem.sliceAsBytes(ref_pcm);
+    var ref_buf: [65536]u8 = undefined;
+    var ref_reader = ref_file.reader(io, &ref_buf);
+    try ref_reader.interface.readSliceAll(ref_bytes);
 
     // 4. Calculate segment and overall statistics
-    // Trim priming delay (256 samples = 512 stereo floats) to align with FFmpeg
+    // Trim priming delay (256 samples = 512 stereo floats) to align with reference
     const nat_aligned = if (native_pcm.items.len >= 512)
-        native_pcm.items[512..@min(native_pcm.items.len, 512 + ffmpeg_pcm.items.len)]
+        native_pcm.items[512..@min(native_pcm.items.len, 512 + ref_pcm.len)]
     else
         native_pcm.items;
 
-    const ff_aligned = ffmpeg_pcm.items[0..nat_aligned.len];
+    const ff_aligned = ref_pcm[0..nat_aligned.len];
 
     const NUM_SEGMENTS = 10;
     const segment_stats = try test_report.calculateStats(nat_aligned, ff_aligned, 48000, NUM_SEGMENTS, 2.0, allocator);
@@ -203,8 +118,8 @@ pub fn runEac3Test(
 
     std.debug.print(
         \\[PER-CHANNEL METRICS: EAC-3 {s}]
-        \\  Left Ch:  Native RMS={d:.6}, FFmpeg RMS={d:.6} | Corr r={d:.7} | SNR={d:.2} dB
-        \\  Right Ch: Native RMS={d:.6}, FFmpeg RMS={d:.6} | Corr r={d:.7} | SNR={d:.2} dB
+        \\  Left Ch:  Native RMS={d:.6}, Ref RMS={d:.6} | Corr r={d:.7} | SNR={d:.2} dB
+        \\  Right Ch: Native RMS={d:.6}, Ref RMS={d:.6} | Corr r={d:.7} | SNR={d:.2} dB
         \\
     , .{
         label,
@@ -241,12 +156,12 @@ pub fn runEac3Test(
     try testing.expect(overall.correlation > 0.99);
 }
 
-test "Eac3Decoder test_video_eac3_stereo.mkv vs FFmpeg reference" {
+test "Eac3Decoder test_video_eac3_stereo.mkv vs pre-transcoded reference" {
     const testing = std.testing;
-    try runEac3Test(testing.allocator, testing.io, "testvideo/test_video_eac3_stereo.mkv", "2.0 Stereo", "tmp/eac3_stereo_decoding_report.html", 2);
+    try runEac3Test(testing.allocator, testing.io, "testvideo/test_video_eac3_stereo.mkv", "testvideo/test_video_eac3_stereo_ref.pcm", "2.0 Stereo", "tmp/eac3_stereo_decoding_report.html", 2);
 }
 
-test "Eac3Decoder test_video_eac3_51.mkv vs FFmpeg reference" {
+test "Eac3Decoder test_video_eac3_51.mkv vs pre-transcoded reference" {
     const testing = std.testing;
-    try runEac3Test(testing.allocator, testing.io, "testvideo/test_video_eac3_51.mkv", "5.1 Surround", "tmp/eac3_51_decoding_report.html", 6);
+    try runEac3Test(testing.allocator, testing.io, "testvideo/test_video_eac3_51.mkv", "testvideo/test_video_eac3_51_ref.pcm", "5.1 Surround", "tmp/eac3_51_decoding_report.html", 6);
 }

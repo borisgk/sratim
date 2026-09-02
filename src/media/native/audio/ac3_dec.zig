@@ -14,9 +14,9 @@ pub const bitAllocate = bit_allocation.bitAllocate;
 pub const decoder = @import("ac3/decoder.zig");
 pub const Ac3Decoder = decoder.Ac3Decoder;
 
-test "Ac3Decoder decodes 10 frames from polly_5s.ac3 with high correlation to FFmpeg" {
+test "Ac3Decoder decodes 10 frames from polly_5s.ac3 with high correlation to pre-transcoded reference" {
     const testing = std.testing;
-    const file = std.Io.Dir.cwd().openFile(testing.io, "tmp/polly_5s.ac3", .{}) catch return;
+    const file = std.Io.Dir.cwd().openFile(testing.io, "tests/polly_5s.ac3", .{}) catch return;
     defer file.close(testing.io);
 
     var buf: [15360]u8 = undefined;
@@ -33,7 +33,7 @@ test "Ac3Decoder decodes 10 frames from polly_5s.ac3 with high correlation to FF
         try testing.expectEqual(@as(usize, 1536), n_samples);
     }
 
-    const ref_file = std.Io.Dir.cwd().openFile(testing.io, "tmp/polly_5s_ref.pcm", .{}) catch return;
+    const ref_file = std.Io.Dir.cwd().openFile(testing.io, "tests/polly_5s_ref.pcm", .{}) catch return;
     defer ref_file.close(testing.io);
     var ref_buf: [122880]u8 align(@alignOf(f32)) = undefined;
     var ref_reader = ref_file.reader(testing.io, &ref_buf);
@@ -49,6 +49,6 @@ test "Ac3Decoder decodes 10 frames from polly_5s.ac3 with high correlation to FF
         norm_ref += @as(f64, r) * @as(f64, r);
     }
     const corr = dot / (std.math.sqrt(norm_nat) * std.math.sqrt(norm_ref));
-    std.debug.print("\nNative Ac3Decoder correlation with FFmpeg: {d:.6}\n", .{corr});
+    std.debug.print("\nNative Ac3Decoder correlation with reference: {d:.6}\n", .{corr});
     try testing.expect(corr > 0.95);
 }

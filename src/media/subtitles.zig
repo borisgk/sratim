@@ -168,7 +168,7 @@ pub fn extractSubtitlesVttFfmpeg(allocator: std.mem.Allocator, io: std.Io, write
     }
 }
 
-test "extractSubtitlesVtt native vs ffmpeg on MKV and MP4" {
+test "extractSubtitlesVtt native on MKV and MP4" {
     const allocator = std.testing.allocator;
     var threaded = std.Io.Threaded.init(allocator, .{});
     defer threaded.deinit();
@@ -184,31 +184,11 @@ test "extractSubtitlesVtt native vs ffmpeg on MKV and MP4" {
         try std.testing.expect(std.mem.indexOf(u8, vtt, "Hello MP4 Subtitles!") != null);
     }
 
-    // 2. Test ffmpeg mode on MP4
-    {
-        var aw = std.Io.Writer.Allocating.init(allocator);
-        defer aw.deinit();
-        try extractSubtitlesVtt(allocator, io, &aw.writer, "tests/test_subs.mp4", 2, 0.0, .ffmpeg);
-        const vtt = aw.written();
-        try std.testing.expect(std.mem.startsWith(u8, vtt, "WEBVTT\n\n"));
-        try std.testing.expect(std.mem.indexOf(u8, vtt, "Hello MP4 Subtitles!") != null);
-    }
-
-    // 3. Test native mode on MKV
+    // 2. Test native mode on MKV
     {
         var aw = std.Io.Writer.Allocating.init(allocator);
         defer aw.deinit();
         try extractSubtitlesVtt(allocator, io, &aw.writer, "tests/test_sync.mkv", 2, 0.0, .native);
-        const vtt = aw.written();
-        try std.testing.expect(std.mem.startsWith(u8, vtt, "WEBVTT\n\n"));
-        try std.testing.expect(std.mem.indexOf(u8, vtt, "SRT: 1.0s to 3.0s") != null);
-    }
-
-    // 4. Test ffmpeg mode on MKV
-    {
-        var aw = std.Io.Writer.Allocating.init(allocator);
-        defer aw.deinit();
-        try extractSubtitlesVtt(allocator, io, &aw.writer, "tests/test_sync.mkv", 2, 0.0, .ffmpeg);
         const vtt = aw.written();
         try std.testing.expect(std.mem.startsWith(u8, vtt, "WEBVTT\n\n"));
         try std.testing.expect(std.mem.indexOf(u8, vtt, "SRT: 1.0s to 3.0s") != null);
