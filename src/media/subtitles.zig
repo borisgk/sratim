@@ -1,6 +1,4 @@
 const std = @import("std");
-const c = @import("../core/c.zig").c;
-const streamer = @import("streamer.zig");
 const native_subtitles = @import("native/subtitles.zig");
 const config_mod = @import("../config.zig");
 
@@ -11,161 +9,13 @@ pub const SubtitleTrack = struct {
     language: []const u8,
 };
 
-const formatVttTime = native_subtitles.formatVttTime;
-const cleanAssText = native_subtitles.cleanAssText;
+pub const formatVttTime = native_subtitles.formatVttTime;
+pub const cleanAssText = native_subtitles.cleanAssText;
 
-/// Dispatches subtitle extraction based on configured EngineMode.
-/// When mode is .native, uses pure Zig extractors without falling back to FFmpeg.
+/// Dispatches subtitle extraction directly using pure Zig extractors.
 pub fn extractSubtitlesVtt(allocator: std.mem.Allocator, io: std.Io, writer: anytype, file_path: [:0]const u8, stream_idx: usize, start_offset: f64, mode: config_mod.EngineMode) !void {
-    if (mode == .native) {
-        native_subtitles.extractNativeSubtitlesVtt(allocator, io, writer, file_path, stream_idx, start_offset) catch |err| {
-            if (err == error.WriteFailed or err == error.BrokenPipe or err == error.ConnectionResetByPeer or err == error.NotOpenForWriting) {
-                return err;
-            }
-            std.debug.print("Native subtitle extraction failed: {}\n", .{err});
-            return err;
-        };
-        return;
-    }
-    return extractSubtitlesVttFfmpeg(allocator, io, writer, file_path, stream_idx, start_offset);
-}
-
-/// Native libavcodec / libavformat subtitle extraction directly to an HTTP or string writer.
-pub fn extractSubtitlesVttFfmpeg(allocator: std.mem.Allocator, io: std.Io, writer: anytype, file_path: [:0]const u8, stream_idx: usize, start_offset: f64) !void {
-    _ = io;
-    
-    std.debug.print("Starting FFmpeg subtitle extraction for {s}, stream_idx: {}, start_offset: {d}\n", .{file_path, stream_idx, start_offset});
-
-    var opts: ?*c.AVDictionary = null;
-    _ = c.av_dict_set(&opts, "buffer_size", "524288", 0);
-    _ = c.av_dict_set(&opts, "probesize", "1048576", 0);
-    _ = c.av_dict_set(&opts, "analyzeduration", "1000000", 0);
-    defer c.av_dict_free(@ptrCast(&opts));
-
-    var fmt_ctx: ?*c.AVFormatContext = null;
-    if (c.avformat_open_input(@ptrCast(&fmt_ctx), file_path.ptr, null, &opts) < 0) return error.OpenFailed;
-    defer c.avformat_close_input(@ptrCast(&fmt_ctx));
-
-    fmt_ctx.?.max_analyze_duration = 1000000;
-    fmt_ctx.?.fps_probe_size = 0;
-
-    for (0..fmt_ctx.?.nb_streams) |i| {
-        if (i != stream_idx) {
-            fmt_ctx.?.streams[i].*.discard = c.AVDISCARD_ALL;
-        } else {
-            fmt_ctx.?.streams[i].*.discard = c.AVDISCARD_NONE;
-        }
-    }
-
-    if (c.avformat_find_stream_info(fmt_ctx.?, null) < 0) return error.StreamInfoFailed;
-
-    if (stream_idx >= fmt_ctx.?.nb_streams) return error.InvalidStreamIndex;
-    const stream = fmt_ctx.?.streams[stream_idx];
-    if (stream.*.codecpar.*.codec_type != c.AVMEDIA_TYPE_SUBTITLE) return error.NotASubtitleStream;
-
-    if (start_offset > 0.0) {
-        const seek_pts = @as(i64, @intFromFloat(@max(0.0, start_offset - 30.0) * c.AV_TIME_BASE));
-        _ = c.av_seek_frame(fmt_ctx.?, -1, seek_pts, c.AVSEEK_FLAG_BACKWARD);
-    }
-
-    try writer.writeAll("WEBVTT\n\n");
-
-    const codec = c.avcodec_find_decoder(stream.*.codecpar.*.codec_id);
-    var dec_ctx: ?*c.AVCodecContext = null;
-    if (codec != null) {
-        dec_ctx = c.avcodec_alloc_context3(codec);
-        if (dec_ctx != null) {
-            _ = c.avcodec_parameters_to_context(dec_ctx.?, stream.*.codecpar);
-            if (c.avcodec_open2(dec_ctx.?, codec, null) < 0) {
-                c.avcodec_free_context(@ptrCast(&dec_ctx));
-                dec_ctx = null;
-            }
-        }
-    }
-    defer if (dec_ctx != null) c.avcodec_free_context(@ptrCast(&dec_ctx));
-
-    var pkt = c.av_packet_alloc() orelse return error.OutOfMemory;
-    defer c.av_packet_free(@ptrCast(&pkt));
-
-    const tb = stream.*.time_base;
-    const tb_sec = c.av_q2d(tb);
-
-    while (c.av_read_frame(fmt_ctx.?, pkt) >= 0) {
-        defer c.av_packet_unref(pkt);
-        std.Thread.yield() catch {};
-
-        if (@as(usize, @intCast(pkt.*.stream_index)) != stream_idx) continue;
-
-        var start_pts_sec: f64 = 0.0;
-        const pts_val = if (pkt.*.pts != c.AV_NOPTS_VALUE) pkt.*.pts else pkt.*.dts;
-        if (pts_val != c.AV_NOPTS_VALUE) {
-            start_pts_sec = @as(f64, @floatFromInt(pts_val)) * tb_sec;
-        }
-
-        const duration_sec: f64 = if (pkt.*.duration > 0) @as(f64, @floatFromInt(pkt.*.duration)) * tb_sec else 3.0;
-
-        if (dec_ctx != null) {
-            var sub: c.AVSubtitle = undefined;
-            @memset(std.mem.asBytes(&sub), 0);
-            var got_sub: c_int = 0;
-
-            if (c.avcodec_decode_subtitle2(dec_ctx.?, &sub, &got_sub, pkt) >= 0 and got_sub != 0) {
-                defer c.avsubtitle_free(&sub);
-
-                const cue_start = start_pts_sec + (@as(f64, @floatFromInt(sub.start_display_time)) / 1000.0);
-                var cue_end = start_pts_sec + (@as(f64, @floatFromInt(sub.end_display_time)) / 1000.0);
-                if (cue_end <= cue_start) {
-                    cue_end = cue_start + duration_sec;
-                }
-
-                var text_buf: std.ArrayList(u8) = .empty;
-                defer text_buf.deinit(allocator);
-
-                for (0..sub.num_rects) |r| {
-                    const rect = sub.rects[r].*;
-                    if (rect.text != null) {
-                        const raw_str = std.mem.span(rect.text);
-                        try cleanAssText(&text_buf, allocator, raw_str);
-                    } else if (rect.ass != null) {
-                        const raw_str = std.mem.span(rect.ass);
-                        try cleanAssText(&text_buf, allocator, raw_str);
-                    }
-                }
-
-                const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
-                if (trimmed.len > 0) {
-                    try formatVttTime(writer, cue_start);
-                    try writer.writeAll(" --> ");
-                    try formatVttTime(writer, cue_end);
-                    try writer.writeAll("\n");
-                    try writer.writeAll(trimmed);
-                    try writer.writeAll("\n\n");
-                }
-                continue;
-            }
-            continue;
-        }
-
-        if (pkt.*.size > 0 and pkt.*.data != null) {
-            const raw_pkt_slice = pkt.*.data[0..@intCast(pkt.*.size)];
-            const cue_start = start_pts_sec;
-            const cue_end = start_pts_sec + duration_sec;
-
-            var text_buf: std.ArrayList(u8) = .empty;
-            defer text_buf.deinit(allocator);
-            try cleanAssText(&text_buf, allocator, raw_pkt_slice);
-
-            const trimmed = std.mem.trim(u8, text_buf.items, " \t\r\n");
-            if (trimmed.len > 0) {
-                try formatVttTime(writer, cue_start);
-                try writer.writeAll(" --> ");
-                try formatVttTime(writer, cue_end);
-                try writer.writeAll("\n");
-                try writer.writeAll(trimmed);
-                try writer.writeAll("\n\n");
-            }
-        }
-    }
+    _ = mode;
+    return native_subtitles.extractNativeSubtitlesVtt(allocator, io, writer, file_path, stream_idx, start_offset);
 }
 
 test "extractSubtitlesVtt native on MKV and MP4" {

@@ -115,7 +115,6 @@ test "StreamAudioTranscoder decodes 6-channel EAC3 from Reacher.mkv and encodes 
     defer transcoder.deinit();
 
     try testing.expect(transcoder.is_pure_native);
-    try testing.expect(transcoder.ffmpeg_state == null);
     try testing.expect(transcoder.native_eac3_dec != null);
 
     const demux_file = try std.Io.Dir.cwd().openFile(io, test_file, .{ .mode = .read_only });
@@ -193,7 +192,6 @@ test "StreamAudioTranscoder decodes 6-channel AAC from Tuner.mkv and downmixes/e
     defer transcoder.deinit();
 
     try testing.expect(transcoder.is_pure_native);
-    try testing.expect(transcoder.ffmpeg_state == null);
     try testing.expect(transcoder.native_aac_dec != null);
 
     const demux_file = try std.Io.Dir.cwd().openFile(io, test_file, .{ .mode = .read_only });
@@ -272,7 +270,6 @@ test "StreamAudioTranscoder decodes 6-channel AC3 from Polly.mkv and encodes to 
     defer transcoder.deinit();
 
     try testing.expect(transcoder.is_pure_native);
-    try testing.expect(transcoder.ffmpeg_state == null);
     try testing.expect(transcoder.native_ac3_dec != null);
 
     const demux_file = try std.Io.Dir.cwd().openFile(io, test_file, .{ .mode = .read_only });

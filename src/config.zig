@@ -12,21 +12,21 @@ pub const EngineMode = enum {
         const token = try source.next();
         switch (token) {
             .string => |str| {
-                if (std.mem.eql(u8, str, "native") or std.mem.eql(u8, str, "pure_zig") or std.mem.eql(u8, str, "zig")) {
-                    return .native;
+                if (std.mem.eql(u8, str, "ffmpeg")) {
+                    return .ffmpeg;
                 }
-                return .ffmpeg;
+                return .native;
             },
-            else => return .ffmpeg,
+            else => return .native,
         }
     }
 };
 
 pub const MediaEngineConfig = struct {
-    subtitles: EngineMode = .ffmpeg,
-    metadata: EngineMode = .ffmpeg,
-    streamer: EngineMode = .ffmpeg,
-    audio_transcoder: EngineMode = .ffmpeg,
+    subtitles: EngineMode = .native,
+    metadata: EngineMode = .native,
+    streamer: EngineMode = .native,
+    audio_transcoder: EngineMode = .native,
 };
 
 pub const Config = struct {

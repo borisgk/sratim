@@ -58,6 +58,18 @@
             return currentSeekTime + video.currentTime;
         }
 
+        function showFormatError(msg) {
+            const overlay = document.getElementById('error-overlay');
+            const msgEl = document.getElementById('error-message');
+            if (msgEl && msg) msgEl.textContent = msg;
+            if (overlay) overlay.classList.remove('hidden');
+        }
+
+        function hideFormatError() {
+            const overlay = document.getElementById('error-overlay');
+            if (overlay) overlay.classList.add('hidden');
+        }
+
         function formatTime(seconds) {
             const m = Math.floor(seconds / 60);
             const s = Math.floor(seconds % 60);
@@ -354,6 +366,11 @@
                 try {
                     const audioParam = currentAudioIdx >= 0 ? `&audio=${currentAudioIdx}` : '';
                     const response = await fetch(`/stream?${MEDIA_QUERY}&start=${startTime}${audioParam}`, { signal });
+                    if (!response.ok) {
+                        const errMsg = await response.text();
+                        showFormatError(errMsg || 'This media format is not supported for native playback.');
+                        return;
+                    }
                     if (window.__onStreamResponse) {
                         window.__onStreamResponse(response);
                     }
@@ -449,6 +466,7 @@
             },
 
             loadVideo(startTime, retryCount) {
+                hideFormatError();
                 if (seekDebounceTimeout) {
                     clearTimeout(seekDebounceTimeout);
                     seekDebounceTimeout = null;

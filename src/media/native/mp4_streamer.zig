@@ -6,6 +6,53 @@ const transcoder_mod = @import("../transcoder.zig");
 const track_parser = @import("mkv/track_parser.zig");
 const config_mod = @import("../../config.zig");
 
+/// Checks whether an MP4 file can be streamed natively (valid tracks and supported audio).
+pub fn canStreamMp4Natively(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    file_path: [:0]const u8,
+    audio_idx_requested: c_int,
+) bool {
+    var media = isobmff.parseMp4Media(allocator, io, file_path) catch return false;
+    defer media.deinit(allocator);
+
+    const video_track = media.video_track orelse return false;
+    if (video_track.samples.len == 0) return false;
+
+    var selected_audio_track: ?isobmff.Mp4MediaTrack = null;
+    if (media.audio_tracks.len > 0) {
+        if (audio_idx_requested >= 0) {
+            for (media.audio_tracks) |at| {
+                if (@as(c_int, @intCast(at.stream_idx)) == audio_idx_requested) {
+                    selected_audio_track = at;
+                    break;
+                }
+            }
+        }
+        if (selected_audio_track == null) {
+            selected_audio_track = media.audio_tracks[0];
+        }
+    }
+
+    if (selected_audio_track) |at| {
+        var audio_fourcc: [4]u8 = "mp4a".*;
+        var audio_channels: u16 = 2;
+        if (at.stsd_raw.len >= 24) {
+            audio_fourcc = at.stsd_raw[20..24].*;
+            if (at.stsd_raw.len >= 34) {
+                audio_channels = std.mem.readInt(u16, at.stsd_raw[32..34], .big);
+            }
+        }
+        if (!std.mem.eql(u8, &audio_fourcc, "mp4a") or audio_channels > 2) {
+            if (!transcoder_mod.StreamAudioTranscoder.isNativeSupportedCodec(&audio_fourcc)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
 /// Slices an existing MP4 file into a byte-compatible fMP4 stream starting at the nearest keyframe.
 pub fn streamMp4(
     allocator: std.mem.Allocator,
@@ -16,6 +63,7 @@ pub fn streamMp4(
     http_ctx: *streamer.HttpStreamContext,
     audio_transcoder_mode: config_mod.EngineMode,
 ) !void {
+    _ = audio_transcoder_mode;
     var media = try isobmff.parseMp4Media(allocator, io, file_path);
     defer media.deinit(allocator);
 
@@ -65,15 +113,13 @@ pub fn streamMp4(
 
     if (selected_audio_track) |at| {
         if (needs_audio_transcode) {
-            const use_native_enc = (audio_transcoder_mode == .native);
             var audio_desc_buf: [128]u8 = undefined;
-            const audio_desc = if (use_native_enc)
-                (if (std.mem.eql(u8, &audio_fourcc, "ac-3"))
-                    std.fmt.bufPrint(&audio_desc_buf, "Pure Zig AC-3 ({d}ch) -> Pure Zig AAC-LC", .{audio_channels})
-                else
-                    std.fmt.bufPrint(&audio_desc_buf, "Inline decode ({s}, {d}ch) -> Pure Zig AAC-LC", .{ &audio_fourcc, audio_channels })) catch "Inline decode -> Pure Zig AAC-LC"
+            const audio_desc = (if (std.mem.eql(u8, &audio_fourcc, "ac-3"))
+                std.fmt.bufPrint(&audio_desc_buf, "Pure Zig AC-3 ({d}ch) -> Pure Zig AAC-LC", .{audio_channels})
+            else if (std.mem.eql(u8, &audio_fourcc, "ec-3"))
+                std.fmt.bufPrint(&audio_desc_buf, "Pure Zig E-AC-3 ({d}ch) -> Pure Zig AAC-LC", .{audio_channels})
             else
-                std.fmt.bufPrint(&audio_desc_buf, "Inline FFmpeg ({s}, {d}ch -> Stereo AAC)", .{ &audio_fourcc, audio_channels }) catch "Inline FFmpeg";
+                std.fmt.bufPrint(&audio_desc_buf, "Native Audio Transcode ({s}, {d}ch)", .{ &audio_fourcc, audio_channels })) catch "Native Audio Transcode";
             streamer.logStreamStatus(file_path, audio_idx_requested, "Native MP4 Slicer", "Zero-copy passthrough", audio_desc);
 
             audio_transcoder = try transcoder_mod.StreamAudioTranscoder.initFromCodec(
@@ -81,7 +127,7 @@ pub fn streamMp4(
                 null,
                 audio_channels,
                 at.timescale,
-                use_native_enc,
+                true,
             );
             synthetic_aac_stsd = try track_parser.buildAacStsd(allocator, &[_]u8{ 0x11, 0x90 }, 2, 48000);
             mux_audio_track_opt = isobmff.Mp4MediaTrack{

@@ -64,7 +64,7 @@ pub fn canStreamMkvNatively(
 
     if (audio_track_opt) |at| {
         const is_native_aac = (at.stsd_raw != null and at.channels <= 2);
-        const is_transcodable = (transcoder_mod.StreamAudioTranscoder.mapCodecId(at.codec_id) != null);
+        const is_transcodable = transcoder_mod.StreamAudioTranscoder.isNativeSupportedCodec(at.codec_id);
         if (!is_native_aac and !is_transcodable) return false;
     }
 
@@ -95,6 +95,7 @@ pub fn streamMkvGeneric(
     max_fragments: ?usize,
     audio_transcoder_mode: config_mod.EngineMode,
 ) !void {
+    _ = audio_transcoder_mode;
     const tracks = try track_parser.parseMkvTracks(allocator, io, file_path);
     defer {
         for (tracks) |*t| {
@@ -164,19 +165,15 @@ pub fn streamMkvGeneric(
 
     if (needs_audio_transcode) {
         const at = audio_track_opt.?;
-        const use_native_enc = (audio_transcoder_mode == .native);
         var audio_desc_buf: [128]u8 = undefined;
-        const audio_desc = if (use_native_enc)
-            (if (std.mem.eql(u8, at.codec_id, "A_AC3"))
-                std.fmt.bufPrint(&audio_desc_buf, "Pure Zig AC-3 ({d}ch) -> Pure Zig AAC-LC", .{at.channels})
-            else if (std.mem.eql(u8, at.codec_id, "A_EAC3"))
-                std.fmt.bufPrint(&audio_desc_buf, "Pure Zig E-AC-3 ({d}ch) -> Pure Zig AAC-LC", .{at.channels})
-            else if (std.mem.eql(u8, at.codec_id, "A_AAC"))
-                std.fmt.bufPrint(&audio_desc_buf, "Pure Zig Multichannel AAC-LC ({d}ch) -> Pure Zig AAC-LC", .{at.channels})
-            else
-                std.fmt.bufPrint(&audio_desc_buf, "Inline decode ({s}, {d}ch) -> Pure Zig AAC-LC", .{ at.codec_id, at.channels })) catch "Inline decode -> Pure Zig AAC-LC"
+        const audio_desc = (if (std.mem.eql(u8, at.codec_id, "A_AC3"))
+            std.fmt.bufPrint(&audio_desc_buf, "Pure Zig AC-3 ({d}ch) -> Pure Zig AAC-LC", .{at.channels})
+        else if (std.mem.eql(u8, at.codec_id, "A_EAC3"))
+            std.fmt.bufPrint(&audio_desc_buf, "Pure Zig E-AC-3 ({d}ch) -> Pure Zig AAC-LC", .{at.channels})
+        else if (std.mem.eql(u8, at.codec_id, "A_AAC"))
+            std.fmt.bufPrint(&audio_desc_buf, "Pure Zig Multichannel AAC-LC ({d}ch) -> Pure Zig AAC-LC", .{at.channels})
         else
-            std.fmt.bufPrint(&audio_desc_buf, "Inline FFmpeg ({s}, {d}ch -> Stereo AAC)", .{ at.codec_id, at.channels }) catch "Inline FFmpeg";
+            std.fmt.bufPrint(&audio_desc_buf, "Native Audio Transcode ({s}, {d}ch)", .{ at.codec_id, at.channels })) catch "Native Audio Transcode";
         streamer.logStreamStatus(file_path, audio_idx_requested, "Native MKV Slicer", "Zero-copy passthrough", audio_desc);
 
         audio_transcoder = try transcoder_mod.StreamAudioTranscoder.initFromCodec(
@@ -184,7 +181,7 @@ pub fn streamMkvGeneric(
             at.codec_private,
             at.channels,
             at.sample_rate,
-            use_native_enc,
+            true,
         );
         synthetic_aac_stsd = try track_parser.buildAacStsd(allocator, &[_]u8{ 0x11, 0x90 }, 2, 48000);
     } else if (audio_track_opt != null) {
@@ -582,21 +579,24 @@ test "generate MKV fMP4 fragments for Along Came Polly with AC3 5.1" {
     try out_writer.flush();
 }
 
-test "generate MKV fMP4 fragments for Night at the Museum with DTS 5.1" {
+test "verify canStreamMkvNatively rejects Night at the Museum DTS 5.1" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
+    const museum_path = "/Users/borisk/Movies/Sratim/Movies/Ночь в музее_Секрет гробницы.1080p. Ton.mkv";
     const out_file = std.Io.Dir.cwd().createFile(io, "tmp/mkv_test_dts_out.mp4", .{}) catch return;
     defer out_file.close(io);
 
     var out_buf: [65536]u8 = undefined;
     var out_writer = out_file.writer(io, &out_buf);
 
+    try std.testing.expect(!canStreamMkvNatively(allocator, io, museum_path, 1));
+
     var has_error = false;
-    try streamMkvGeneric(
+    const res = streamMkvGeneric(
         allocator,
         io,
-        "/Users/borisk/Movies/Sratim/Movies/Ночь в музее_Секрет гробницы.1080p. Ton.mkv",
+        museum_path,
         0.0,
         1, // DTS 5.1 track
         &out_writer.interface,
@@ -604,7 +604,7 @@ test "generate MKV fMP4 fragments for Night at the Museum with DTS 5.1" {
         3, // 3 fragments
         .native,
     );
-    try out_writer.flush();
+    try std.testing.expectError(error.UnsupportedAudioCodec, res);
 }
 
 test "generate MKV fMP4 fragments for Fiddler on the Roof with AC3 2.0" {
@@ -632,21 +632,24 @@ test "generate MKV fMP4 fragments for Fiddler on the Roof with AC3 2.0" {
     try out_writer.flush();
 }
 
-test "generate MKV fMP4 fragments for Fiddler on the Roof with DTS 5.1" {
+test "verify canStreamMkvNatively rejects Fiddler on the Roof DTS 5.1" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
+    const fiddler_path = "/Users/borisk/Movies/Sratim/Movies/Fiddler.on.the.Roof.1971.1080p.BluRay.x264-DiVULGED.mkv";
     const out_file = std.Io.Dir.cwd().createFile(io, "tmp/mkv_test_fiddler_dts_out.mp4", .{}) catch return;
     defer out_file.close(io);
 
     var out_buf: [65536]u8 = undefined;
     var out_writer = out_file.writer(io, &out_buf);
 
+    try std.testing.expect(!canStreamMkvNatively(allocator, io, fiddler_path, 1));
+
     var has_error = false;
-    try streamMkvGeneric(
+    const res = streamMkvGeneric(
         allocator,
         io,
-        "/Users/borisk/Movies/Sratim/Movies/Fiddler.on.the.Roof.1971.1080p.BluRay.x264-DiVULGED.mkv",
+        fiddler_path,
         0.0,
         1, // DTS 5.1 track
         &out_writer.interface,
@@ -654,8 +657,7 @@ test "generate MKV fMP4 fragments for Fiddler on the Roof with DTS 5.1" {
         3, // 3 fragments
         .native,
     );
-    try out_writer.flush();
-    try std.testing.expect(!has_error);
+    try std.testing.expectError(error.UnsupportedAudioCodec, res);
 }
 
 test "compare seek in Sof Ha Olam Smola AAC vs AC3" {

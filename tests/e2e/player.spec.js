@@ -24,15 +24,18 @@ test.describe('Video Player Playback & Streaming Tests', () => {
       const libRes = await page.request.get('/api/v1/libraries');
       if (libRes.ok()) {
         const libData = await libRes.json();
-        const movieLibs = (libData.libraries || []).filter(l => l.lib_type !== 'Shows' && l.type !== 'Shows');
-        for (const lib of (movieLibs.length > 0 ? movieLibs : libData.libraries)) {
+        const movieLibs = (libData.libraries || []).filter(l => l.lib_type === 'Movies' || l.type === 'Movies');
+        const candidateLibs = movieLibs.length > 0 ? movieLibs : (libData.libraries || []).filter(l => l.lib_type !== 'Shows' && l.type !== 'Shows');
+        let selectedMovie = false;
+        for (const lib of candidateLibs) {
           const itemsRes = await page.request.get(`/api/v1/library?id=${lib.id}`);
           if (itemsRes.ok()) {
             const itemsData = await itemsRes.json();
             const items = itemsData.updates || itemsData.items || [];
             if (items.length > 0) {
-              if (targetMovieId === 25) {
+              if (!selectedMovie) {
                 targetMovieId = items[0].id;
+                selectedMovie = true;
               }
               for (const item of items) {
                 if (item.title && (item.title.toLowerCase().includes('.mp4') || item.title.toLowerCase().includes('oklahoma'))) {
@@ -42,7 +45,7 @@ test.describe('Video Player Playback & Streaming Tests', () => {
               }
             }
           }
-          if (targetMp4MovieId && targetMp4MovieId !== 1673) break;
+          if (selectedMovie && targetMp4MovieId) break;
         }
       }
     } catch (_) {}

@@ -7,16 +7,12 @@ const logging_mod = @import("db/logging.zig");
 const library_mod = @import("db/library.zig");
 const scanner_mod = @import("db/scanner.zig");
 const fetcher = @import("media/fetcher.zig");
-const c = @import("core/c.zig").c;
 
 /// The application entry point.
 /// Initializes the asynchronous I/O backend and starts accepting incoming HTTP connections.
 pub var app_dir: std.Io.Dir = undefined;
 
 pub fn main() !void {
-    // Suppress FFmpeg informational logs and warnings to keep the terminal clean
-    c.av_log_set_level(c.AV_LOG_ERROR);
-
     // Initialize the thread-based asynchronous I/O backend (uses epoll/kqueue under the hood)
     var t = std.Io.Threaded.init(std.heap.c_allocator, .{});
     const io = t.io();

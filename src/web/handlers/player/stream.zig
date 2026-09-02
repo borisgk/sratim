@@ -7,6 +7,8 @@ const config_mod = @import("../../../config.zig");
 const utils = @import("../../utils.zig");
 const common = @import("common.zig");
 const isobmff = @import("../../../media/native/isobmff.zig");
+const mp4_streamer = @import("../../../media/native/mp4_streamer.zig");
+const mkv_streamer = @import("../../../media/native/mkv/mkv_streamer.zig");
 
 /// Handles the media stream endpoint (/stream).
 pub fn handleStream(
@@ -61,6 +63,38 @@ pub fn handleStream(
 
     const start_time = utils.parseQueryFloat(target, "start") orelse 0;
     const audio_idx = utils.parseQueryInt(c_int, target, "audio") orelse -1;
+
+    // Validate that media container and selected streams can be natively parsed and streamed
+    const z_path = try allocator.dupeZ(u8, res_media.resolved_path);
+    defer allocator.free(z_path);
+
+    var is_supported = false;
+    {
+        const file = std.Io.Dir.cwd().openFile(io, z_path, .{ .mode = .read_only }) catch null;
+        if (file) |f| {
+            defer f.close(io);
+            var file_buf: [1024]u8 = undefined;
+            var file_reader = f.reader(io, &file_buf);
+            var magic_buf: [16]u8 = undefined;
+            const bytes_read = file_reader.interface.readSliceShort(&magic_buf) catch 0;
+            if (bytes_read >= 8 and isobmff.isMp4Container(magic_buf[0..bytes_read])) {
+                is_supported = mp4_streamer.canStreamMp4Natively(allocator, io, z_path, audio_idx);
+            } else if (bytes_read >= 4 and magic_buf[0] == 0x1A and magic_buf[1] == 0x45 and magic_buf[2] == 0xDF and magic_buf[3] == 0xA3) {
+                is_supported = mkv_streamer.canStreamMkvNatively(allocator, io, z_path, audio_idx);
+            }
+        }
+    }
+
+    if (!is_supported) {
+        try request.respond("Unsupported media container or codec for native streaming.", .{
+            .status = .unsupported_media_type,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "text/plain" },
+                .{ .name = "access-control-allow-origin", .value = "*" },
+            },
+        });
+        return;
+    }
 
     const actual_start = media_metadata.getKeyframePts(io, resolved.?.resolved_path, start_time, audio_idx, config.media_engine.metadata);
     var actual_start_buf: [32]u8 = undefined;

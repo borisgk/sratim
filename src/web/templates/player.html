@@ -21,6 +21,20 @@ __STATS_CSS__
             <button id="stopcastbtn" class="stop-cast-btn">Disconnect Cast</button>
         </div>
 
+        <div id="error-overlay" class="error-overlay hidden">
+            <div class="error-box">
+                <div class="error-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="48" height="48">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                </div>
+                <div class="error-title">Format Not Supported</div>
+                <div class="error-message" id="error-message">This video or audio format is not supported for native playback.</div>
+            </div>
+        </div>
+
         <div class="controls">
             <button id="playpause">
                 <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>

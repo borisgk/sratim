@@ -72,10 +72,6 @@ pub fn build(b: *std.Build) void {
     }
 
     exe.root_module.link_libc = true;
-    exe.root_module.linkSystemLibrary("libavformat", .{});
-    exe.root_module.linkSystemLibrary("libavcodec", .{});
-    exe.root_module.linkSystemLibrary("libavutil", .{});
-    exe.root_module.linkSystemLibrary("libswresample", .{});
     exe.root_module.linkSystemLibrary("sqlite3", .{});
 
     // This declares intent for the executable to be installed into the
@@ -140,10 +136,6 @@ pub fn build(b: *std.Build) void {
     audio_test_mod.addImport("httpx", httpx_dep.module("httpx"));
     audio_test_mod.addOptions("build_options", audio_options);
     audio_test_mod.link_libc = true;
-    audio_test_mod.linkSystemLibrary("libavformat", .{});
-    audio_test_mod.linkSystemLibrary("libavcodec", .{});
-    audio_test_mod.linkSystemLibrary("libavutil", .{});
-    audio_test_mod.linkSystemLibrary("libswresample", .{});
     audio_test_mod.linkSystemLibrary("sqlite3", .{});
 
     // Dedicated test step for standalone AC-3 decoding validation with visual reporting

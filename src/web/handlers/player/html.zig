@@ -108,10 +108,14 @@ pub fn handlePlayer(
     try sub_json_out.appendSlice(allocator, "]");
 
     const start_opt = utils.parseQueryFloat(target, "start");
-    const resume_pos = if (start_opt) |s| s else if (movie_id != null)
+    var resume_pos = if (start_opt) |s| s else if (movie_id != null)
         logging_mod.getPlaybackProgress(logs_database, username, movie_id.?) catch 0.0
     else
         logging_mod.getEpisodePlaybackProgress(logs_database, username, episode_id.?) catch 0.0;
+
+    if (resume_pos < 0.0 or (media_info.duration > 0.0 and (resume_pos >= media_info.duration - 3.0 or resume_pos >= media_info.duration * 0.95))) {
+        resume_pos = 0.0;
+    }
 
     const media_query = if (movie_id != null)
         try std.fmt.allocPrint(allocator, "id={d}", .{movie_id.?})
