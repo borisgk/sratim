@@ -5,12 +5,15 @@ pub const aac_dec = @import("native/audio/aac_dec.zig");
 pub const aac_enc = @import("native/audio/aac_enc.zig");
 pub const audio_fifo = @import("native/audio/fifo.zig");
 
+pub const mp3_dec = @import("native/audio/mp3_dec.zig");
+pub const dsp = @import("native/audio/dsp.zig");
+
 pub const EncodedAacFrame = struct {
     data: []u8,
     sample_count: u32 = 1024,
 };
 
-/// Standalone pure Zig audio transcoder that converts compressed audio packets (AC-3, E-AC-3, multichannel AAC)
+/// Standalone pure Zig audio transcoder that converts compressed audio packets (AC-3, E-AC-3, MP3, multichannel AAC)
 /// into standardized 48kHz Stereo AAC frames for native fMP4 container muxing.
 /// Operates 100% in pure Zig with zero FFmpeg dependencies.
 pub const StreamAudioTranscoder = struct {
@@ -20,6 +23,9 @@ pub const StreamAudioTranscoder = struct {
     native_ac3_dec: ?ac3_dec.Ac3Decoder = null,
     native_eac3_dec: ?eac3_dec.Eac3Decoder = null,
     native_aac_dec: ?aac_dec.AacDecoder = null,
+    native_mp3_dec: ?mp3_dec.Mp3Decoder = null,
+    resampler_l: ?dsp.HermiteResampler = null,
+    resampler_r: ?dsp.HermiteResampler = null,
 
     pub fn isNativeSupportedCodec(codec_name: []const u8) bool {
         return std.mem.eql(u8, codec_name, "A_AC3") or
@@ -28,7 +34,13 @@ pub const StreamAudioTranscoder = struct {
             std.mem.eql(u8, codec_name, "A_EAC3") or
             std.mem.eql(u8, codec_name, "ec-3") or
             std.mem.eql(u8, codec_name, "A_AAC") or
-            std.mem.eql(u8, codec_name, "mp4a");
+            std.mem.eql(u8, codec_name, "mp4a") or
+            std.mem.eql(u8, codec_name, "A_MPEG/L3") or
+            std.mem.eql(u8, codec_name, "A_MPEG/L2") or
+            std.mem.eql(u8, codec_name, "A_MPEG/L1") or
+            std.mem.eql(u8, codec_name, ".mp3") or
+            std.mem.eql(u8, codec_name, "mp3") or
+            std.mem.eql(u8, codec_name, "mp3 ");
     }
 
     pub fn initFromCodec(
@@ -44,8 +56,14 @@ pub const StreamAudioTranscoder = struct {
         const is_ac3 = std.mem.eql(u8, codec_name, "A_AC3") or std.mem.eql(u8, codec_name, "ac-3") or std.mem.eql(u8, codec_name, "sac3");
         const is_eac3 = std.mem.eql(u8, codec_name, "A_EAC3") or std.mem.eql(u8, codec_name, "ec-3");
         const is_aac = std.mem.eql(u8, codec_name, "A_AAC") or std.mem.eql(u8, codec_name, "mp4a");
+        const is_mp3 = std.mem.eql(u8, codec_name, "A_MPEG/L3") or
+            std.mem.eql(u8, codec_name, "A_MPEG/L2") or
+            std.mem.eql(u8, codec_name, "A_MPEG/L1") or
+            std.mem.eql(u8, codec_name, ".mp3") or
+            std.mem.eql(u8, codec_name, "mp3") or
+            std.mem.eql(u8, codec_name, "mp3 ");
 
-        if (!is_ac3 and !is_eac3 and !is_aac) {
+        if (!is_ac3 and !is_eac3 and !is_aac and !is_mp3) {
             return error.UnsupportedAudioCodec;
         }
 
@@ -60,6 +78,8 @@ pub const StreamAudioTranscoder = struct {
             aac_dec_inst = d;
         }
 
+        const needs_resample = (sample_rate != 48000 and sample_rate > 0);
+
         self.* = .{
             .is_pure_native = true,
             .native_fifo = audio_fifo.AudioFifo.init(allocator),
@@ -67,6 +87,9 @@ pub const StreamAudioTranscoder = struct {
             .native_ac3_dec = if (is_ac3) ac3_dec.Ac3Decoder.init() else null,
             .native_eac3_dec = if (is_eac3) eac3_dec.Eac3Decoder.init() else null,
             .native_aac_dec = aac_dec_inst,
+            .native_mp3_dec = if (is_mp3) mp3_dec.Mp3Decoder.init() else null,
+            .resampler_l = if (needs_resample) dsp.HermiteResampler.init(sample_rate, 48000) else null,
+            .resampler_r = if (needs_resample) dsp.HermiteResampler.init(sample_rate, 48000) else null,
         };
         return self;
     }
@@ -123,6 +146,33 @@ pub const StreamAudioTranscoder = struct {
                         planar_r[i] = stereo_interleaved[i * 2 + 1];
                     }
                     try self.native_fifo.write(planar_l[0..n_samples], planar_r[0..n_samples]);
+                    try self.drainNativeFifo(allocator, out_frames);
+                }
+            } else |_| {}
+            return;
+        }
+
+        if (self.native_mp3_dec) |*dec| {
+            var stereo_interleaved: [1152 * 2]f32 = undefined;
+            if (dec.decodeFrame(raw_payload, &stereo_interleaved)) |n_samples| {
+                if (n_samples > 0) {
+                    var planar_l: [1152]f32 = undefined;
+                    var planar_r: [1152]f32 = undefined;
+                    for (0..n_samples) |i| {
+                        planar_l[i] = stereo_interleaved[i * 2];
+                        planar_r[i] = stereo_interleaved[i * 2 + 1];
+                    }
+
+                    if (self.resampler_l) |*rl| {
+                        var resampled_l: [2048]f32 = undefined;
+                        var resampled_r: [2048]f32 = undefined;
+                        const out_l_cnt = rl.process(planar_l[0..n_samples], &resampled_l);
+                        const out_r_cnt = if (self.resampler_r) |*rr| rr.process(planar_r[0..n_samples], &resampled_r) else out_l_cnt;
+                        const out_cnt = @min(out_l_cnt, out_r_cnt);
+                        try self.native_fifo.write(resampled_l[0..out_cnt], resampled_r[0..out_cnt]);
+                    } else {
+                        try self.native_fifo.write(planar_l[0..n_samples], planar_r[0..n_samples]);
+                    }
                     try self.drainNativeFifo(allocator, out_frames);
                 }
             } else |_| {}
@@ -216,6 +266,40 @@ test "StreamAudioTranscoder pure Zig AC-3 transcode end-to-end" {
     }
 
     try transcoder.transcodePacket(allocator, buf[0..bytes_read], &frames);
+    try transcoder.flush(allocator, &frames);
+
+    try testing.expect(frames.items.len > 0);
+    for (frames.items) |f| {
+        try testing.expect(f.data.len > 0);
+        try testing.expectEqual(@as(u32, 1024), f.sample_count);
+    }
+}
+
+test "StreamAudioTranscoder pure Zig MP3 transcode end-to-end" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var transcoder = try StreamAudioTranscoder.initFromCodec("A_MPEG/L3", null, 2, 44100, true);
+    defer transcoder.deinit();
+
+    try testing.expect(transcoder.is_pure_native);
+    try testing.expect(transcoder.native_mp3_dec != null);
+    try testing.expect(transcoder.resampler_l != null);
+
+    // 128kbps 44.1kHz Joint Stereo frame (417 bytes)
+    var frame_bytes: [417]u8 = std.mem.zeroes([417]u8);
+    frame_bytes[0] = 0xFF;
+    frame_bytes[1] = 0xFB;
+    frame_bytes[2] = 0x90;
+    frame_bytes[3] = 0x64;
+
+    var frames = std.ArrayList(EncodedAacFrame).empty;
+    defer {
+        for (frames.items) |f| allocator.free(f.data);
+        frames.deinit(allocator);
+    }
+
+    try transcoder.transcodePacket(allocator, &frame_bytes, &frames);
     try transcoder.flush(allocator, &frames);
 
     try testing.expect(frames.items.len > 0);

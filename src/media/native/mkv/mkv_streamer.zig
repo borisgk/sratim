@@ -172,6 +172,8 @@ pub fn streamMkvGeneric(
             std.fmt.bufPrint(&audio_desc_buf, "Pure Zig E-AC-3 ({d}ch) -> Pure Zig AAC-LC", .{at.channels})
         else if (std.mem.eql(u8, at.codec_id, "A_AAC"))
             std.fmt.bufPrint(&audio_desc_buf, "Pure Zig Multichannel AAC-LC ({d}ch) -> Pure Zig AAC-LC", .{at.channels})
+        else if (std.mem.startsWith(u8, at.codec_id, "A_MPEG/L"))
+            std.fmt.bufPrint(&audio_desc_buf, "Pure Zig MP3 ({d}ch) -> Pure Zig AAC-LC", .{at.channels})
         else
             std.fmt.bufPrint(&audio_desc_buf, "Native Audio Transcode ({s}, {d}ch)", .{ at.codec_id, at.channels })) catch "Native Audio Transcode";
         streamer.logStreamStatus(file_path, audio_idx_requested, "Native MKV Slicer", "Zero-copy passthrough", audio_desc);
