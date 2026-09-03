@@ -11,6 +11,7 @@ const isobmff = @import("isobmff.zig");
 pub const AudioTrack = struct {
     id: usize,
     label: []const u8,
+    codec: []const u8 = "AAC",
 };
 
 pub const SubtitleTrack = struct {
@@ -27,7 +28,10 @@ pub const MediaInfo = struct {
     subtitle_tracks: []SubtitleTrack,
 
     pub fn deinit(self: *const MediaInfo, allocator: std.mem.Allocator) void {
-        for (self.audio_tracks) |track| allocator.free(track.label);
+        for (self.audio_tracks) |track| {
+            allocator.free(track.label);
+            allocator.free(track.codec);
+        }
         if (self.audio_tracks.len > 0) allocator.free(self.audio_tracks);
         for (self.subtitle_tracks) |track| {
             allocator.free(track.label);
@@ -124,7 +128,10 @@ fn getMp4MediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]cons
 
     var audio_tracks = std.ArrayList(AudioTrack).empty;
     errdefer {
-        for (audio_tracks.items) |track| allocator.free(track.label);
+        for (audio_tracks.items) |track| {
+            allocator.free(track.label);
+            allocator.free(track.codec);
+        }
         audio_tracks.deinit(allocator);
     }
 
@@ -134,10 +141,20 @@ fn getMp4MediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]cons
             try std.fmt.allocPrint(allocator, "Audio Track {d} ({s})", .{ idx + 1, ln })
         else
             try std.fmt.allocPrint(allocator, "Audio Track {d}", .{ idx + 1 });
+        errdefer allocator.free(label);
+
+        var codec_name: []const u8 = "AAC";
+        if (at.stsd_raw.len >= 24) {
+            const fourcc = at.stsd_raw[20..24];
+            codec_name = codecs.getAudioCodecDisplayName(fourcc);
+        }
+        const codec_dup = try allocator.dupe(u8, codec_name);
+        errdefer allocator.free(codec_dup);
 
         try audio_tracks.append(allocator, .{
             .id = at.stream_idx,
             .label = label,
+            .codec = codec_dup,
         });
     }
 
@@ -198,7 +215,10 @@ fn getMatroskaMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0
     var audio_tracks: std.ArrayList(AudioTrack) = .empty;
     var subtitle_tracks: std.ArrayList(SubtitleTrack) = .empty;
     errdefer {
-        for (audio_tracks.items) |track| allocator.free(track.label);
+        for (audio_tracks.items) |track| {
+            allocator.free(track.label);
+            allocator.free(track.codec);
+        }
         audio_tracks.deinit(allocator);
         for (subtitle_tracks.items) |track| {
             allocator.free(track.label);
@@ -341,7 +361,19 @@ fn getMatroskaMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0
 
                             const label_dup = try allocator.dupe(u8, label);
                             errdefer allocator.free(label_dup);
-                            try audio_tracks.append(allocator, .{ .id = current_stream_idx, .label = label_dup });
+
+                            var codec_name: []const u8 = "AAC";
+                            if (codec_id_str) |cid| {
+                                codec_name = codecs.getAudioCodecDisplayName(cid);
+                            }
+                            const codec_dup = try allocator.dupe(u8, codec_name);
+                            errdefer allocator.free(codec_dup);
+
+                            try audio_tracks.append(allocator, .{
+                                .id = current_stream_idx,
+                                .label = label_dup,
+                                .codec = codec_dup,
+                            });
                         } else if (tt == 17) { // Subtitle
                             var is_bitmap = false;
                             if (codec_id_str) |cid| {

@@ -73,7 +73,16 @@ pub fn handlePlayer(
             try safe_label.append(allocator, ch);
         }
 
-        const track_str = try std.fmt.allocPrint(allocator, "{{\"id\":{},\"label\":\"{s}\"}}", .{ track.id, safe_label.items });
+        var safe_codec: std.ArrayList(u8) = .empty;
+        defer safe_codec.deinit(allocator);
+        for (track.codec) |ch| {
+            if (ch == '"' or ch == '\\') {
+                try safe_codec.append(allocator, '\\');
+            }
+            try safe_codec.append(allocator, ch);
+        }
+
+        const track_str = try std.fmt.allocPrint(allocator, "{{\"id\":{},\"label\":\"{s}\",\"codec\":\"{s}\"}}", .{ track.id, safe_label.items, safe_codec.items });
         try json_out.appendSlice(allocator, track_str);
     }
     try json_out.appendSlice(allocator, "]");

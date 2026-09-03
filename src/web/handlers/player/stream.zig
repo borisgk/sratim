@@ -103,17 +103,36 @@ pub fn handleStream(
     const is_native = (config.media_engine.streamer == .native);
     const audio_mode_str = if (config.media_engine.audio_transcoder == .native) "native-aac" else "ffmpeg";
 
+    var orig_audio_codec_buf: [64]u8 = undefined;
+    var orig_audio_codec: []const u8 = "AAC";
+    if (streamer.getMediaInfo(allocator, io, z_path, config.media_engine.metadata)) |minfo| {
+        defer minfo.deinit(allocator);
+        if (minfo.audio_tracks.len > 0) {
+            var selected_codec: []const u8 = minfo.audio_tracks[0].codec;
+            if (audio_idx >= 0) {
+                for (minfo.audio_tracks) |at| {
+                    if (at.id == @as(usize, @intCast(audio_idx))) {
+                        selected_codec = at.codec;
+                        break;
+                    }
+                }
+            }
+            orig_audio_codec = std.fmt.bufPrint(&orig_audio_codec_buf, "{s}", .{selected_codec}) catch "AAC";
+        }
+    } else |_| {}
+
     var resp = try request.respondStreaming(resp_buf, .{
         .respond_options = .{
             .status = .ok,
             .extra_headers = &.{
                 .{ .name = "content-type", .value = "video/mp4" },
                 .{ .name = "access-control-allow-origin", .value = "*" },
-                .{ .name = "access-control-expose-headers", .value = "x-actual-start-time, x-stream-engine, x-audio-engine" },
+                .{ .name = "access-control-expose-headers", .value = "x-actual-start-time, x-stream-engine, x-audio-engine, x-original-audio-codec" },
                 .{ .name = "accept-ranges", .value = "bytes" },
                 .{ .name = "x-actual-start-time", .value = actual_start_str },
                 .{ .name = "x-stream-engine", .value = if (is_native) "native-fmp4" else "ffmpeg" },
                 .{ .name = "x-audio-engine", .value = audio_mode_str },
+                .{ .name = "x-original-audio-codec", .value = orig_audio_codec },
             },
         },
     });

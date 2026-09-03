@@ -8,22 +8,41 @@
     top: 24px;
     left: 24px;
     z-index: 30;
-    width: 440px;
-    max-width: calc(100% - 48px);
-    background: rgba(11, 15, 25, 0.88);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.65), 0 0 1px rgba(255, 255, 255, 0.2);
-    border-radius: 10px;
-    padding: 14px 16px;
+    width: min(650px, calc(100% - 48px));
+    min-height: 410px;
+    height: auto;
+    max-height: calc(100% - 48px);
+    background: rgba(11, 15, 25, 0.50);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    box-shadow: 0 20px 45px rgba(0, 0, 0, 0.45), 0 0 1px rgba(255, 255, 255, 0.25);
+    border-radius: 12px;
+    padding: 14px 18px;
     color: #e2e8f0;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     font-size: 11px;
-    line-height: 1.5;
+    line-height: 1.45;
     user-select: none;
     box-sizing: border-box;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
     animation: statsFadeIn 0.15s ease-out;
+}
+
+.stats-panel::-webkit-scrollbar {
+    width: 6px;
+}
+
+.stats-panel::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.stats-panel::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.25);
+    border-radius: 3px;
 }
 
 @keyframes statsFadeIn {
@@ -98,8 +117,8 @@
 
 .stats-grid {
     display: grid;
-    grid-template-columns: 140px 1fr;
-    gap: 4px 10px;
+    grid-template-columns: 165px 1fr;
+    gap: 4px 14px;
     align-items: baseline;
 }
 
@@ -107,14 +126,13 @@
     color: #94a3b8;
     font-weight: 500;
     white-space: nowrap;
-    text-overflow: ellipsis;
-    overflow: hidden;
 }
 
 .stats-value {
     color: #f1f5f9;
     font-variant-numeric: tabular-nums;
-    word-break: break-all;
+    word-break: break-word;
+    min-width: 0;
 }
 
 .stats-value.highlight-green {
@@ -178,4 +196,10 @@
     background: rgba(245, 158, 11, 0.2);
     color: #fbbf24;
     border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.stats-badge-codec {
+    background: rgba(56, 189, 248, 0.2);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.35);
 }

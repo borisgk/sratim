@@ -14,6 +14,7 @@
         totalBytesDownloaded: 0,
         streamEngine: DEFAULT_STREAM_ENGINE,
         audioEngine: DEFAULT_AUDIO_ENGINE,
+        origAudioCodec: '',
         actualStartTime: null,
         networkActivity: 'Idle',
         recentChunks: [], // { time: ms, bytes: number }
@@ -28,6 +29,9 @@
 
             const ae = response.headers.get('x-audio-engine');
             if (ae) statsState.audioEngine = ae;
+
+            const oac = response.headers.get('x-original-audio-codec');
+            if (oac) statsState.origAudioCodec = oac;
 
             const ast = response.headers.get('x-actual-start-time');
             if (ast) statsState.actualStartTime = parseFloat(ast);
@@ -122,8 +126,11 @@
                 <div class="stats-label">Volume / State</div>
                 <div class="stats-value" id="sf-volume">-</div>
 
-                <div class="stats-label">Codecs</div>
+                <div class="stats-label">Stream Codecs (MSE)</div>
                 <div class="stats-value" id="sf-codecs">-</div>
+
+                <div class="stats-label">Original Audio Codec</div>
+                <div class="stats-value" id="sf-orig-audio-codec">-</div>
 
                 <div class="stats-label">Stream Engine</div>
                 <div class="stats-value" id="sf-stream-engine">-</div>
@@ -167,6 +174,7 @@
             playState: document.getElementById('sf-play-state'),
             volume: document.getElementById('sf-volume'),
             codecs: document.getElementById('sf-codecs'),
+            origAudioCodec: document.getElementById('sf-orig-audio-codec'),
             streamEngine: document.getElementById('sf-stream-engine'),
             audioEngine: document.getElementById('sf-audio-engine'),
             audioTrack: document.getElementById('sf-audio-track'),
@@ -244,11 +252,24 @@
         const volPct = Math.round((video.volume || 0) * 100);
         fields.volume.innerText = `${volPct}% (${video.muted ? 'Muted' : 'Unmuted'})`;
 
-        // 6. Codecs
+        // 6. Codecs (MSE)
         const cStr = (typeof codecStr !== 'undefined') ? codecStr : 'video/mp4';
         fields.codecs.innerText = cStr;
 
-        // 7. Stream Engine
+        // 7. Original Audio Codec
+        let origCodec = statsState.origAudioCodec || '';
+        let activeTrk = null;
+        if (typeof AUDIO_TRACKS !== 'undefined' && AUDIO_TRACKS && AUDIO_TRACKS.length > 0) {
+            const curIdx = (typeof currentAudioIdx !== 'undefined') ? currentAudioIdx : -1;
+            activeTrk = AUDIO_TRACKS.find(t => t.id === curIdx) || AUDIO_TRACKS[0];
+            if (!origCodec && activeTrk && activeTrk.codec) {
+                origCodec = activeTrk.codec;
+            }
+        }
+        if (!origCodec) origCodec = 'AAC';
+        fields.origAudioCodec.innerHTML = `<span class="stats-badge-tag stats-badge-codec">${origCodec}</span>`;
+
+        // 8. Stream Engine
         const se = statsState.streamEngine;
         if (se.includes('native')) {
             fields.streamEngine.innerHTML = `<span class="stats-badge-tag stats-badge-native">Zero-Copy</span> ${se}`;
@@ -256,7 +277,7 @@
             fields.streamEngine.innerHTML = `<span class="stats-badge-tag stats-badge-ffmpeg">FFmpeg</span> ${se}`;
         }
 
-        // 8. Audio Transcoder
+        // 9. Audio Transcoder
         const ae = statsState.audioEngine;
         if (ae.includes('native')) {
             fields.audioEngine.innerHTML = `<span class="stats-badge-tag stats-badge-native">Pure Zig</span> ${ae}`;
@@ -264,16 +285,20 @@
             fields.audioEngine.innerHTML = `<span class="stats-badge-tag stats-badge-ffmpeg">FFmpeg</span> ${ae}`;
         }
 
-        // 9. Audio Track
-        if (typeof AUDIO_TRACKS !== 'undefined' && AUDIO_TRACKS && AUDIO_TRACKS.length > 0) {
+        // 10. Active Audio Track
+        if (activeTrk) {
+            const codecTag = (activeTrk.codec) ? ` (${activeTrk.codec})` : '';
+            fields.audioTrack.innerText = `${activeTrk.label || `Track ${activeTrk.id}`}${codecTag}`;
+        } else if (typeof AUDIO_TRACKS !== 'undefined' && AUDIO_TRACKS && AUDIO_TRACKS.length > 0) {
             const curIdx = (typeof currentAudioIdx !== 'undefined') ? currentAudioIdx : -1;
             const trk = AUDIO_TRACKS.find(t => t.id === curIdx) || AUDIO_TRACKS[0];
-            fields.audioTrack.innerText = trk.label || `Track ${trk.id}`;
+            const codecTag = (trk.codec) ? ` (${trk.codec})` : '';
+            fields.audioTrack.innerText = `${trk.label || `Track ${trk.id}`}${codecTag}`;
         } else {
             fields.audioTrack.innerText = 'Default Track';
         }
 
-        // 10. Subtitles
+        // 11. Subtitles
         if (typeof currentSubtitleIdx !== 'undefined' && currentSubtitleIdx >= 0) {
             const curSub = (typeof SUBTITLE_TRACKS !== 'undefined' && SUBTITLE_TRACKS)
                 ? SUBTITLE_TRACKS.find(t => t.id === currentSubtitleIdx)
