@@ -70,67 +70,54 @@ pub fn generateHtml(
 
     var recent_count: usize = 0;
 
+    const cat = database.catalog orelse return "";
+
     for (recent_items) |item| {
         if (item.media_type == .movie) {
-            var movie_stmt = database.prepare(
-                \\SELECT title, clean_name, poster_path, is_present 
-                \\FROM movies 
-                \\WHERE id = ?1;
-            ) catch continue;
-            defer movie_stmt.finalize();
-            movie_stmt.bindInt64(1, item.item_id) catch continue;
-
-            if ((movie_stmt.step() catch null) == .row) {
-                const is_present = movie_stmt.columnInt(3);
-                if (is_present != 1) continue;
-
-                const title_opt = movie_stmt.columnText(0);
-                const clean_name = movie_stmt.columnText(1) orelse "Movie";
-                const poster_path_opt = movie_stmt.columnText(2);
-
-                var progress_pct: ?f64 = null;
-                if (item.duration > 0) {
-                    progress_pct = (item.position / item.duration) * 100.0;
+            if (cat.getMovieById(allocator, item.item_id) catch null) |mov| {
+                defer {
+                    var mut = mov;
+                    mut.deinit(allocator);
                 }
+                if (mov.is_present) {
+                    var progress_pct: ?f64 = null;
+                    if (item.duration > 0) {
+                        progress_pct = (item.position / item.duration) * 100.0;
+                    }
 
-                recent_count += 1;
-                try cards.appendMovieCard(&recent_cards_buf, allocator, item.item_id, null, clean_name, title_opt, poster_path_opt, null, progress_pct, false);
+                    recent_count += 1;
+                    try cards.appendMovieCard(&recent_cards_buf, allocator, item.item_id, null, mov.clean_name, mov.title, mov.poster_path, null, progress_pct, false);
+                }
             }
         } else if (item.media_type == .episode) {
-            var ep_stmt = database.prepare(
-                \\SELECT e.show_id, e.season, e.episode, e.title, e.file_path, e.is_present, s.title, s.poster_path, s.is_present
-                \\FROM episodes e
-                \\JOIN shows s ON e.show_id = s.id
-                \\WHERE e.id = ?1;
-            ) catch continue;
-            defer ep_stmt.finalize();
-            ep_stmt.bindInt64(1, item.item_id) catch continue;
-
-            if ((ep_stmt.step() catch null) == .row) {
-                const ep_is_present = ep_stmt.columnInt(5);
-                const show_is_present = ep_stmt.columnInt(8);
-                if (ep_is_present != 1 or show_is_present != 1) continue;
-
-                const season = ep_stmt.columnInt(1);
-                const episode = ep_stmt.columnInt(2);
-                const ep_title_opt = ep_stmt.columnText(3);
-                const ep_file_path = ep_stmt.columnText(4).?;
-                const show_title = ep_stmt.columnText(6).?;
-                const poster_path_opt = ep_stmt.columnText(7);
-
-                const basename = std.fs.path.basename(ep_file_path);
-                const ep_display_name = if (ep_title_opt) |t| t else basename;
-
-                var ep_badge_buf: [32]u8 = undefined;
-                const ep_badge = std.fmt.bufPrint(&ep_badge_buf, "S{d}:E{d}", .{ season, episode }) catch "TV";
-
-                var progress_pct: ?f64 = null;
-                if (item.duration > 0) {
-                    progress_pct = (item.position / item.duration) * 100.0;
+            if (cat.getEpisodeById(allocator, item.item_id) catch null) |ep| {
+                defer {
+                    var mut = ep;
+                    mut.deinit(allocator);
                 }
+                if (ep.is_present) {
+                    if (cat.getShowById(allocator, ep.show_id) catch null) |sh| {
+                        defer {
+                            var mut_sh = sh;
+                            mut_sh.deinit(allocator);
+                        }
+                        if (sh.is_present) {
+                            const basename = std.fs.path.basename(ep.file_path);
+                            const ep_display_name = ep.title orelse basename;
 
-                recent_count += 1;
-                try cards.appendEpisodeRecentCard(&recent_cards_buf, allocator, item.item_id, show_title, ep_display_name, poster_path_opt, ep_badge, progress_pct);
+                            var ep_badge_buf: [32]u8 = undefined;
+                            const ep_badge = std.fmt.bufPrint(&ep_badge_buf, "S{d}:E{d}", .{ ep.season, ep.episode }) catch "TV";
+
+                            var progress_pct: ?f64 = null;
+                            if (item.duration > 0) {
+                                progress_pct = (item.position / item.duration) * 100.0;
+                            }
+
+                            recent_count += 1;
+                            try cards.appendEpisodeRecentCard(&recent_cards_buf, allocator, item.item_id, sh.title, ep_display_name, sh.poster_path, ep_badge, progress_pct);
+                        }
+                    }
+                }
             }
         }
     }

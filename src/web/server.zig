@@ -22,23 +22,8 @@ const api_v1_router = @import("routers/api_v1.zig");
 /// This function runs inside an isolated OS thread spawned specifically for this connection.
 /// It parses headers, routes endpoints, and serves content synchronously.
 pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const config_mod.Config, database_shared: *db_mod.Database, logs_database_shared: *db_mod.Database) void {
-    _ = database_shared;
-    _ = logs_database_shared;
-
-    var database_val = db_mod.Database.open("sratim.db") catch |err| {
-        std.debug.print("Failed to open database in thread: {}\n", .{err});
-        return;
-    };
-    defer database_val.close();
-    const database = &database_val;
-
-    var logs_database_val = db_mod.Database.open("logs.db") catch |err| {
-        std.debug.print("Failed to open logs database in thread: {}\n", .{err});
-        return;
-    };
-    defer logs_database_val.close();
-    const logs_database = &logs_database_val;
-
+    const database = database_shared;
+    const logs_database = logs_database_shared;
 
     defer stream.socket.close(io);
 

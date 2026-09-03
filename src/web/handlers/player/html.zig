@@ -137,28 +137,32 @@ pub fn handlePlayer(
     defer if (free_title) allocator.free(media_title);
 
     if (movie_id) |mid| {
-        var stmt = database.prepare("SELECT COALESCE(title, clean_name) FROM movies WHERE id = ?1;") catch null;
-        if (stmt) |*s| {
-            defer s.finalize();
-            s.bindInt64(1, mid) catch {};
-            if ((s.step() catch .done) == .row) {
-                if (s.columnText(0)) |t| {
-                    media_title = try allocator.dupe(u8, t);
-                    free_title = true;
+        if (database.catalog) |cat| {
+            if (cat.getMovieById(allocator, mid) catch null) |m| {
+                defer {
+                    var mut = m;
+                    mut.deinit(allocator);
                 }
+                media_title = try allocator.dupe(u8, m.title orelse m.clean_name);
+                free_title = true;
             }
         }
     } else if (episode_id) |eid| {
-        var stmt = database.prepare(
-            \\SELECT COALESCE(e.title, s.title || ' S' || e.season || 'E' || e.episode)
-            \\FROM episodes e JOIN shows s ON e.show_id = s.id WHERE e.id = ?1;
-        ) catch null;
-        if (stmt) |*s| {
-            defer s.finalize();
-            s.bindInt64(1, eid) catch {};
-            if ((s.step() catch .done) == .row) {
-                if (s.columnText(0)) |t| {
+        if (database.catalog) |cat| {
+            if (cat.getEpisodeById(allocator, eid) catch null) |ep| {
+                defer {
+                    var mut = ep;
+                    mut.deinit(allocator);
+                }
+                if (ep.title) |t| {
                     media_title = try allocator.dupe(u8, t);
+                    free_title = true;
+                } else if (cat.getShowById(allocator, ep.show_id) catch null) |sh| {
+                    defer {
+                        var mut_sh = sh;
+                        mut_sh.deinit(allocator);
+                    }
+                    media_title = try std.fmt.allocPrint(allocator, "{s} S{d}E{d}", .{ sh.title, ep.season, ep.episode });
                     free_title = true;
                 }
             }

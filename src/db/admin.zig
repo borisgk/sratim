@@ -1,7 +1,5 @@
 const std = @import("std");
 const db_mod = @import("db.zig");
-const users_mod = @import("users.zig");
-const unmatched_mod = @import("unmatched.zig");
 
 pub const AdminStats = struct {
     total_movies: i64,
@@ -34,86 +32,70 @@ pub fn formatBytes(allocator: std.mem.Allocator, bytes: u64) ![]u8 {
     }
 }
 
-/// Queries the database for total counts and storage size of movies, shows, episodes, and other files.
+/// Queries the storage engine for total counts and storage size of movies, shows, episodes, and other files.
 pub fn getAdminStats(database: *db_mod.Database) !AdminStats {
-    var stats = AdminStats{
-        .total_movies = 0,
-        .total_shows = 0,
-        .total_episodes = 0,
-        .total_other_files = 0,
-        .total_storage_bytes = 0,
-        .total_users = try users_mod.getUserCount(database),
-        .total_unmatched = try unmatched_mod.getUnmatchedCount(database),
-    };
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    cat.rwlock.lockSharedUncancelable(cat.io);
+    defer cat.rwlock.unlockShared(cat.io);
 
-    // Count Movies (from 'Movies' type libraries)
-    {
-        var stmt = try database.prepare(
-            \\SELECT COUNT(*) 
-            \\FROM movies 
-            \\JOIN libraries ON movies.library_id = libraries.id 
-            \\WHERE libraries.type = 'Movies' AND movies.is_present = 1;
-        );
-        defer stmt.finalize();
-        if ((try stmt.step()) == .row) {
-            stats.total_movies = stmt.columnInt64(0);
-        }
-    }
-
-    // Count Shows
-    {
-        var stmt = try database.prepare("SELECT COUNT(*) FROM shows WHERE is_present = 1;");
-        defer stmt.finalize();
-        if ((try stmt.step()) == .row) {
-            stats.total_shows = stmt.columnInt64(0);
-        }
-    }
-
-    // Count Episodes
-    {
-        var stmt = try database.prepare("SELECT COUNT(*) FROM episodes WHERE is_present = 1;");
-        defer stmt.finalize();
-        if ((try stmt.step()) == .row) {
-            stats.total_episodes = stmt.columnInt64(0);
-        }
-    }
-
-    // Count Other Files (from 'Other' type libraries)
-    {
-        var stmt = try database.prepare(
-            \\SELECT COUNT(*) 
-            \\FROM movies 
-            \\JOIN libraries ON movies.library_id = libraries.id 
-            \\WHERE libraries.type = 'Other' AND movies.is_present = 1;
-        );
-        defer stmt.finalize();
-        if ((try stmt.step()) == .row) {
-            stats.total_other_files = stmt.columnInt64(0);
-        }
-    }
-
-    // Movies Storage Size
+    var total_movies: i64 = 0;
+    var total_other_files: i64 = 0;
     var movies_size: i64 = 0;
-    {
-        var stmt = try database.prepare("SELECT COALESCE(SUM(file_size), 0) FROM movies WHERE is_present = 1;");
-        defer stmt.finalize();
-        if ((try stmt.step()) == .row) {
-            movies_size = stmt.columnInt64(0);
+
+    var m_it = cat.movies.iterator();
+    while (m_it.next()) |e| {
+        if (!e.value_ptr.is_present) continue;
+        movies_size += e.value_ptr.file_size;
+        if (cat.libraries.get(e.value_ptr.library_id)) |lib| {
+            if (lib.lib_type == .Movies) {
+                total_movies += 1;
+            } else if (lib.lib_type == .Other) {
+                total_other_files += 1;
+            }
         }
     }
 
-    // Episodes Storage Size
+    var total_shows: i64 = 0;
+    var sh_it = cat.shows.iterator();
+    while (sh_it.next()) |e| {
+        if (e.value_ptr.is_present) total_shows += 1;
+    }
+
+    var total_episodes: i64 = 0;
     var episodes_size: i64 = 0;
-    {
-        var stmt = try database.prepare("SELECT COALESCE(SUM(file_size), 0) FROM episodes WHERE is_present = 1;");
-        defer stmt.finalize();
-        if ((try stmt.step()) == .row) {
-            episodes_size = stmt.columnInt64(0);
+    var ep_it = cat.episodes.iterator();
+    while (ep_it.next()) |e| {
+        if (e.value_ptr.is_present) {
+            total_episodes += 1;
+            episodes_size += e.value_ptr.file_size;
         }
     }
 
-    const total_bytes = @as(u64, @intCast(@max(0, movies_size + episodes_size)));
-    stats.total_storage_bytes = total_bytes;
+    var unmatched_count: i64 = 0;
+    var un_m = cat.movies.iterator();
+    while (un_m.next()) |e| {
+        if (e.value_ptr.is_present and (e.value_ptr.tmdb_id == null or e.value_ptr.tmdb_id.? == 0)) {
+            if (cat.libraries.get(e.value_ptr.library_id)) |lib| {
+                if (lib.lib_type == .Movies) unmatched_count += 1;
+            }
+        }
+    }
+    var un_sh = cat.shows.iterator();
+    while (un_sh.next()) |e| {
+        if (e.value_ptr.is_present and (e.value_ptr.tmdb_id == null or e.value_ptr.tmdb_id.? == 0)) {
+            if (cat.libraries.get(e.value_ptr.library_id)) |lib| {
+                if (lib.lib_type == .Shows) unmatched_count += 1;
+            }
+        }
+    }
 
-    return stats;
+    return .{
+        .total_movies = total_movies,
+        .total_shows = total_shows,
+        .total_episodes = total_episodes,
+        .total_other_files = total_other_files,
+        .total_storage_bytes = @intCast(@max(0, movies_size + episodes_size)),
+        .total_users = @intCast(cat.users.count()),
+        .total_unmatched = unmatched_count,
+    };
 }

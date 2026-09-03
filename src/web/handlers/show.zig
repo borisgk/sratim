@@ -28,43 +28,46 @@ pub fn handleShow(
     _ = logs_database;
     _ = username;
 
-    var stmt = try database.prepare("SELECT title, overview, poster_path, backdrop_path, library_id FROM shows WHERE id = ?1;");
-    defer stmt.finalize();
-    try stmt.bindInt64(1, show_id);
+    const cat = database.catalog orelse {
+        try request.respond("Catalog not configured", .{ .status = .internal_server_error });
+        return;
+    };
 
-    if ((try stmt.step()) != .row) {
+    const show_opt = try cat.getShowById(allocator, show_id);
+    if (show_opt == null or !show_opt.?.is_present) {
         try request.respond("Show not found", .{ .status = .not_found });
         return;
     }
+    const show = show_opt.?;
+    defer {
+        var mut = show;
+        mut.deinit(allocator);
+    }
 
-    const title = stmt.columnText(0).?;
-    const overview = stmt.columnText(1);
-    const poster_path = stmt.columnText(2);
-    const backdrop_path = stmt.columnText(3);
-    const library_id = stmt.columnInt64(4);
-    
-    _ = overview;
-    _ = poster_path;
+    const title = show.title;
+    const backdrop_path = show.backdrop_path;
+    const library_id = show.library_id;
 
-    var ep_stmt = try database.prepare(
-        \\SELECT id, file_path, season, episode, is_present, title, overview, still_path
-        \\FROM episodes 
-        \\WHERE show_id = ?1 AND is_present = 1
-        \\ORDER BY season ASC, episode ASC;
-    );
-    defer ep_stmt.finalize();
-    try ep_stmt.bindInt64(1, show_id);
+    const episodes = try cat.getEpisodesByShow(allocator, show_id);
+    defer {
+        for (episodes) |*ep| {
+            var mut = ep.*;
+            mut.deinit(allocator);
+        }
+        allocator.free(episodes);
+    }
 
     var seasons_buf = std.ArrayList(u8).empty;
     defer seasons_buf.deinit(allocator);
 
     var current_season: i32 = -1;
 
-    while ((try ep_stmt.step()) == .row) {
-        const ep_id = ep_stmt.columnInt64(0);
-        const file_path = ep_stmt.columnText(1).?;
-        const season = ep_stmt.columnInt(2);
-        const episode = ep_stmt.columnInt(3);
+    for (episodes) |ep| {
+        if (!ep.is_present) continue;
+        const ep_id = ep.id;
+        const file_path = ep.file_path;
+        const season = @as(i32, @intCast(ep.season));
+        const episode = @as(i32, @intCast(ep.episode));
 
         if (season != current_season) {
             if (current_season != -1) {
@@ -76,9 +79,9 @@ pub fn handleShow(
             try seasons_buf.appendSlice(allocator, season_header);
         }
 
-        const ep_title_opt = ep_stmt.columnText(5);
-        const ep_overview_opt = ep_stmt.columnText(6);
-        const ep_still_path_opt = ep_stmt.columnText(7);
+        const ep_title_opt = ep.title;
+        const ep_overview_opt = ep.overview;
+        const ep_still_path_opt = ep.still_path;
         const basename = std.fs.path.basename(file_path);
         
         var buf: [16]u8 = undefined;
@@ -143,10 +146,12 @@ pub fn handleShow(
     var lib_id_buf: [32]u8 = undefined;
     const lib_id_str = try std.fmt.bufPrint(&lib_id_buf, "{d}", .{library_id});
 
-    var lib_stmt = try database.prepare("SELECT name FROM libraries WHERE id = ?1;");
-    defer lib_stmt.finalize();
-    try lib_stmt.bindInt64(1, library_id);
-    const lib_name = if ((try lib_stmt.step()) == .row) lib_stmt.columnText(0).? else "Library";
+    const lib_opt = try cat.getLibraryById(allocator, library_id);
+    defer if (lib_opt) |*l| {
+        var mut = l.*;
+        mut.deinit(allocator);
+    };
+    const lib_name = if (lib_opt) |l| l.name else "Library";
 
     var backdrop_html = std.ArrayList(u8).empty;
     defer backdrop_html.deinit(allocator);

@@ -127,21 +127,21 @@ pub fn handleApiLibraryUpdates(request: *std.http.Server.Request, allocator: std
         if (lib.ignore_patterns) |pat| allocator.free(pat);
     }
 
+    const cat = database.catalog orelse return;
+    cat.rwlock.lockSharedUncancelable(cat.io);
+    defer cat.rwlock.unlockShared(cat.io);
+
     var pending_count: i64 = 0;
     var json = std.ArrayList(u8).empty;
     defer json.deinit(allocator);
 
     if (lib.lib_type == .Shows) {
-        var count_stmt = try database.prepare("SELECT COUNT(*) FROM shows WHERE library_id = ?1 AND is_present = 1 AND tmdb_id IS NULL;");
-        defer count_stmt.finalize();
-        try count_stmt.bindInt64(1, lib_id);
-        if ((try count_stmt.step()) == .row) {
-            pending_count = count_stmt.columnInt64(0);
+        var it = cat.shows.iterator();
+        while (it.next()) |e| {
+            if (e.value_ptr.library_id == lib_id and e.value_ptr.is_present and (e.value_ptr.tmdb_id == null or e.value_ptr.tmdb_id.? == 0)) {
+                pending_count += 1;
+            }
         }
-
-        var stmt = try database.prepare("SELECT id, tmdb_id, title, poster_path FROM shows WHERE library_id = ?1 AND is_present = 1 AND tmdb_id IS NOT NULL;");
-        defer stmt.finalize();
-        try stmt.bindInt64(1, lib_id);
 
         try json.appendSlice(allocator, "{\"remaining_pending\":");
         var count_buf: [32]u8 = undefined;
@@ -150,42 +150,41 @@ pub fn handleApiLibraryUpdates(request: *std.http.Server.Request, allocator: std
         try json.appendSlice(allocator, ",\"updates\":[");
 
         var first = true;
-        while ((try stmt.step()) == .row) {
-            const id = stmt.columnInt64(0);
-            const tmdb_id = stmt.columnInt64(1);
-            const title = stmt.columnText(2) orelse "";
-            const poster_path_opt = stmt.columnText(3);
+        var sh_it = cat.shows.iterator();
+        while (sh_it.next()) |e| {
+            if (e.value_ptr.library_id == lib_id and e.value_ptr.is_present and e.value_ptr.tmdb_id != null and e.value_ptr.tmdb_id.? > 0) {
+                const id = e.key_ptr.*;
+                const tmdb_id = e.value_ptr.tmdb_id.?;
+                const title = e.value_ptr.title;
+                const poster_path_opt = e.value_ptr.poster_path;
 
-            if (!first) try json.appendSlice(allocator, ",");
-            first = false;
+                if (!first) try json.appendSlice(allocator, ",");
+                first = false;
 
-            const item_buf = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"tmdb_id\":{d},\"title\":\"", .{ id, tmdb_id });
-            defer allocator.free(item_buf);
-            try json.appendSlice(allocator, item_buf);
-            try browse_handler.escapeJsonString(&json, allocator, title);
-            try json.appendSlice(allocator, "\",\"poster_path\":");
+                const item_buf = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"tmdb_id\":{d},\"title\":\"", .{ id, tmdb_id });
+                defer allocator.free(item_buf);
+                try json.appendSlice(allocator, item_buf);
+                try browse_handler.escapeJsonString(&json, allocator, title);
+                try json.appendSlice(allocator, "\",\"poster_path\":");
 
-            if (poster_path_opt) |p| {
-                try json.appendSlice(allocator, "\"");
-                try browse_handler.escapeJsonString(&json, allocator, p);
-                try json.appendSlice(allocator, "\"");
-            } else {
-                try json.appendSlice(allocator, "null");
+                if (poster_path_opt) |p| {
+                    try json.appendSlice(allocator, "\"");
+                    try browse_handler.escapeJsonString(&json, allocator, p);
+                    try json.appendSlice(allocator, "\"");
+                } else {
+                    try json.appendSlice(allocator, "null");
+                }
+                try json.appendSlice(allocator, "}");
             }
-            try json.appendSlice(allocator, "}");
         }
         try json.appendSlice(allocator, "]}");
     } else {
-        var count_stmt = try database.prepare("SELECT COUNT(*) FROM movies WHERE library_id = ?1 AND is_present = 1 AND tmdb_id IS NULL;");
-        defer count_stmt.finalize();
-        try count_stmt.bindInt64(1, lib_id);
-        if ((try count_stmt.step()) == .row) {
-            pending_count = count_stmt.columnInt64(0);
+        var it = cat.movies.iterator();
+        while (it.next()) |e| {
+            if (e.value_ptr.library_id == lib_id and e.value_ptr.is_present and (e.value_ptr.tmdb_id == null or e.value_ptr.tmdb_id.? == 0)) {
+                pending_count += 1;
+            }
         }
-
-        var stmt = try database.prepare("SELECT id, tmdb_id, COALESCE(title, clean_name), poster_path FROM movies WHERE library_id = ?1 AND is_present = 1 AND tmdb_id IS NOT NULL;");
-        defer stmt.finalize();
-        try stmt.bindInt64(1, lib_id);
 
         try json.appendSlice(allocator, "{\"remaining_pending\":");
         var count_buf: [32]u8 = undefined;
@@ -194,29 +193,32 @@ pub fn handleApiLibraryUpdates(request: *std.http.Server.Request, allocator: std
         try json.appendSlice(allocator, ",\"updates\":[");
 
         var first = true;
-        while ((try stmt.step()) == .row) {
-            const id = stmt.columnInt64(0);
-            const tmdb_id = stmt.columnInt64(1);
-            const title = stmt.columnText(2) orelse "";
-            const poster_path_opt = stmt.columnText(3);
+        var m_it = cat.movies.iterator();
+        while (m_it.next()) |e| {
+            if (e.value_ptr.library_id == lib_id and e.value_ptr.is_present and e.value_ptr.tmdb_id != null and e.value_ptr.tmdb_id.? > 0) {
+                const id = e.key_ptr.*;
+                const tmdb_id = e.value_ptr.tmdb_id.?;
+                const title = e.value_ptr.title orelse e.value_ptr.clean_name;
+                const poster_path_opt = e.value_ptr.poster_path;
 
-            if (!first) try json.appendSlice(allocator, ",");
-            first = false;
+                if (!first) try json.appendSlice(allocator, ",");
+                first = false;
 
-            const item_buf = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"tmdb_id\":{d},\"title\":\"", .{ id, tmdb_id });
-            defer allocator.free(item_buf);
-            try json.appendSlice(allocator, item_buf);
-            try browse_handler.escapeJsonString(&json, allocator, title);
-            try json.appendSlice(allocator, "\",\"poster_path\":");
+                const item_buf = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"tmdb_id\":{d},\"title\":\"", .{ id, tmdb_id });
+                defer allocator.free(item_buf);
+                try json.appendSlice(allocator, item_buf);
+                try browse_handler.escapeJsonString(&json, allocator, title);
+                try json.appendSlice(allocator, "\",\"poster_path\":");
 
-            if (poster_path_opt) |p| {
-                try json.appendSlice(allocator, "\"");
-                try browse_handler.escapeJsonString(&json, allocator, p);
-                try json.appendSlice(allocator, "\"");
-            } else {
-                try json.appendSlice(allocator, "null");
+                if (poster_path_opt) |p| {
+                    try json.appendSlice(allocator, "\"");
+                    try browse_handler.escapeJsonString(&json, allocator, p);
+                    try json.appendSlice(allocator, "\"");
+                } else {
+                    try json.appendSlice(allocator, "null");
+                }
+                try json.appendSlice(allocator, "}");
             }
-            try json.appendSlice(allocator, "}");
         }
         try json.appendSlice(allocator, "]}");
     }

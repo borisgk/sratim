@@ -10,106 +10,89 @@ pub const UnmatchedItem = struct {
     library_type: []const u8,
 };
 
-/// Retrieves all unmatched movies and shows from 'Movies' and 'Shows' type libraries (where tmdb_id IS NULL OR tmdb_id = 0).
-/// Excludes 'Other' type libraries.
+/// Retrieves all unmatched movies and shows from 'Movies' and 'Shows' type libraries.
 pub fn getUnmatchedItems(database: *db_mod.Database, allocator: std.mem.Allocator) ![]UnmatchedItem {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    cat.rwlock.lockSharedUncancelable(cat.io);
+    defer cat.rwlock.unlockShared(cat.io);
+
     var list = std.ArrayList(UnmatchedItem).empty;
-    defer list.deinit(allocator);
-
-    // Unmatched Movies (Only from 'Movies' type libraries)
-    {
-        var stmt = try database.prepare(
-            \\SELECT m.id, COALESCE(m.title, m.clean_name), m.file_path, l.name, l.type
-            \\FROM movies m
-            \\JOIN libraries l ON m.library_id = l.id
-            \\WHERE m.is_present = 1 
-            \\  AND l.type = 'Movies' 
-            \\  AND (m.tmdb_id IS NULL OR m.tmdb_id = 0)
-            \\ORDER BY m.clean_name ASC;
-        );
-        defer stmt.finalize();
-
-        while ((try stmt.step()) == .row) {
-            const id = stmt.columnInt64(0);
-            const title_raw = stmt.columnText(1) orelse "Unknown";
-            const path_raw = stmt.columnText(2) orelse "";
-            const lib_name_raw = stmt.columnText(3) orelse "Library";
-            const lib_type_raw = stmt.columnText(4) orelse "Movies";
-
-            try list.append(allocator, .{
-                .id = id,
-                .item_type = try allocator.dupe(u8, "movie"),
-                .title = try allocator.dupe(u8, title_raw),
-                .file_path_or_path = try allocator.dupe(u8, path_raw),
-                .library_name = try allocator.dupe(u8, lib_name_raw),
-                .library_type = try allocator.dupe(u8, lib_type_raw),
-            });
+    errdefer {
+        for (list.items) |item| {
+            allocator.free(item.item_type);
+            allocator.free(item.title);
+            allocator.free(item.file_path_or_path);
+            allocator.free(item.library_name);
+            allocator.free(item.library_type);
         }
+        list.deinit(allocator);
     }
 
-    // Unmatched TV Shows (Only from 'Shows' type libraries)
-    {
-        var stmt = try database.prepare(
-            \\SELECT s.id, s.title, s.path, l.name, l.type
-            \\FROM shows s
-            \\JOIN libraries l ON s.library_id = l.id
-            \\WHERE s.is_present = 1 
-            \\  AND l.type = 'Shows' 
-            \\  AND (s.tmdb_id IS NULL OR s.tmdb_id = 0)
-            \\ORDER BY s.title ASC;
-        );
-        defer stmt.finalize();
+    var m_it = cat.movies.iterator();
+    while (m_it.next()) |e| {
+        if (!e.value_ptr.is_present) continue;
+        if (e.value_ptr.tmdb_id != null and e.value_ptr.tmdb_id.? > 0) continue;
+        const lib = cat.libraries.get(e.value_ptr.library_id) orelse continue;
+        if (lib.lib_type != .Movies) continue;
 
-        while ((try stmt.step()) == .row) {
-            const id = stmt.columnInt64(0);
-            const title_raw = stmt.columnText(1) orelse "Unknown";
-            const path_raw = stmt.columnText(2) orelse "";
-            const lib_name_raw = stmt.columnText(3) orelse "Library";
-            const lib_type_raw = stmt.columnText(4) orelse "Shows";
-
-            try list.append(allocator, .{
-                .id = id,
-                .item_type = try allocator.dupe(u8, "show"),
-                .title = try allocator.dupe(u8, title_raw),
-                .file_path_or_path = try allocator.dupe(u8, path_raw),
-                .library_name = try allocator.dupe(u8, lib_name_raw),
-                .library_type = try allocator.dupe(u8, lib_type_raw),
-            });
-        }
+        try list.append(allocator, .{
+            .id = e.key_ptr.*,
+            .item_type = try allocator.dupe(u8, "movie"),
+            .title = try allocator.dupe(u8, e.value_ptr.title orelse e.value_ptr.clean_name),
+            .file_path_or_path = try allocator.dupe(u8, e.value_ptr.file_path),
+            .library_name = try allocator.dupe(u8, lib.name),
+            .library_type = try allocator.dupe(u8, "Movies"),
+        });
     }
 
-    return list.toOwnedSlice(allocator);
+    var sh_it = cat.shows.iterator();
+    while (sh_it.next()) |e| {
+        if (!e.value_ptr.is_present) continue;
+        if (e.value_ptr.tmdb_id != null and e.value_ptr.tmdb_id.? > 0) continue;
+        const lib = cat.libraries.get(e.value_ptr.library_id) orelse continue;
+        if (lib.lib_type != .Shows) continue;
+
+        try list.append(allocator, .{
+            .id = e.key_ptr.*,
+            .item_type = try allocator.dupe(u8, "show"),
+            .title = try allocator.dupe(u8, e.value_ptr.title),
+            .file_path_or_path = try allocator.dupe(u8, e.value_ptr.path),
+            .library_name = try allocator.dupe(u8, lib.name),
+            .library_type = try allocator.dupe(u8, "Shows"),
+        });
+    }
+
+    std.sort.pdq(UnmatchedItem, list.items, {}, struct {
+        fn lessThan(_: void, a: UnmatchedItem, b: UnmatchedItem) bool {
+            return std.mem.order(u8, a.title, b.title) == .lt;
+        }
+    }.lessThan);
+
+    return try list.toOwnedSlice(allocator);
 }
 
 /// Returns count of all unmatched movies and shows in 'Movies' and 'Shows' libraries.
 pub fn getUnmatchedCount(database: *db_mod.Database) !i64 {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    cat.rwlock.lockSharedUncancelable(cat.io);
+    defer cat.rwlock.unlockShared(cat.io);
+
     var count: i64 = 0;
-
-    {
-        var stmt = try database.prepare(
-            \\SELECT COUNT(*) 
-            \\FROM movies m 
-            \\JOIN libraries l ON m.library_id = l.id 
-            \\WHERE m.is_present = 1 AND l.type = 'Movies' AND (m.tmdb_id IS NULL OR m.tmdb_id = 0);
-        );
-        defer stmt.finalize();
-        if ((try stmt.step()) == .row) {
-            count += stmt.columnInt64(0);
+    var m_it = cat.movies.iterator();
+    while (m_it.next()) |e| {
+        if (e.value_ptr.is_present and (e.value_ptr.tmdb_id == null or e.value_ptr.tmdb_id.? == 0)) {
+            if (cat.libraries.get(e.value_ptr.library_id)) |lib| {
+                if (lib.lib_type == .Movies) count += 1;
+            }
         }
     }
-
-    {
-        var stmt = try database.prepare(
-            \\SELECT COUNT(*) 
-            \\FROM shows s 
-            \\JOIN libraries l ON s.library_id = l.id 
-            \\WHERE s.is_present = 1 AND l.type = 'Shows' AND (s.tmdb_id IS NULL OR s.tmdb_id = 0);
-        );
-        defer stmt.finalize();
-        if ((try stmt.step()) == .row) {
-            count += stmt.columnInt64(0);
+    var sh_it = cat.shows.iterator();
+    while (sh_it.next()) |e| {
+        if (e.value_ptr.is_present and (e.value_ptr.tmdb_id == null or e.value_ptr.tmdb_id.? == 0)) {
+            if (cat.libraries.get(e.value_ptr.library_id)) |lib| {
+                if (lib.lib_type == .Shows) count += 1;
+            }
         }
     }
-
     return count;
 }

@@ -99,31 +99,30 @@ pub fn handleGetLibraryItems(
     try json.appendSlice(allocator, "{\"success\":true,\"items\":[");
 
     var first = true;
-    if (lib.lib_type == .Shows) {
-        var stmt = try database.prepare(
-            \\SELECT id, title, poster_path, tmdb_id 
-            \\FROM shows
-            \\WHERE library_id = ?1 AND is_present = 1
-            \\ORDER BY 
-            \\    CASE 
-            \\        WHEN title LIKE 'The %' THEN SUBSTR(title, 5)
-            \\        WHEN title LIKE 'A %' THEN SUBSTR(title, 3)
-            \\        WHEN title LIKE 'An %' THEN SUBSTR(title, 4)
-            \\        ELSE title
-            \\    END COLLATE NOCASE ASC;
-        );
-        defer stmt.finalize();
-        try stmt.bindInt64(1, lib.id);
+    const cat = database.catalog orelse {
+        try request.respond("{\"success\":false,\"error\":\"Catalog not configured\"}", .{ .status = .internal_server_error });
+        return;
+    };
 
-        while ((try stmt.step()) == .row) {
+    if (lib.lib_type == .Shows) {
+        const shows = try cat.getShowsByLibrary(allocator, lib.id);
+        defer {
+            for (shows) |*s| {
+                var mut = s.*;
+                mut.deinit(allocator);
+            }
+            allocator.free(shows);
+        }
+
+        for (shows) |s| {
             if (!first) try json.appendSlice(allocator, ",");
             first = false;
 
-            const show_id = stmt.columnInt64(0);
-            const title = stmt.columnText(1).?;
-            const poster_path_opt = stmt.columnText(2);
-            const poster_path = if (poster_path_opt != null) poster_path_opt.? else "";
-            const tmdb_id_str = stmt.columnText(3) orelse "";
+            const show_id = s.id;
+            const title = s.title;
+            const poster_path = s.poster_path orelse "";
+            var tmdb_id_buf: [32]u8 = undefined;
+            const tmdb_id_str = if (s.tmdb_id) |tid| std.fmt.bufPrint(&tmdb_id_buf, "{d}", .{tid}) catch "" else "";
 
             var escaped_title = std.ArrayList(u8).empty;
             defer escaped_title.deinit(allocator);
@@ -146,33 +145,24 @@ pub fn handleGetLibraryItems(
             try json.appendSlice(allocator, item_json);
         }
     } else {
-        var stmt = try database.prepare(
-            \\SELECT id, file_path, clean_name, title, poster_path, tmdb_id 
-            \\FROM movies
-            \\WHERE library_id = ?1 AND is_present = 1
-            \\ORDER BY 
-            \\    CASE 
-            \\        WHEN COALESCE(title, clean_name) LIKE 'The %' THEN SUBSTR(COALESCE(title, clean_name), 5)
-            \\        WHEN COALESCE(title, clean_name) LIKE 'A %' THEN SUBSTR(COALESCE(title, clean_name), 3)
-            \\        WHEN COALESCE(title, clean_name) LIKE 'An %' THEN SUBSTR(COALESCE(title, clean_name), 4)
-            \\        ELSE COALESCE(title, clean_name)
-            \\    END COLLATE NOCASE ASC;
-        );
-        defer stmt.finalize();
-        try stmt.bindInt64(1, lib.id);
+        const movies = try cat.getMoviesByLibrary(allocator, lib.id);
+        defer {
+            for (movies) |*m| {
+                var mut = m.*;
+                mut.deinit(allocator);
+            }
+            allocator.free(movies);
+        }
 
-        while ((try stmt.step()) == .row) {
+        for (movies) |m| {
             if (!first) try json.appendSlice(allocator, ",");
             first = false;
 
-            const movie_id = stmt.columnInt64(0);
-            const clean_name = stmt.columnText(2).?;
-            const title_opt = stmt.columnText(3);
-            const poster_path_opt = stmt.columnText(4);
-            const tmdb_id_str = stmt.columnText(5) orelse "";
-            
-            const display_title = if (title_opt) |t| t else clean_name;
-            const poster_path = if (poster_path_opt != null) poster_path_opt.? else "";
+            const movie_id = m.id;
+            const display_title = m.title orelse m.clean_name;
+            const poster_path = m.poster_path orelse "";
+            var tmdb_id_buf: [32]u8 = undefined;
+            const tmdb_id_str = if (m.tmdb_id) |tid| std.fmt.bufPrint(&tmdb_id_buf, "{d}", .{tid}) catch "" else "";
 
             var escaped_title = std.ArrayList(u8).empty;
             defer escaped_title.deinit(allocator);

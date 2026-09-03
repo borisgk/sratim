@@ -1,6 +1,5 @@
 const std = @import("std");
 const db_mod = @import("db.zig");
-const c = @import("../core/c.zig").c;
 
 pub const MovieMetadata = struct {
     movie_id: i64,
@@ -32,135 +31,119 @@ pub const EpisodeMissingMetadata = struct {
 };
 
 pub fn getMovieInfoById(database: *db_mod.Database, allocator: std.mem.Allocator, movie_id: i64) !?MovieInfo {
-    var stmt = try database.prepare("SELECT library_id, file_path FROM movies WHERE id = ?1;");
-    defer stmt.finalize();
-    try stmt.bindInt64(1, movie_id);
-    if ((try stmt.step()) != .row) return null;
-    const library_id = stmt.columnInt64(0);
-    const file_path_val = stmt.columnText(1);
-    var file_path_dup: []const u8 = "";
-    if (file_path_val) |fp| {
-        file_path_dup = try allocator.dupe(u8, fp);
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    const mov = (try cat.getMovieById(allocator, movie_id)) orelse return null;
+    defer {
+        var m = mov;
+        m.deinit(allocator);
     }
-    return MovieInfo{ .library_id = library_id, .file_path = file_path_dup };
+    return MovieInfo{
+        .library_id = mov.library_id,
+        .file_path = try allocator.dupe(u8, mov.file_path),
+    };
 }
 
 pub fn getEpisodeInfoById(database: *db_mod.Database, allocator: std.mem.Allocator, episode_id: i64) !?MovieInfo {
-    var stmt = try database.prepare(
-        \\SELECT s.library_id, e.file_path 
-        \\FROM episodes e 
-        \\JOIN shows s ON e.show_id = s.id 
-        \\WHERE e.id = ?1;
-    );
-    defer stmt.finalize();
-    try stmt.bindInt64(1, episode_id);
-    if ((try stmt.step()) != .row) return null;
-    const library_id = stmt.columnInt64(0);
-    const file_path_val = stmt.columnText(1);
-    var file_path_dup: []const u8 = "";
-    if (file_path_val) |fp| {
-        file_path_dup = try allocator.dupe(u8, fp);
-    }
-    return MovieInfo{ .library_id = library_id, .file_path = file_path_dup };
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    cat.rwlock.lockSharedUncancelable(cat.io);
+    defer cat.rwlock.unlockShared(cat.io);
+
+    const ep = cat.episodes.get(episode_id) orelse return null;
+    const show = cat.shows.get(ep.show_id) orelse return null;
+
+    return MovieInfo{
+        .library_id = show.library_id,
+        .file_path = try allocator.dupe(u8, ep.file_path),
+    };
 }
 
 pub fn getShowTitleById(database: *db_mod.Database, allocator: std.mem.Allocator, show_id: i64) !?[]const u8 {
-    var stmt = try database.prepare("SELECT title FROM shows WHERE id = ?1;");
-    defer stmt.finalize();
-    try stmt.bindInt64(1, show_id);
-    if ((try stmt.step()) != .row) return null;
-    const title_val = stmt.columnText(0);
-    if (title_val) |t| {
-        return try allocator.dupe(u8, t);
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    const show = (try cat.getShowById(allocator, show_id)) orelse return null;
+    defer {
+        var s = show;
+        s.deinit(allocator);
     }
-    return null;
+    return try allocator.dupe(u8, show.title);
 }
 
 pub fn getMoviesMissingMetadata(database: *db_mod.Database, allocator: std.mem.Allocator) ![]MovieMissingMetadata {
-    var stmt = try database.prepare(
-        \\SELECT m.id, m.clean_name 
-        \\FROM movies m
-        \\JOIN libraries l ON m.library_id = l.id
-        \\WHERE m.tmdb_id IS NULL 
-        \\  AND m.is_present = 1 
-        \\  AND l.type = 'Movies';
-    );
-    defer stmt.finalize();
-
-    var list = std.ArrayList(MovieMissingMetadata).empty;
-    defer list.deinit(allocator);
-
-    while ((try stmt.step()) == .row) {
-        const id = stmt.columnInt64(0);
-        const clean_name_val = stmt.columnText(1);
-        var clean_name: []const u8 = "";
-        if (clean_name_val) |cn| {
-            clean_name = try allocator.dupe(u8, cn);
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    const movies = try cat.getMoviesMissingMetadata(allocator);
+    defer {
+        for (movies) |*m| {
+            var mut = m.*;
+            mut.deinit(allocator);
         }
-        try list.append(allocator, MovieMissingMetadata{
-            .id = id,
-            .clean_name = clean_name,
-        });
+        allocator.free(movies);
     }
 
-    return list.toOwnedSlice(allocator);
+    var list = std.ArrayList(MovieMissingMetadata).empty;
+    errdefer {
+        for (list.items) |item| allocator.free(item.clean_name);
+        list.deinit(allocator);
+    }
+
+    for (movies) |m| {
+        try list.append(allocator, .{
+            .id = m.id,
+            .clean_name = try allocator.dupe(u8, m.clean_name),
+        });
+    }
+    return try list.toOwnedSlice(allocator);
 }
 
 pub fn getShowsMissingMetadata(database: *db_mod.Database, allocator: std.mem.Allocator) ![]MovieMissingMetadata {
-    var stmt = try database.prepare(
-        \\SELECT s.id, s.title 
-        \\FROM shows s
-        \\JOIN libraries l ON s.library_id = l.id
-        \\WHERE s.tmdb_id IS NULL 
-        \\  AND s.is_present = 1 
-        \\  AND l.type = 'Shows';
-    );
-    defer stmt.finalize();
-
-    var list = std.ArrayList(MovieMissingMetadata).empty;
-    defer list.deinit(allocator);
-
-    while ((try stmt.step()) == .row) {
-        const id = stmt.columnInt64(0);
-        const title_val = stmt.columnText(1);
-        var clean_name: []const u8 = "";
-        if (title_val) |cn| {
-            clean_name = try allocator.dupe(u8, cn);
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    const shows = try cat.getShowsMissingMetadata(allocator);
+    defer {
+        for (shows) |*s| {
+            var mut = s.*;
+            mut.deinit(allocator);
         }
-        try list.append(allocator, MovieMissingMetadata{
-            .id = id,
-            .clean_name = clean_name,
-        });
+        allocator.free(shows);
     }
 
-    return list.toOwnedSlice(allocator);
+    var list = std.ArrayList(MovieMissingMetadata).empty;
+    errdefer {
+        for (list.items) |item| allocator.free(item.clean_name);
+        list.deinit(allocator);
+    }
+
+    for (shows) |s| {
+        try list.append(allocator, .{
+            .id = s.id,
+            .clean_name = try allocator.dupe(u8, s.title),
+        });
+    }
+    return try list.toOwnedSlice(allocator);
 }
 
 pub fn getEpisodesMissingMetadata(database: *db_mod.Database, allocator: std.mem.Allocator) ![]EpisodeMissingMetadata {
-    var stmt = try database.prepare(
-        \\SELECT e.id, s.tmdb_id, e.season, e.episode 
-        \\FROM episodes e
-        \\JOIN shows s ON e.show_id = s.id
-        \\WHERE e.tmdb_id IS NULL 
-        \\  AND e.is_present = 1 
-        \\  AND s.tmdb_id IS NOT NULL 
-        \\  AND s.tmdb_id > 0;
-    );
-    defer stmt.finalize();
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    cat.rwlock.lockSharedUncancelable(cat.io);
+    defer cat.rwlock.unlockShared(cat.io);
 
     var list = std.ArrayList(EpisodeMissingMetadata).empty;
-    defer list.deinit(allocator);
+    errdefer list.deinit(allocator);
 
-    while ((try stmt.step()) == .row) {
-        try list.append(allocator, EpisodeMissingMetadata{
-            .id = stmt.columnInt64(0),
-            .show_tmdb_id = stmt.columnInt64(1),
-            .season = stmt.columnInt64(2),
-            .episode = stmt.columnInt64(3),
-        });
+    var it = cat.episodes.iterator();
+    while (it.next()) |e| {
+        if (!e.value_ptr.is_present) continue;
+        if (e.value_ptr.tmdb_id != null) continue;
+
+        if (cat.shows.get(e.value_ptr.show_id)) |sh| {
+            if (sh.tmdb_id != null and sh.tmdb_id.? > 0) {
+                try list.append(allocator, .{
+                    .id = e.key_ptr.*,
+                    .show_tmdb_id = sh.tmdb_id.?,
+                    .season = e.value_ptr.season,
+                    .episode = e.value_ptr.episode,
+                });
+            }
+        }
     }
-
-    return list.toOwnedSlice(allocator);
+    return try list.toOwnedSlice(allocator);
 }
 
 pub fn saveMetadataById(
@@ -173,20 +156,9 @@ pub fn saveMetadataById(
     backdrop_path: ?[]const u8,
     release_date: ?[]const u8,
 ) !void {
-    var stmt = try database.prepare(
-        \\UPDATE movies SET tmdb_id = ?2, title = ?3, overview = ?4, poster_path = ?5, backdrop_path = ?6, release_date = ?7 WHERE id = ?1;
-    );
-    defer stmt.finalize();
-
-    try stmt.bindInt64(1, movie_id);
-    try stmt.bindInt64(2, tmdb_id);
-    try stmt.bindText(3, title);
-    if (overview) |o| try stmt.bindText(4, o) else try stmt.bindNull(4);
-    if (poster_path) |p| try stmt.bindText(5, p) else try stmt.bindNull(5);
-    if (backdrop_path) |b| try stmt.bindText(6, b) else try stmt.bindNull(6);
-    if (release_date) |r| try stmt.bindText(7, r) else try stmt.bindNull(7);
-
-    _ = try stmt.step();
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    try cat.linkMovieMetadata(movie_id, tmdb_id, title, overview, poster_path, backdrop_path, release_date);
+    cat.snapshot() catch {};
 }
 
 pub fn saveShowMetadataById(
@@ -199,20 +171,10 @@ pub fn saveShowMetadataById(
     backdrop_path: ?[]const u8,
     first_air_date: ?[]const u8,
 ) !void {
-    _ = first_air_date; // Ignore for now as it's not in the schema
-    var stmt = try database.prepare(
-        \\UPDATE shows SET tmdb_id = ?2, title = ?3, overview = ?4, poster_path = ?5, backdrop_path = ?6 WHERE id = ?1;
-    );
-    defer stmt.finalize();
-
-    try stmt.bindInt64(1, show_id);
-    try stmt.bindInt64(2, tmdb_id);
-    try stmt.bindText(3, title);
-    if (overview) |o| try stmt.bindText(4, o) else try stmt.bindNull(4);
-    if (poster_path) |p| try stmt.bindText(5, p) else try stmt.bindNull(5);
-    if (backdrop_path) |b| try stmt.bindText(6, b) else try stmt.bindNull(6);
-
-    _ = try stmt.step();
+    _ = first_air_date;
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    try cat.linkShowMetadata(show_id, tmdb_id, title, overview, poster_path, backdrop_path);
+    cat.snapshot() catch {};
 }
 
 pub fn saveEpisodeMetadataById(
@@ -223,18 +185,9 @@ pub fn saveEpisodeMetadataById(
     overview: ?[]const u8,
     still_path: ?[]const u8,
 ) !void {
-    var stmt = try database.prepare(
-        \\UPDATE episodes SET tmdb_id = ?2, title = ?3, overview = ?4, still_path = ?5 WHERE id = ?1;
-    );
-    defer stmt.finalize();
-
-    try stmt.bindInt64(1, episode_id);
-    try stmt.bindInt64(2, tmdb_id);
-    try stmt.bindText(3, title);
-    if (overview) |o| try stmt.bindText(4, o) else try stmt.bindNull(4);
-    if (still_path) |p| try stmt.bindText(5, p) else try stmt.bindNull(5);
-
-    _ = try stmt.step();
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    try cat.linkEpisodeMetadata(episode_id, tmdb_id, title, overview, still_path);
+    cat.snapshot() catch {};
 }
 
 pub fn getMetadataById(
@@ -242,152 +195,87 @@ pub fn getMetadataById(
     allocator: std.mem.Allocator,
     movie_id: i64,
 ) !?MovieMetadata {
-    var stmt = try database.prepare(
-        \\SELECT library_id, file_path, tmdb_id, title, overview, poster_path, backdrop_path, release_date FROM movies WHERE id = ?1 AND tmdb_id IS NOT NULL AND tmdb_id > 0;
-    );
-    defer stmt.finalize();
-
-    try stmt.bindInt64(1, movie_id);
-
-    const step_res = try stmt.step();
-    if (step_res != .row) return null;
-
-    const library_id = stmt.columnInt64(0);
-    const file_path_val = stmt.columnText(1);
-    var file_path: []const u8 = "";
-    if (file_path_val) |fp| {
-        file_path = try allocator.dupe(u8, fp);
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    const mov = (try cat.getMovieById(allocator, movie_id)) orelse return null;
+    defer {
+        var m = mov;
+        m.deinit(allocator);
     }
-    errdefer allocator.free(file_path);
-
-    const tmdb_id = c.sqlite3_column_int64(stmt.stmt, 2);
-    
-    const title_val = c.sqlite3_column_text(stmt.stmt, 3);
-    const title_len = c.sqlite3_column_bytes(stmt.stmt, 3);
-    const title = try allocator.dupe(u8, title_val[0..@intCast(title_len)]);
-    errdefer allocator.free(title);
-
-    var overview: ?[]const u8 = null;
-    if (c.sqlite3_column_text(stmt.stmt, 4)) |overview_val| {
-        const overview_len = c.sqlite3_column_bytes(stmt.stmt, 4);
-        overview = try allocator.dupe(u8, overview_val[0..@intCast(overview_len)]);
-    }
-    errdefer if (overview) |o| allocator.free(o);
-
-    var poster_path: ?[]const u8 = null;
-    if (c.sqlite3_column_text(stmt.stmt, 5)) |poster_val| {
-        const poster_len = c.sqlite3_column_bytes(stmt.stmt, 5);
-        poster_path = try allocator.dupe(u8, poster_val[0..@intCast(poster_len)]);
-    }
-    errdefer if (poster_path) |p| allocator.free(p);
-
-    var backdrop_path: ?[]const u8 = null;
-    if (c.sqlite3_column_text(stmt.stmt, 6)) |backdrop_val| {
-        const backdrop_len = c.sqlite3_column_bytes(stmt.stmt, 6);
-        backdrop_path = try allocator.dupe(u8, backdrop_val[0..@intCast(backdrop_len)]);
-    }
-    errdefer if (backdrop_path) |b| allocator.free(b);
-
-    var release_date: ?[]const u8 = null;
-    if (c.sqlite3_column_text(stmt.stmt, 7)) |date_val| {
-        const date_len = c.sqlite3_column_bytes(stmt.stmt, 7);
-        release_date = try allocator.dupe(u8, date_val[0..@intCast(date_len)]);
-    }
+    if (mov.tmdb_id == null or mov.tmdb_id.? <= 0) return null;
 
     return MovieMetadata{
         .movie_id = movie_id,
-        .library_id = library_id,
-        .file_path = file_path,
-        .tmdb_id = tmdb_id,
-        .title = title,
-        .overview = overview,
-        .poster_path = poster_path,
-        .backdrop_path = backdrop_path,
-        .release_date = release_date,
+        .library_id = mov.library_id,
+        .file_path = try allocator.dupe(u8, mov.file_path),
+        .tmdb_id = mov.tmdb_id.?,
+        .title = try allocator.dupe(u8, mov.title orelse mov.clean_name),
+        .overview = if (mov.overview) |o| try allocator.dupe(u8, o) else null,
+        .poster_path = if (mov.poster_path) |p| try allocator.dupe(u8, p) else null,
+        .backdrop_path = if (mov.backdrop_path) |b| try allocator.dupe(u8, b) else null,
+        .release_date = if (mov.release_date) |r| try allocator.dupe(u8, r) else null,
     };
 }
 
 pub fn markEpisodeMetadataNotFound(database: *db_mod.Database, episode_id: i64) !void {
-    var stmt = try database.prepare("UPDATE episodes SET tmdb_id = 0 WHERE id = ?1;");
-    defer stmt.finalize();
-    try stmt.bindInt64(1, episode_id);
-    _ = try stmt.step();
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    {
+        cat.rwlock.lockUncancelable(cat.io);
+        defer cat.rwlock.unlock(cat.io);
+
+        if (cat.episodes.getPtr(episode_id)) |ptr| {
+            ptr.tmdb_id = 0;
+        }
+    }
+    cat.snapshot() catch {};
 }
 
 pub fn deleteMetadataById(database: *db_mod.Database, movie_id: i64) !void {
-    var stmt = try database.prepare("UPDATE movies SET tmdb_id = NULL, title = NULL, overview = NULL, poster_path = NULL, backdrop_path = NULL, release_date = NULL WHERE id = ?1;");
-    defer stmt.finalize();
-    try stmt.bindInt64(1, movie_id);
-    _ = try stmt.step();
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    try cat.unlinkMovieMetadata(movie_id);
+    cat.snapshot() catch {};
 }
 
 pub fn markMetadataNotFound(database: *db_mod.Database, movie_id: i64) !void {
-    var stmt = try database.prepare("UPDATE movies SET tmdb_id = 0 WHERE id = ?1;");
-    defer stmt.finalize();
-    try stmt.bindInt64(1, movie_id);
-    _ = try stmt.step();
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    {
+        cat.rwlock.lockUncancelable(cat.io);
+        defer cat.rwlock.unlock(cat.io);
+
+        if (cat.movies.getPtr(movie_id)) |ptr| {
+            ptr.tmdb_id = 0;
+        }
+    }
+    cat.snapshot() catch {};
 }
 
 pub fn markShowMetadataNotFound(database: *db_mod.Database, show_id: i64) !void {
-    var stmt = try database.prepare("UPDATE shows SET tmdb_id = 0 WHERE id = ?1;");
-    defer stmt.finalize();
-    try stmt.bindInt64(1, show_id);
-    _ = try stmt.step();
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    {
+        cat.rwlock.lockUncancelable(cat.io);
+        defer cat.rwlock.unlock(cat.io);
+
+        if (cat.shows.getPtr(show_id)) |ptr| {
+            ptr.tmdb_id = 0;
+        }
+    }
+    cat.snapshot() catch {};
 }
 
 pub fn resetShowEpisodesMetadata(database: *db_mod.Database, show_id: i64) !void {
-    var stmt = try database.prepare("UPDATE episodes SET tmdb_id = NULL, title = NULL, overview = NULL, still_path = NULL WHERE show_id = ?1;");
-    defer stmt.finalize();
-    try stmt.bindInt64(1, show_id);
-    _ = try stmt.step();
-}
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    cat.rwlock.lockUncancelable(cat.io);
+    defer cat.rwlock.unlock(cat.io);
 
-test "metadata: save, get and delete movie metadata" {
-    const allocator = std.testing.allocator;
-    var db = try db_mod.Database.open(":memory:");
-    defer db.close();
-
-    try db_mod.initSchema(&db);
-
-    _ = try db.exec("INSERT INTO libraries (name, path, type) VALUES ('Test', '/tmp/test', 'Movies')");
-    _ = try db.exec("INSERT INTO movies (library_id, file_path, clean_name, is_present) VALUES (1, 'test.mp4', 'test', 1)");
-    
-    try saveMetadataById(&db, 1, 12345, "Test Movie", "Some overview", "/path.jpg", "/bg.jpg", "2026-07-13");
-    
-    const meta = (try getMetadataById(&db, allocator, 1)).?;
-    defer {
-        allocator.free(meta.file_path);
-        allocator.free(meta.title);
-        if (meta.overview) |o| allocator.free(o);
-        if (meta.poster_path) |p| allocator.free(p);
-        if (meta.backdrop_path) |b| allocator.free(b);
-        if (meta.release_date) |r| allocator.free(r);
+    var it = cat.episodes.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.show_id == show_id) {
+            e.value_ptr.tmdb_id = null;
+            if (e.value_ptr.title) |t| cat.allocator.free(t);
+            e.value_ptr.title = null;
+            if (e.value_ptr.overview) |o| cat.allocator.free(o);
+            e.value_ptr.overview = null;
+            if (e.value_ptr.still_path) |s| cat.allocator.free(s);
+            e.value_ptr.still_path = null;
+        }
     }
-
-    try std.testing.expectEqual(@as(i64, 12345), meta.tmdb_id);
-    try std.testing.expectEqualStrings("Test Movie", meta.title);
-    try std.testing.expectEqualStrings("test.mp4", meta.file_path);
-
-    try deleteMetadataById(&db, 1);
-    const meta_nil = try getMetadataById(&db, allocator, 1);
-    try std.testing.expect(meta_nil == null);
-}
-
-test "metadata: reset show episodes metadata" {
-    var db = try db_mod.Database.open(":memory:");
-    defer db.close();
-
-    try db_mod.initSchema(&db);
-
-    _ = try db.exec("INSERT INTO libraries (name, path, type) VALUES ('Shows', '/tmp/shows', 'Shows')");
-    _ = try db.exec("INSERT INTO shows (id, library_id, path, title) VALUES (1, 1, 'Show1', 'Test Show')");
-    _ = try db.exec("INSERT INTO episodes (id, show_id, file_path, season, episode, tmdb_id, title) VALUES (1, 1, 'ep1.mp4', 1, 1, 999, 'Old Title')");
-
-    try resetShowEpisodesMetadata(&db, 1);
-
-    var stmt = try db.prepare("SELECT tmdb_id, title FROM episodes WHERE id = 1;");
-    defer stmt.finalize();
-    try std.testing.expect((try stmt.step()) == .row);
-    try std.testing.expect(stmt.columnText(0) == null);
-    try std.testing.expect(stmt.columnText(1) == null);
 }

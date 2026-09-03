@@ -50,59 +50,38 @@ pub fn generateLibraryContentHtml(
     var recently_added_section_buf = std.ArrayList(u8).empty;
     defer recently_added_section_buf.deinit(allocator);
 
+    const cat = database.catalog orelse return null;
+
     if (lib.lib_type == .Shows) {
-        var stmt = try database.prepare(
-            \\SELECT id, title, poster_path, tmdb_id 
-            \\FROM shows
-            \\WHERE library_id = ?1 AND is_present = 1
-            \\ORDER BY 
-            \\    CASE 
-            \\        WHEN title LIKE 'The %' THEN SUBSTR(title, 5)
-            \\        WHEN title LIKE 'A %' THEN SUBSTR(title, 3)
-            \\        WHEN title LIKE 'An %' THEN SUBSTR(title, 4)
-            \\        ELSE title
-            \\    END COLLATE NOCASE ASC;
-        );
-        defer stmt.finalize();
-        try stmt.bindInt64(1, lib.id);
+        const shows = try cat.getShowsByLibrary(allocator, lib.id);
+        defer {
+            for (shows) |*s| {
+                var mut = s.*;
+                mut.deinit(allocator);
+            }
+            allocator.free(shows);
+        }
 
-        while ((try stmt.step()) == .row) {
-            const show_id = stmt.columnInt64(0);
-            const title = stmt.columnText(1).?;
-            const poster_path_opt = stmt.columnText(2);
-            const tmdb_id_val = stmt.columnText(3);
-            const tmdb_id = if (tmdb_id_val != null) stmt.columnInt64(3) else null;
-
-            try cards.appendShowCard(&cards_buf, allocator, show_id, title, poster_path_opt, tmdb_id, is_admin);
+        for (shows) |s| {
+            try cards.appendShowCard(&cards_buf, allocator, s.id, s.title, s.poster_path, s.tmdb_id, is_admin);
         }
     } else {
-        var recent_stmt = try database.prepare(
-            \\SELECT id, file_path, clean_name, title, poster_path, tmdb_id 
-            \\FROM movies
-            \\WHERE library_id = ?1 AND is_present = 1
-            \\ORDER BY id DESC
-            \\LIMIT 20;
-        );
-        defer recent_stmt.finalize();
-        try recent_stmt.bindInt64(1, lib.id);
+        const recent_movies = try cat.getRecentMoviesByLibrary(allocator, lib.id, 20);
+        defer {
+            for (recent_movies) |*m| {
+                var mut = m.*;
+                mut.deinit(allocator);
+            }
+            allocator.free(recent_movies);
+        }
 
         var recent_cards_buf = std.ArrayList(u8).empty;
         defer recent_cards_buf.deinit(allocator);
 
-        var recent_count: usize = 0;
-        while ((try recent_stmt.step()) == .row) {
-            recent_count += 1;
-            const movie_id = recent_stmt.columnInt64(0);
-            const file_path = recent_stmt.columnText(1).?;
-            const clean_name = recent_stmt.columnText(2).?;
-            const title_opt = recent_stmt.columnText(3);
-            const poster_path_opt = recent_stmt.columnText(4);
-            const tmdb_id_val = recent_stmt.columnText(5);
-            const tmdb_id = if (tmdb_id_val != null) recent_stmt.columnInt64(5) else null;
-
+        for (recent_movies) |m| {
             var progress_pct: ?f64 = null;
             for (progress_list) |item| {
-                if (item.movie_id == movie_id) {
+                if (item.movie_id == m.id) {
                     if (item.duration > 0) {
                         progress_pct = (item.position / item.duration) * 100.0;
                     }
@@ -110,10 +89,10 @@ pub fn generateLibraryContentHtml(
                 }
             }
 
-            try cards.appendMovieCard(&recent_cards_buf, allocator, movie_id, file_path, clean_name, title_opt, poster_path_opt, tmdb_id, progress_pct, is_admin);
+            try cards.appendMovieCard(&recent_cards_buf, allocator, m.id, m.file_path, m.clean_name, m.title, m.poster_path, m.tmdb_id, progress_pct, is_admin);
         }
 
-        if (recent_count > 0) {
+        if (recent_movies.len > 0) {
             try recently_added_section_buf.appendSlice(allocator,
                 \\<div id="recently-added-section" class="media-section">
                 \\    <h2 class="section-title">Recently Added</h2>
@@ -129,33 +108,19 @@ pub fn generateLibraryContentHtml(
             );
         }
 
-        var stmt = try database.prepare(
-            \\SELECT id, file_path, clean_name, title, poster_path, tmdb_id 
-            \\FROM movies
-            \\WHERE library_id = ?1 AND is_present = 1
-            \\ORDER BY 
-            \\    CASE 
-            \\        WHEN COALESCE(title, clean_name) LIKE 'The %' THEN SUBSTR(COALESCE(title, clean_name), 5)
-            \\        WHEN COALESCE(title, clean_name) LIKE 'A %' THEN SUBSTR(COALESCE(title, clean_name), 3)
-            \\        WHEN COALESCE(title, clean_name) LIKE 'An %' THEN SUBSTR(COALESCE(title, clean_name), 4)
-            \\        ELSE COALESCE(title, clean_name)
-            \\    END COLLATE NOCASE ASC;
-        );
-        defer stmt.finalize();
-        try stmt.bindInt64(1, lib.id);
+        const all_movies = try cat.getMoviesByLibrary(allocator, lib.id);
+        defer {
+            for (all_movies) |*m| {
+                var mut = m.*;
+                mut.deinit(allocator);
+            }
+            allocator.free(all_movies);
+        }
 
-        while ((try stmt.step()) == .row) {
-            const movie_id = stmt.columnInt64(0);
-            const file_path = stmt.columnText(1).?;
-            const clean_name = stmt.columnText(2).?;
-            const title_opt = stmt.columnText(3);
-            const poster_path_opt = stmt.columnText(4);
-            const tmdb_id_val = stmt.columnText(5);
-            const tmdb_id = if (tmdb_id_val != null) stmt.columnInt64(5) else null;
-
+        for (all_movies) |m| {
             var progress_pct: ?f64 = null;
             for (progress_list) |item| {
-                if (item.movie_id == movie_id) {
+                if (item.movie_id == m.id) {
                     if (item.duration > 0) {
                         progress_pct = (item.position / item.duration) * 100.0;
                     }
@@ -163,7 +128,7 @@ pub fn generateLibraryContentHtml(
                 }
             }
 
-            try cards.appendMovieCard(&cards_buf, allocator, movie_id, file_path, clean_name, title_opt, poster_path_opt, tmdb_id, progress_pct, is_admin);
+            try cards.appendMovieCard(&cards_buf, allocator, m.id, m.file_path, m.clean_name, m.title, m.poster_path, m.tmdb_id, progress_pct, is_admin);
         }
     }
 

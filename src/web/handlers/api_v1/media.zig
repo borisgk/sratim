@@ -22,25 +22,33 @@ pub fn handleGetMovie(
         return;
     };
 
-    var stmt = try database.prepare(
-        \\SELECT id, library_id, file_path, clean_name, title, overview, poster_path, backdrop_path, release_date, tmdb_id, file_size
-        \\FROM movies
-        \\WHERE id = ?1 AND is_present = 1;
-    );
-    defer stmt.finalize();
-    try stmt.bindInt64(1, movie_id);
+    const cat = database.catalog orelse {
+        try request.respond("{\"success\":false,\"error\":\"Catalog not configured\"}", .{ .status = .internal_server_error });
+        return;
+    };
 
-    if ((try stmt.step()) == .row) {
-        const id = stmt.columnInt64(0);
-        const library_id = stmt.columnInt64(1);
-        const file_path = stmt.columnText(2).?;
-        const clean_name = stmt.columnText(3).?;
-        const title_opt = stmt.columnText(4);
-        const overview = stmt.columnText(5) orelse "";
-        const poster_path = stmt.columnText(6) orelse "";
-        const backdrop_path = stmt.columnText(7) orelse "";
-        const release_date = stmt.columnText(8) orelse "";
-        const tmdb_id = stmt.columnText(9) orelse "";
+    const mov_opt = try cat.getMovieById(allocator, movie_id);
+    if (mov_opt == null or !mov_opt.?.is_present) {
+        try request.respond("{\"success\":false,\"error\":\"Movie not found\"}", .{ .status = .not_found });
+        return;
+    }
+    const mov = mov_opt.?;
+    defer {
+        var mut = mov;
+        mut.deinit(allocator);
+    }
+
+    const id = mov.id;
+    const library_id = mov.library_id;
+    const file_path = mov.file_path;
+    const clean_name = mov.clean_name;
+    const title_opt = mov.title;
+    const overview = mov.overview orelse "";
+    const poster_path = mov.poster_path orelse "";
+    const backdrop_path = mov.backdrop_path orelse "";
+    const release_date = mov.release_date orelse "";
+    var tmdb_id_buf: [32]u8 = undefined;
+    const tmdb_id = if (mov.tmdb_id) |tid| std.fmt.bufPrint(&tmdb_id_buf, "{d}", .{tid}) catch "" else "";
 
         var runtime: u32 = 0;
         var file_size: u64 = 0;
@@ -107,9 +115,6 @@ pub fn handleGetMovie(
                 .{ .name = "content-type", .value = "application/json" },
             },
         });
-    } else {
-        try request.respond("{\"success\":false,\"error\":\"Movie not found\"}", .{ .status = .not_found });
-    }
 }
 
 pub fn handleGetShow(
@@ -129,21 +134,29 @@ pub fn handleGetShow(
         return;
     };
 
-    var stmt = try database.prepare("SELECT title, overview, poster_path, backdrop_path, library_id, tmdb_id FROM shows WHERE id = ?1;");
-    defer stmt.finalize();
-    try stmt.bindInt64(1, show_id);
+    const cat = database.catalog orelse {
+        try request.respond("{\"success\":false,\"error\":\"Catalog not configured\"}", .{ .status = .internal_server_error });
+        return;
+    };
 
-    if ((try stmt.step()) != .row) {
+    const show_opt = try cat.getShowById(allocator, show_id);
+    if (show_opt == null or !show_opt.?.is_present) {
         try request.respond("{\"success\":false,\"error\":\"Show not found\"}", .{ .status = .not_found });
         return;
     }
+    const show = show_opt.?;
+    defer {
+        var mut = show;
+        mut.deinit(allocator);
+    }
 
-    const title = stmt.columnText(0).?;
-    const overview = stmt.columnText(1) orelse "";
-    const poster_path = stmt.columnText(2) orelse "";
-    const backdrop_path = stmt.columnText(3) orelse "";
-    const library_id = stmt.columnInt64(4);
-    const tmdb_id = stmt.columnText(5) orelse "";
+    const title = show.title;
+    const overview = show.overview orelse "";
+    const poster_path = show.poster_path orelse "";
+    const backdrop_path = show.backdrop_path orelse "";
+    const library_id = show.library_id;
+    var tmdb_id_buf: [32]u8 = undefined;
+    const tmdb_id = if (show.tmdb_id) |tid| std.fmt.bufPrint(&tmdb_id_buf, "{d}", .{tid}) catch "" else "";
 
     var escaped_title = std.ArrayList(u8).empty;
     defer escaped_title.deinit(allocator);
@@ -171,14 +184,14 @@ pub fn handleGetShow(
         }
     }
 
-    var ep_stmt = try database.prepare(
-        \\SELECT id, file_path, season, episode, title, overview, still_path, file_size
-        \\FROM episodes 
-        \\WHERE show_id = ?1 AND is_present = 1
-        \\ORDER BY season ASC, episode ASC;
-    );
-    defer ep_stmt.finalize();
-    try ep_stmt.bindInt64(1, show_id);
+    const episodes = try cat.getEpisodesByShow(allocator, show_id);
+    defer {
+        for (episodes) |*ep| {
+            var mut = ep.*;
+            mut.deinit(allocator);
+        }
+        allocator.free(episodes);
+    }
 
     var json = std.ArrayList(u8).empty;
     defer json.deinit(allocator);
@@ -192,18 +205,19 @@ pub fn handleGetShow(
     try json.appendSlice(allocator, show_header);
 
     var first_ep = true;
-    while ((try ep_stmt.step()) == .row) {
+    for (episodes) |ep| {
+        if (!ep.is_present) continue;
         if (!first_ep) try json.appendSlice(allocator, ",");
         first_ep = false;
 
-        const ep_id = ep_stmt.columnInt64(0);
-        const file_path = ep_stmt.columnText(1).?;
-        const season = ep_stmt.columnInt(2);
-        const episode = ep_stmt.columnInt(3);
-        const ep_title_opt = ep_stmt.columnText(4);
-        const ep_overview_opt = ep_stmt.columnText(5);
-        const ep_still_path_opt = ep_stmt.columnText(6);
-        const ep_db_file_size = ep_stmt.columnInt64(7);
+        const ep_id = ep.id;
+        const file_path = ep.file_path;
+        const season = ep.season;
+        const episode = ep.episode;
+        const ep_title_opt = ep.title;
+        const ep_overview_opt = ep.overview;
+        const ep_still_path_opt = ep.still_path;
+        const ep_db_file_size = ep.file_size;
 
         var ep_file_size: u64 = @intCast(@max(0, ep_db_file_size));
         var ep_runtime: u32 = 0;

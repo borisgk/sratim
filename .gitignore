@@ -11,6 +11,9 @@ Comedy/
 tmp/
 sratim.db*
 logs.db*
+sratim.json*
+logs.json*
+*.wal
 images/
 public/
 AGENTS.md

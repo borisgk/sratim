@@ -48,159 +48,121 @@ fn hexToBytes(comptime len: usize, hex: []const u8) ?[len]u8 {
     return result;
 }
 
-/// Creates a new user with a hashed password and inserts into the database.
-pub fn createUser(database: *db_mod.Database, io: std.Io, username: []const u8, password: []const u8, is_admin: bool) !void {
-    // Generate random salt
-    var salt: [SALT_LEN]u8 = undefined;
-    io.random(&salt);
-
-    // Derive key using PBKDF2
-    var derived_key: [KEY_LEN]u8 = undefined;
-    try pbkdf2(&derived_key, password, &salt, PBKDF2_ROUNDS, HmacSha256);
-
-    // Convert to hex strings
-    var hash_hex: [KEY_LEN * 2]u8 = undefined;
-    bytesToHex(&hash_hex, derived_key);
-
-    var salt_hex: [SALT_LEN * 2]u8 = undefined;
-    saltToHex(&salt_hex, salt);
-
-    // Insert into database
-    var stmt = try database.prepare("INSERT INTO users (username, password_hash, salt, is_admin) VALUES (?1, ?2, ?3, ?4);");
-    defer stmt.finalize();
-
-    try stmt.bindText(1, username);
-    try stmt.bindText(2, &hash_hex);
-    try stmt.bindText(3, &salt_hex);
-    try stmt.bindInt(4, if (is_admin) 1 else 0);
-
-    _ = try stmt.step();
-}
-
-/// Verifies a password against the stored hash for a given username.
-/// Returns true if the password matches, false otherwise (including if user not found).
-pub fn verifyPassword(database: *db_mod.Database, allocator: std.mem.Allocator, username: []const u8, password: []const u8) !bool {
-    var stmt = try database.prepare("SELECT password_hash, salt FROM users WHERE username = ?1;");
-    defer stmt.finalize();
-
-    try stmt.bindText(1, username);
-
-    const result = try stmt.step();
-    if (result != .row) return false;
-
-    const stored_hash_hex = stmt.columnText(0) orelse return false;
-    const stored_salt_hex = stmt.columnText(1) orelse return false;
-
-    // Dupe the strings since they're owned by the statement
-    const hash_copy = try allocator.dupe(u8, stored_hash_hex);
-    defer allocator.free(hash_copy);
-    const salt_copy = try allocator.dupe(u8, stored_salt_hex);
-    defer allocator.free(salt_copy);
-
-    // Decode hex salt
-    const salt = hexToBytes(SALT_LEN, salt_copy) orelse return false;
-
-    // Re-derive key from candidate password
-    var derived_key: [KEY_LEN]u8 = undefined;
-    try pbkdf2(&derived_key, password, &salt, PBKDF2_ROUNDS, HmacSha256);
-
-    // Convert derived key to hex for comparison
-    var derived_hex: [KEY_LEN * 2]u8 = undefined;
-    bytesToHex(&derived_hex, derived_key);
-
-    // Constant-time comparison
-    return std.crypto.timing_safe.eql([KEY_LEN * 2]u8, derived_hex, hash_copy[0..KEY_LEN * 2].*);
-}
-
-/// Returns whether the given username is an admin.
-pub fn isAdmin(database: *db_mod.Database, username: []const u8) !bool {
-    var stmt = try database.prepare("SELECT is_admin FROM users WHERE username = ?1;");
-    defer stmt.finalize();
-
-    try stmt.bindText(1, username);
-
-    const result = try stmt.step();
-    if (result != .row) return false;
-
-    return stmt.columnInt(0) != 0;
-}
-
-/// Ensures at least one admin user exists. Creates a default admin/admin if the table is empty.
-pub fn ensureAdminExists(database: *db_mod.Database, io: std.Io) !void {
-    var stmt = try database.prepare("SELECT COUNT(*) FROM users;");
-    defer stmt.finalize();
-
-    const result = try stmt.step();
-    if (result != .row) return;
-
-    const count = stmt.columnInt(0);
-    if (count == 0) {
-        try createUser(database, io, "admin", "admin", true);
-        std.debug.print("\n⚠️  Default admin account created (username: admin, password: admin)\n⚠️  Please change the default password!\n\n", .{});
-    }
-}
-
 pub const User = struct {
     id: i64,
     username: []const u8,
     is_admin: bool,
 };
 
+/// Creates a new user with a hashed password and inserts into the database.
+pub fn createUser(database: *db_mod.Database, io: std.Io, username: []const u8, password: []const u8, is_admin: bool) !void {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+
+    var salt: [SALT_LEN]u8 = undefined;
+    io.random(&salt);
+
+    var derived_key: [KEY_LEN]u8 = undefined;
+    try pbkdf2(&derived_key, password, &salt, PBKDF2_ROUNDS, HmacSha256);
+
+    var hash_hex: [KEY_LEN * 2]u8 = undefined;
+    bytesToHex(&hash_hex, derived_key);
+
+    var salt_hex: [SALT_LEN * 2]u8 = undefined;
+    saltToHex(&salt_hex, salt);
+
+    _ = try cat.createUser(username, &hash_hex, &salt_hex, is_admin);
+    cat.snapshot() catch {};
+}
+
+/// Verifies a password against the stored hash for a given username.
+pub fn verifyPassword(database: *db_mod.Database, allocator: std.mem.Allocator, username: []const u8, password: []const u8) !bool {
+    _ = allocator;
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    const user = cat.getUser(username) orelse return false;
+
+    const salt = hexToBytes(SALT_LEN, user.salt) orelse return false;
+
+    var derived_key: [KEY_LEN]u8 = undefined;
+    try pbkdf2(&derived_key, password, &salt, PBKDF2_ROUNDS, HmacSha256);
+
+    var derived_hex: [KEY_LEN * 2]u8 = undefined;
+    bytesToHex(&derived_hex, derived_key);
+
+    if (user.password_hash.len != KEY_LEN * 2) return false;
+    return std.crypto.timing_safe.eql([KEY_LEN * 2]u8, derived_hex, user.password_hash[0..KEY_LEN * 2].*);
+}
+
+/// Returns whether the given username is an admin.
+pub fn isAdmin(database: *db_mod.Database, username: []const u8) !bool {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    if (cat.getUser(username)) |u| {
+        return u.is_admin;
+    }
+    return false;
+}
+
+/// Ensures at least one admin user exists. Creates a default admin/admin if the table is empty.
+pub fn ensureAdminExists(database: *db_mod.Database, io: std.Io) !void {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    if (cat.countUsers() == 0) {
+        try createUser(database, io, "admin", "admin", true);
+        std.debug.print("\n⚠️  Default admin account created (username: admin, password: admin)\n⚠️  Please change the default password!\n\n", .{});
+    }
+}
+
 /// Returns total number of registered users.
 pub fn getUserCount(database: *db_mod.Database) !i64 {
-    var stmt = try database.prepare("SELECT COUNT(*) FROM users;");
-    defer stmt.finalize();
-
-    if ((try stmt.step()) == .row) {
-        return stmt.columnInt64(0);
-    }
-    return 0;
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    return @intCast(cat.countUsers());
 }
 
 /// Retrieves all registered users. Caller owns the returned array and username strings.
 pub fn getAllUsers(database: *db_mod.Database, allocator: std.mem.Allocator) ![]User {
-    var stmt = try database.prepare("SELECT id, username, is_admin FROM users ORDER BY id ASC;");
-    defer stmt.finalize();
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    const user_list = try cat.listUsers(allocator);
+    defer {
+        for (user_list) |*u| {
+            var mut = u.*;
+            mut.deinit(allocator);
+        }
+        allocator.free(user_list);
+    }
 
     var list = std.ArrayList(User).empty;
-    defer list.deinit(allocator);
+    errdefer {
+        for (list.items) |item| allocator.free(item.username);
+        list.deinit(allocator);
+    }
 
-    while ((try stmt.step()) == .row) {
-        const id = stmt.columnInt64(0);
-        const username_raw = stmt.columnText(1) orelse "";
-        const is_admin = stmt.columnInt(2) != 0;
-
-        const username_dupe = try allocator.dupe(u8, username_raw);
+    for (user_list) |u| {
         try list.append(allocator, .{
-            .id = id,
-            .username = username_dupe,
-            .is_admin = is_admin,
+            .id = u.id,
+            .username = try allocator.dupe(u8, u.username),
+            .is_admin = u.is_admin,
         });
     }
 
-    return list.toOwnedSlice(allocator);
+    return try list.toOwnedSlice(allocator);
 }
 
 /// Deletes a user by ID.
 pub fn deleteUserById(database: *db_mod.Database, id: i64) !void {
-    var stmt = try database.prepare("DELETE FROM users WHERE id = ?1;");
-    defer stmt.finalize();
-
-    try stmt.bindInt64(1, id);
-    _ = try stmt.step();
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    try cat.deleteUserById(id);
+    cat.snapshot() catch {};
 }
 
 /// Toggles admin role for a user by ID.
 pub fn toggleAdminRole(database: *db_mod.Database, id: i64) !void {
-    var stmt = try database.prepare("UPDATE users SET is_admin = CASE WHEN is_admin = 1 THEN 0 ELSE 1 END WHERE id = ?1;");
-    defer stmt.finalize();
-
-    try stmt.bindInt64(1, id);
-    _ = try stmt.step();
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    try cat.toggleAdminRole(id);
+    cat.snapshot() catch {};
 }
 
 /// Resets a user's password by ID.
 pub fn resetUserPassword(database: *db_mod.Database, io: std.Io, id: i64, new_password: []const u8) !void {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+
     var salt: [SALT_LEN]u8 = undefined;
     io.random(&salt);
 
@@ -213,12 +175,6 @@ pub fn resetUserPassword(database: *db_mod.Database, io: std.Io, id: i64, new_pa
     var salt_hex: [SALT_LEN * 2]u8 = undefined;
     saltToHex(&salt_hex, salt);
 
-    var stmt = try database.prepare("UPDATE users SET password_hash = ?1, salt = ?2 WHERE id = ?3;");
-    defer stmt.finalize();
-
-    try stmt.bindText(1, &hash_hex);
-    try stmt.bindText(2, &salt_hex);
-    try stmt.bindInt64(3, id);
-
-    _ = try stmt.step();
+    try cat.updateUserPasswordById(id, &hash_hex, &salt_hex);
+    cat.snapshot() catch {};
 }

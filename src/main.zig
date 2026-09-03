@@ -38,16 +38,30 @@ pub fn main() !void {
     var config = try config_mod.Config.load(std.heap.c_allocator, io, config_path);
     defer config.deinit(std.heap.c_allocator);
 
-    // Open SQLite database and initialize schema
-    var database = try db_mod.Database.open(db_path);
-    defer database.close();
+    // Pure-Zig Storage paths
+    const sratim_json_path = if (std.mem.eql(u8, config_path, "config.json")) "sratim.json" else "/var/lib/sratim/sratim.json";
+    const sratim_wal_path = if (std.mem.eql(u8, config_path, "config.json")) "sratim.wal" else "/var/lib/sratim/sratim.wal";
+    const logs_json_path = if (std.mem.eql(u8, config_path, "config.json")) "logs.json" else "/var/lib/sratim/logs.json";
+    const logs_wal_path = if (std.mem.eql(u8, config_path, "config.json")) "logs.wal" else "/var/lib/sratim/logs.wal";
 
-    var logs_database = try db_mod.Database.open(logs_db_path);
-    defer logs_database.close();
+    var sratim_storage = db_mod.engine.SratimStorage.init(std.heap.c_allocator, io, sratim_json_path, sratim_wal_path);
+    defer sratim_storage.deinit();
 
-    try db_mod.initSchema(&database);
-    try logging_mod.initLogsSchema(&logs_database);
-    
+    var logs_storage = db_mod.logs_engine.LogsStorage.init(std.heap.c_allocator, io, logs_json_path, logs_wal_path);
+    defer logs_storage.deinit();
+
+    // 1. One-time SQLite migration if needed
+    db_mod.sqlite_migrator.migrateIfNeeded(std.heap.c_allocator, io, &sratim_storage, &logs_storage, db_path, logs_db_path) catch |err| {
+        std.debug.print("[Storage] Warning: SQLite migration failed or skipped: {}\n", .{err});
+    };
+
+    // 2. Load snapshots if not already loaded by migrator
+    _ = sratim_storage.load() catch false;
+    _ = logs_storage.load() catch false;
+
+    var database = db_mod.Database.forCatalog(&sratim_storage);
+    var logs_database = db_mod.Database.forLogs(&logs_storage);
+
     try users_mod.ensureAdminExists(&database, io);
     
     std.debug.print("Scanning libraries for files...\n", .{});
@@ -95,6 +109,7 @@ test {
     _ = @import("media/native/mkv/track_parser.zig");
     _ = @import("media/native/mkv/gop_builder.zig");
     _ = @import("media/native/mkv/mkv_streamer.zig");
+    _ = @import("storage/test_storage.zig");
     if (build_options.test_audio) {
         _ = @import("media/native/audio/test_ac3_mkv.zig");
         _ = @import("media/native/audio/test_eac3_mkv.zig");
