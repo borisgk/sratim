@@ -44,12 +44,21 @@ pub const AacEncoder = struct {
         var windowed_l: [2048]f32 = undefined;
         var windowed_r: [2048]f32 = undefined;
 
-        for (0..1024) |i| {
-            windowed_l[i] = self.prev_samples_l[i] * PCM_SCALE * tables.SINE_WINDOW_2048[i];
-            windowed_r[i] = self.prev_samples_r[i] * PCM_SCALE * tables.SINE_WINDOW_2048[i];
+        const V4 = @Vector(4, f32);
+        const v_scale: V4 = @splat(PCM_SCALE);
+        var win_i: usize = 0;
+        while (win_i < 1024) : (win_i += 4) {
+            const v_win0: V4 = tables.SINE_WINDOW_2048[win_i..][0..4].*;
+            const v_win1: V4 = tables.SINE_WINDOW_2048[1024 + win_i ..][0..4].*;
+            const v_prev_l: V4 = self.prev_samples_l[win_i..][0..4].*;
+            const v_prev_r: V4 = self.prev_samples_r[win_i..][0..4].*;
+            const v_in_l: V4 = in_l[win_i..][0..4].*;
+            const v_in_r: V4 = in_r[win_i..][0..4].*;
 
-            windowed_l[1024 + i] = in_l[i] * PCM_SCALE * tables.SINE_WINDOW_2048[1024 + i];
-            windowed_r[1024 + i] = in_r[i] * PCM_SCALE * tables.SINE_WINDOW_2048[1024 + i];
+            windowed_l[win_i..][0..4].* = v_prev_l * v_scale * v_win0;
+            windowed_r[win_i..][0..4].* = v_prev_r * v_scale * v_win0;
+            windowed_l[1024 + win_i ..][0..4].* = v_in_l * v_scale * v_win1;
+            windowed_r[1024 + win_i ..][0..4].* = v_in_r * v_scale * v_win1;
         }
 
         // Save current samples for next frame's overlap
@@ -132,12 +141,14 @@ pub const AacEncoder = struct {
 };
 
 pub fn quantizeChannel(spec: []const f32, sf: []u8, quant: []i16) void {
-    // Determine overall peak to seed initial global gain
-    var global_max: f32 = 0.0;
-    for (spec) |s| {
-        const a = @abs(s);
-        if (a > global_max) global_max = a;
+    // Determine overall peak to seed initial global gain (vectorized @max + @reduce)
+    var v_max: @Vector(4, f32) = @splat(0.0);
+    var p_i: usize = 0;
+    while (p_i < 1024) : (p_i += 4) {
+        const v_chunk: @Vector(4, f32) = spec[p_i..][0..4].*;
+        v_max = @max(v_max, @abs(v_chunk));
     }
+    const global_max = @reduce(.Max, v_max);
 
     const SF_OFFSET: f64 = 80.0;
 
@@ -188,7 +199,37 @@ pub fn quantizeChannel(spec: []const f32, sf: []u8, quant: []i16) void {
         // step_scale = 2^(-0.25 * (sf - 100))
         const step_scale = @as(f32, @floatCast(std.math.pow(f64, 2.0, -0.25 * (@as(f64, @floatFromInt(clamped_sf)) - 100.0))));
 
-        for (start..end) |k| {
+        const V = @Vector(4, f32);
+        const VI = @Vector(4, i32);
+        const v_step: V = @splat(step_scale);
+        const v_threshold: V = @splat(0.01);
+        const v_offset: V = @splat(0.4054);
+        const v_zero_f: V = @splat(0.0);
+        const v_zero_i: VI = @splat(0);
+        const v_max_i: VI = @splat(8191);
+
+        var k: usize = start;
+        while (k + 4 <= end) : (k += 4) {
+            const v_s: V = spec[k..][0..4].*;
+            const v_abs = @abs(v_s);
+            const v_scaled = v_abs * v_step;
+
+            // x^0.75 = sqrt(x * sqrt(x)) using native hardware parallel square root
+            const v_sqrt1 = @sqrt(v_scaled);
+            const v_pow34 = @sqrt(v_scaled * v_sqrt1);
+            const v_q_float = v_pow34 + v_offset;
+            const v_q_int = @as(VI, @intFromFloat(v_q_float));
+            const v_clamped = std.math.clamp(v_q_int, v_zero_i, v_max_i);
+
+            const is_neg = v_s < v_zero_f;
+            const v_signed = @select(i32, is_neg, -v_clamped, v_clamped);
+            const is_small = v_scaled < v_threshold;
+            const v_final = @select(i32, is_small, v_zero_i, v_signed);
+
+            quant[k..][0..4].* = @as(@Vector(4, i16), @intCast(v_final));
+        }
+
+        while (k < end) : (k += 1) {
             const s = spec[k];
             const scaled = @abs(s) * step_scale;
             if (scaled < 0.01) {
