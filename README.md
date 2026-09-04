@@ -1,6 +1,6 @@
 # Sratim
 
-A lightweight media server written in Zig (0.16.0). Sratim automatically scans your media library, fetches metadata from TMDB, and serves your content via a fast, concurrent web server backed by SQLite.
+A lightweight media server written in Zig (0.16.0). Sratim automatically scans your media library, fetches metadata from TMDB, and serves your content via a fast, concurrent web server backed by a high-performance, pure-Zig in-memory database engine (SratimDB) with JSON snapshots and binary write-ahead logging (WAL).
 
 ## Installation
 
@@ -15,7 +15,7 @@ curl -fsSL https://raw.githubusercontent.com/borisgk/sratim/main/scripts/install
 ### What the script does:
 1. Downloads the latest compiled `x86_64` binary to `/usr/local/bin/sratim`.
 2. Creates a default configuration file at `/etc/sratim/config.json`.
-3. Prepares a secure data directory at `/var/lib/sratim/` for your SQLite databases.
+3. Prepares a secure data directory at `/var/lib/sratim/` for your database snapshots and logs.
 4. Installs and starts a systemd daemon (`sratim.service`) running under a secure dynamic user.
 
 ## Configuration
@@ -61,6 +61,6 @@ Building and testing Sratim locally is easy and safe.
 
 1. Clone the repository.
 2. Create a local `config.json` in the root of the repository.
-3. Run `zig build run`.
+3. Build the server using `zig build`.
 
-**Safe Path Resolution:** If the application detects a `config.json` in your current working directory, it will automatically enter *Development Mode*. It will use local SQLite databases (`./sratim.db` and `./logs.db`) to ensure you never accidentally overwrite or corrupt your system-wide production databases located in `/var/lib/sratim/`.
+**Safe Path Resolution:** If the application detects a `config.json` in your current working directory, it will automatically enter *Development Mode*. It will use local storage files (`./sratim.json`, `./sratim.wal`, `./logs.json`, and `./logs.wal`) to ensure you never accidentally overwrite or corrupt your system-wide production data located in `/var/lib/sratim/`.

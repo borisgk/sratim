@@ -18,8 +18,6 @@ pub fn main() !void {
     const io = t.io();
     
     var config_path: [:0]const u8 = "config.json";
-    var db_path: [:0]const u8 = "sratim.db";
-    var logs_db_path: [:0]const u8 = "logs.db";
 
     if (std.Io.Dir.cwd().access(io, "config.json", .{})) |_| {
         std.debug.print("Found local config.json, running in development mode.\n", .{});
@@ -27,8 +25,6 @@ pub fn main() !void {
     } else |_| {
         std.debug.print("Local config.json not found, falling back to system paths.\n", .{});
         config_path = "/etc/sratim/config.json";
-        db_path = "/var/lib/sratim/sratim.db";
-        logs_db_path = "/var/lib/sratim/logs.db";
         app_dir = std.Io.Dir.openDirAbsolute(io, "/var/lib/sratim", .{}) catch |err| {
             std.debug.print("Failed to open production data directory /var/lib/sratim: {}\n", .{err});
             return err;
@@ -50,12 +46,7 @@ pub fn main() !void {
     var logs_storage = db_mod.logs_engine.LogsStorage.init(std.heap.c_allocator, io, logs_json_path, logs_wal_path);
     defer logs_storage.deinit();
 
-    // 1. One-time SQLite migration if needed
-    db_mod.sqlite_migrator.migrateIfNeeded(std.heap.c_allocator, io, &sratim_storage, &logs_storage, db_path, logs_db_path) catch |err| {
-        std.debug.print("[Storage] Warning: SQLite migration failed or skipped: {}\n", .{err});
-    };
-
-    // 2. Load snapshots if not already loaded by migrator
+    // Load snapshots from disk (JSON snapshot + replay WAL if exists)
     _ = sratim_storage.load() catch false;
     _ = logs_storage.load() catch false;
 
