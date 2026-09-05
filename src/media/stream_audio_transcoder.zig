@@ -111,10 +111,14 @@ pub const StreamAudioTranscoder = struct {
                         planar_l[i] = stereo_interleaved[i * 2];
                         planar_r[i] = stereo_interleaved[i * 2 + 1];
                     }
-                    try self.native_fifo.write(planar_l[0..n_samples], planar_r[0..n_samples]);
-                    try self.drainNativeFifo(allocator, out_frames);
+                    try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
                 }
-            } else |_| {}
+            } else |_| {
+                // Concealment silence: keep audio clock aligned if packet decode errors
+                var silence_l: [1536]f32 = [_]f32{0.0} ** 1536;
+                var silence_r: [1536]f32 = [_]f32{0.0} ** 1536;
+                try self.writePlanarAndDrain(allocator, &silence_l, &silence_r, out_frames);
+            }
             return;
         }
 
@@ -128,10 +132,13 @@ pub const StreamAudioTranscoder = struct {
                         planar_l[i] = stereo_interleaved[i * 2];
                         planar_r[i] = stereo_interleaved[i * 2 + 1];
                     }
-                    try self.native_fifo.write(planar_l[0..n_samples], planar_r[0..n_samples]);
-                    try self.drainNativeFifo(allocator, out_frames);
+                    try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
                 }
-            } else |_| {}
+            } else |_| {
+                var silence_l: [1536]f32 = [_]f32{0.0} ** 1536;
+                var silence_r: [1536]f32 = [_]f32{0.0} ** 1536;
+                try self.writePlanarAndDrain(allocator, &silence_l, &silence_r, out_frames);
+            }
             return;
         }
 
@@ -145,10 +152,13 @@ pub const StreamAudioTranscoder = struct {
                         planar_l[i] = stereo_interleaved[i * 2];
                         planar_r[i] = stereo_interleaved[i * 2 + 1];
                     }
-                    try self.native_fifo.write(planar_l[0..n_samples], planar_r[0..n_samples]);
-                    try self.drainNativeFifo(allocator, out_frames);
+                    try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
                 }
-            } else |_| {}
+            } else |_| {
+                var silence_l: [1024]f32 = [_]f32{0.0} ** 1024;
+                var silence_r: [1024]f32 = [_]f32{0.0} ** 1024;
+                try self.writePlanarAndDrain(allocator, &silence_l, &silence_r, out_frames);
+            }
             return;
         }
 
@@ -162,24 +172,37 @@ pub const StreamAudioTranscoder = struct {
                         planar_l[i] = stereo_interleaved[i * 2];
                         planar_r[i] = stereo_interleaved[i * 2 + 1];
                     }
-
-                    if (self.resampler_l) |*rl| {
-                        var resampled_l: [2048]f32 = undefined;
-                        var resampled_r: [2048]f32 = undefined;
-                        const out_l_cnt = rl.process(planar_l[0..n_samples], &resampled_l);
-                        const out_r_cnt = if (self.resampler_r) |*rr| rr.process(planar_r[0..n_samples], &resampled_r) else out_l_cnt;
-                        const out_cnt = @min(out_l_cnt, out_r_cnt);
-                        try self.native_fifo.write(resampled_l[0..out_cnt], resampled_r[0..out_cnt]);
-                    } else {
-                        try self.native_fifo.write(planar_l[0..n_samples], planar_r[0..n_samples]);
-                    }
-                    try self.drainNativeFifo(allocator, out_frames);
+                    try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
                 }
-            } else |_| {}
+            } else |_| {
+                var silence_l: [1152]f32 = [_]f32{0.0} ** 1152;
+                var silence_r: [1152]f32 = [_]f32{0.0} ** 1152;
+                try self.writePlanarAndDrain(allocator, &silence_l, &silence_r, out_frames);
+            }
             return;
         }
 
         return error.UnsupportedAudioCodec;
+    }
+
+    fn writePlanarAndDrain(
+        self: *StreamAudioTranscoder,
+        allocator: std.mem.Allocator,
+        planar_l: []const f32,
+        planar_r: []const f32,
+        out_frames: *std.ArrayList(EncodedAacFrame),
+    ) !void {
+        if (self.resampler_l) |*rl| {
+            var resampled_l: [4096]f32 = undefined;
+            var resampled_r: [4096]f32 = undefined;
+            const out_l_cnt = rl.process(planar_l, &resampled_l);
+            const out_r_cnt = if (self.resampler_r) |*rr| rr.process(planar_r, &resampled_r) else out_l_cnt;
+            const out_cnt = @min(out_l_cnt, out_r_cnt);
+            try self.native_fifo.write(resampled_l[0..out_cnt], resampled_r[0..out_cnt]);
+        } else {
+            try self.native_fifo.write(planar_l, planar_r);
+        }
+        try self.drainNativeFifo(allocator, out_frames);
     }
 
     fn drainNativeFifo(self: *StreamAudioTranscoder, allocator: std.mem.Allocator, out_frames: *std.ArrayList(EncodedAacFrame)) !void {
@@ -199,6 +222,34 @@ pub const StreamAudioTranscoder = struct {
                 .data = frame_buf,
                 .sample_count = 1024,
             });
+        }
+    }
+
+    /// Encodes a single 1024-sample frame of silence for gap concealment and timeline drift correction.
+    pub fn encodeSilenceFrame(self: *StreamAudioTranscoder, allocator: std.mem.Allocator, out_frames: *std.ArrayList(EncodedAacFrame)) !void {
+        var silence_l: [1024]f32 = [_]f32{0.0} ** 1024;
+        var silence_r: [1024]f32 = [_]f32{0.0} ** 1024;
+        var aac_frame_buf: [2048]u8 = undefined;
+        const aac_len = try self.native_aac_enc.encodeFrame(&silence_l, &silence_r, &aac_frame_buf);
+
+        const frame_buf = try allocator.alloc(u8, aac_len);
+        errdefer allocator.free(frame_buf);
+        @memcpy(frame_buf, aac_frame_buf[0..aac_len]);
+
+        try out_frames.append(allocator, EncodedAacFrame{
+            .data = frame_buf,
+            .sample_count = 1024,
+        });
+    }
+
+    /// Drops audio samples from the FIFO if audio has drifted ahead of video.
+    pub fn dropSamples(self: *StreamAudioTranscoder, count: usize) void {
+        var dummy_l: [1024]f32 = undefined;
+        var dummy_r: [1024]f32 = undefined;
+        var rem = count;
+        while (rem >= 1024 and self.native_fifo.size() >= 1024) {
+            _ = self.native_fifo.read(&dummy_l, &dummy_r);
+            rem -= 1024;
         }
     }
 
@@ -308,3 +359,36 @@ test "StreamAudioTranscoder pure Zig MP3 transcode end-to-end" {
         try testing.expectEqual(@as(u32, 1024), f.sample_count);
     }
 }
+
+test "StreamAudioTranscoder pure Zig AC-3 decode error injects concealment silence" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var transcoder = try StreamAudioTranscoder.initFromCodec("A_AC3", null, 2, 48000, true);
+    defer transcoder.deinit();
+
+    var frames = std.ArrayList(EncodedAacFrame).empty;
+    defer {
+        for (frames.items) |f| allocator.free(f.data);
+        frames.deinit(allocator);
+    }
+
+    // Pass an invalid / corrupt packet (e.g. invalid syncword)
+    const corrupt_packet = [_]u8{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+    try transcoder.transcodePacket(allocator, &corrupt_packet, &frames);
+
+    // 1536 samples of silence should have been fed to FIFO, producing at least 1 AAC frame (1024 samples)
+    try testing.expect(frames.items.len >= 1);
+    try testing.expectEqual(@as(usize, 512), transcoder.native_fifo.size());
+}
+
+test "StreamAudioTranscoder pure Zig AC-3 resamples 44100Hz to 48000Hz" {
+    const testing = std.testing;
+
+    var transcoder = try StreamAudioTranscoder.initFromCodec("A_AC3", null, 2, 44100, true);
+    defer transcoder.deinit();
+
+    try testing.expect(transcoder.resampler_l != null);
+    try testing.expect(transcoder.resampler_r != null);
+}
+

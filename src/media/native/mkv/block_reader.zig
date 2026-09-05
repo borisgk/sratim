@@ -12,6 +12,9 @@ pub const BlockReader = struct {
     queue: [64]MkvBlock = undefined,
     queue_head: usize = 0,
     queue_tail: usize = 0,
+    audio_track_num: u64 = 0,
+    audio_samples_per_frame: u32 = 1024,
+    audio_sample_rate: u32 = 48000,
 
     pub fn init(file_reader: *std.Io.Reader, timecode_scale_ns: u64) BlockReader {
         return .{
@@ -20,6 +23,12 @@ pub const BlockReader = struct {
             .queue_head = 0,
             .queue_tail = 0,
         };
+    }
+
+    pub fn setAudioTrackParams(self: *BlockReader, track_num: u64, samples_per_frame: u32, sample_rate: u32) void {
+        self.audio_track_num = track_num;
+        self.audio_samples_per_frame = samples_per_frame;
+        self.audio_sample_rate = if (sample_rate > 0) sample_rate else 48000;
     }
 
     /// Reads the next media block from the container.
@@ -247,11 +256,15 @@ pub const BlockReader = struct {
             frame_sizes[num_frames - 1] = if (total_frames_data_len >= sum_prev) total_frames_data_len - sum_prev else 0;
         }
 
+        const spf: u64 = if (track_num == self.audio_track_num) self.audio_samples_per_frame else 1024;
+        const sr: u64 = if (track_num == self.audio_track_num) self.audio_sample_rate else 48000;
+        const spf_f: f64 = @floatFromInt(spf);
+        const sr_f: f64 = @floatFromInt(sr);
         var current_frame_offset = current_pos.* + bytes_consumed;
         for (0..num_frames) |i| {
             const f_size = frame_sizes[i];
-            const f_pts_ms = pts_ms + (@as(u64, i) * 1024 * 1000) / 48000;
-            const f_pts_sec = pts_sec + (@as(f64, @floatFromInt(i)) * (1024.0 / 48000.0));
+            const f_pts_ms = pts_ms + (@as(u64, i) * spf * 1000) / sr;
+            const f_pts_sec = pts_sec + (@as(f64, @floatFromInt(i)) * (spf_f / sr_f));
             self.queue[self.queue_tail] = MkvBlock{
                 .track_num = track_num,
                 .pts_ms = f_pts_ms,

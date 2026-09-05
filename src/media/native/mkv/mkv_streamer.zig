@@ -249,6 +249,15 @@ pub fn streamMkvGeneric(
     }
 
     var block_rdr = BlockReader.init(&demux_reader.interface, 1_000_000);
+    if (audio_track_opt) |at| {
+        const spf: u32 = if (std.mem.eql(u8, at.codec_id, "A_AC3") or std.mem.eql(u8, at.codec_id, "A_EAC3"))
+            1536
+        else if (std.mem.eql(u8, at.codec_id, "A_MPEG/L3"))
+            1152
+        else
+            1024;
+        block_rdr.setAudioTrackParams(at.track_num, spf, at.sample_rate);
+    }
     var current_file_pos = seek_cluster_offset;
 
     var transfer_buf: [65536]u8 = undefined;
@@ -286,6 +295,26 @@ pub fn streamMkvGeneric(
         if (next_gop_keyframe) |kf| {
             try pending_video_blocks.append(allocator, kf);
             next_gop_keyframe = null;
+        }
+
+        // Phase-Locked Loop (PLL): keep audio strictly locked to video presentation timeline.
+        // If a gap in container audio or dropped packets causes audio to fall behind by > 80ms,
+        // insert silent AAC frames to fill the gap before this GOP's audio blocks are appended.
+        if (needs_audio_transcode and audio_transcoder != null and seek_base_video_dts != null and pending_video_blocks.items.len > 0) {
+            const current_v_pts = pending_video_blocks.items[0].pts_ms;
+            if (current_v_pts >= seek_base_video_dts.?) {
+                const elapsed_v_ms = current_v_pts - seek_base_video_dts.?;
+                const expected_audio_samples = (elapsed_v_ms * @as(u64, audio_timescale)) / 1000;
+                if (expected_audio_samples > running_audio_samples + 3840) {
+                    var simulated = running_audio_samples;
+                    while (simulated + 1024 <= expected_audio_samples) {
+                        try audio_transcoder.?.encodeSilenceFrame(allocator, &transcoded_audio_frames);
+                        simulated += 1024;
+                    }
+                } else if (running_audio_samples > expected_audio_samples + 3840) {
+                    audio_transcoder.?.dropSamples(1024);
+                }
+            }
         }
 
         // Collect blocks until the next video keyframe or EOF

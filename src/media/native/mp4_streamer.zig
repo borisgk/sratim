@@ -248,6 +248,20 @@ pub fn streamMp4(
             &.{};
 
         // If audio transcoding, decode and encode all samples in this audio slice
+        if (needs_audio_transcode and audio_transcoder != null) {
+            const current_v_dts = video_track.samples[current_v_idx].dts - seek_base_video_dts;
+            const a_timescale: u64 = if (mux_audio_track_opt) |at| at.timescale else 48000;
+            const expected_audio_samples = (current_v_dts * a_timescale) / video_track.timescale;
+            if (expected_audio_samples > running_transcoded_audio_samples + 3840) {
+                var simulated = running_transcoded_audio_samples;
+                while (simulated + 1024 <= expected_audio_samples) {
+                    try audio_transcoder.?.encodeSilenceFrame(allocator, &transcoded_audio_frames);
+                    simulated += 1024;
+                }
+            } else if (running_transcoded_audio_samples > expected_audio_samples + 3840) {
+                audio_transcoder.?.dropSamples(1024);
+            }
+        }
         if (needs_audio_transcode and a_slice.len > 0) {
             for (a_slice) |s| {
                 file_reader.seekTo(s.offset) catch {
