@@ -105,12 +105,12 @@ pub const SratimStorage = struct {
         next_movie_id: i64 = 1,
         next_show_id: i64 = 1,
         next_episode_id: i64 = 1,
-        users: []const schema.User,
-        sessions: []const schema.Session,
-        libraries: []const schema.Library,
-        movies: []const schema.Movie,
-        shows: []const schema.Show,
-        episodes: []const schema.Episode,
+        users: []const schema.User = &.{},
+        sessions: []const schema.Session = &.{},
+        libraries: []const schema.Library = &.{},
+        movies: []const schema.Movie = &.{},
+        shows: []const schema.Show = &.{},
+        episodes: []const schema.Episode = &.{},
     };
 
     pub fn snapshot(self: *SratimStorage) !void {
@@ -195,7 +195,10 @@ pub const SratimStorage = struct {
         };
         defer self.allocator.free(content);
 
-        const parsed = try std.json.parseFromSlice(SnapshotData, self.allocator, content, .{
+        const trimmed = std.mem.trim(u8, content, " \t\r\n");
+        if (trimmed.len == 0) return false;
+
+        const parsed = try std.json.parseFromSlice(SnapshotData, self.allocator, trimmed, .{
             .allocate = .alloc_always,
             .ignore_unknown_fields = true,
         });

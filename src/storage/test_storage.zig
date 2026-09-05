@@ -132,4 +132,98 @@ test "LogsStorage: Progress, logs, and recently watched" {
     try testing.expectApproxEqAbs(@as(f64, 120.5), restored.getPlaybackProgress("alice", 42), 0.01);
 }
 
+test "LogsStorage: WAL crash recovery without snapshot" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_crash_logs.json";
+    const wal_path = "tmp/test_crash_logs.wal";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+
+    {
+        var logs_storage = logs_engine.LogsStorage.init(allocator, testing.io, snap_path, wal_path);
+        defer logs_storage.deinitWithoutSnapshot();
+        // Mutate in-memory and write WAL, but DO NOT snapshot
+        try logs_storage.savePlaybackProgress("user1", 100, 450.0, 7200.0);
+        try logs_storage.saveEpisodePlaybackProgress("user1", 200, 310.0, 3600.0);
+        try logs_storage.logPlaybackEvent("user1", 100, "progress", 450.0);
+    }
+
+    // Recover from WAL
+    var restored = logs_engine.LogsStorage.init(allocator, testing.io, snap_path, wal_path);
+    defer restored.deinit();
+
+    const loaded = try restored.load();
+    try testing.expect(loaded);
+    try testing.expectApproxEqAbs(@as(f64, 450.0), restored.getPlaybackProgress("user1", 100), 0.01);
+    try testing.expectApproxEqAbs(@as(f64, 310.0), restored.getEpisodePlaybackProgress("user1", 200), 0.01);
+
+    const recent = try restored.getRecentlyWatched(allocator, "user1", 10);
+    defer allocator.free(recent);
+    try testing.expectEqual(@as(usize, 2), recent.len);
+}
+
+test "LogsStorage: Corrupted / truncated WAL tail recovery" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_corrupt_logs.json";
+    const wal_path = "tmp/test_corrupt_logs.wal";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+
+    {
+        var logs_storage = logs_engine.LogsStorage.init(allocator, testing.io, snap_path, wal_path);
+        defer logs_storage.deinitWithoutSnapshot();
+        try logs_storage.savePlaybackProgress("charlie", 88, 600.0, 1800.0);
+    }
+
+    // Append garbage / partial write to simulating mid-crash power failure
+    const file = try std.Io.Dir.cwd().createFile(testing.io, wal_path, .{ .truncate = false });
+    const offset = try file.length(testing.io);
+    const garbage = [_]u8{ 'W', 'A', 'L', '1', 0xff, 0xff, 0x00, 0x00, 0x12, 0x34 };
+    try file.writePositionalAll(testing.io, &garbage, offset);
+    file.close(testing.io);
+
+    // Reopen and ensure valid record before corruption is recovered safely
+    var restored = logs_engine.LogsStorage.init(allocator, testing.io, snap_path, wal_path);
+    defer restored.deinit();
+
+    const loaded = try restored.load();
+    try testing.expect(loaded);
+    try testing.expectApproxEqAbs(@as(f64, 600.0), restored.getPlaybackProgress("charlie", 88), 0.01);
+}
+
+test "SratimStorage: JSON with missing array fields backwards compatibility" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_compat_sratim.json";
+    const wal_path = "tmp/test_compat_sratim.wal";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+
+    // Minimal JSON with only version and next IDs, missing users, movies, etc.
+    const minimal_json =
+        \\{
+        \\  "version": 1,
+        \\  "next_user_id": 42
+        \\}
+    ;
+    const file = try std.Io.Dir.cwd().createFile(testing.io, snap_path, .{});
+    try file.writeStreamingAll(testing.io, minimal_json);
+    file.close(testing.io);
+
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path);
+    defer storage.deinit();
+
+    const loaded = try storage.load();
+    try testing.expect(loaded);
+    try testing.expectEqual(@as(i64, 42), storage.next_user_id);
+    try testing.expectEqual(@as(usize, 0), storage.countUsers());
+    try testing.expectEqual(@as(usize, 0), storage.countMovies());
+}
+
+
 

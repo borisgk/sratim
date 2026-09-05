@@ -52,8 +52,43 @@ pub fn main() !void {
     defer logs_storage.deinit();
 
     // Load snapshots from disk (JSON snapshot + replay WAL if exists)
-    _ = sratim_storage.load() catch false;
-    _ = logs_storage.load() catch false;
+    if (sratim_storage.load()) |loaded| {
+        if (loaded) {
+            std.debug.print("Loaded catalog database snapshot from {s}\n", .{sratim_json_path});
+        }
+    } else |err| {
+        std.debug.print("WARNING: Failed to load catalog database from {s}: {}\n", .{ sratim_json_path, err });
+    }
+
+    if (logs_storage.load()) |loaded| {
+        if (loaded) {
+            std.debug.print("Loaded logs & progress database snapshot from {s} (WAL: {s})\n", .{ logs_json_path, logs_wal_path });
+        }
+    } else |err| {
+        std.debug.print("WARNING: Failed to load logs database from {s}: {}\n", .{ logs_json_path, err });
+    }
+
+    // Start background checkpoint thread for periodic snapshot compaction (every 60s)
+    const CheckpointCtx = struct {
+        logs_storage: *db_mod.logs_engine.LogsStorage,
+        io: std.Io,
+    };
+    const checkpoint_worker = struct {
+        fn run(ctx: CheckpointCtx) void {
+            while (true) {
+                ctx.io.sleep(std.Io.Duration.fromSeconds(60), .awake) catch break;
+                ctx.logs_storage.snapshot() catch |err| {
+                    std.debug.print("Checkpoint: failed to snapshot logs storage: {}\n", .{err});
+                };
+            }
+        }
+    }.run;
+
+    const checkpoint_thread = try std.Thread.spawn(.{}, checkpoint_worker, .{CheckpointCtx{
+        .logs_storage = &logs_storage,
+        .io = io,
+    }});
+    checkpoint_thread.detach();
 
     var database = db_mod.Database.forCatalog(&sratim_storage);
     var logs_database = db_mod.Database.forLogs(&logs_storage);
