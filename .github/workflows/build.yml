@@ -23,21 +23,21 @@ jobs:
           - name: Linux x86_64 (Baseline)
             os: ubuntu-latest
             container: ubuntu:22.04
-            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git libsqlite3-dev curl xz-utils pkg-config
+            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl xz-utils pkg-config
             zig_cpu: baseline
             artifact_name: sratim-linux-x86_64-baseline
             binary_name: sratim-linux-x86_64-baseline
           - name: Arch Linux x86_64 (Silvermont)
             os: ubuntu-latest
             container: archlinux:base-devel
-            setup_cmd: pacman -Syu --needed --noconfirm git sqlite curl tar xz pkgconf
+            setup_cmd: pacman -Syu --needed --noconfirm git curl tar xz pkgconf
             zig_cpu: silvermont
             artifact_name: sratim-arch-n3150
             binary_name: sratim-archlinux-x86_64-silvermont
           - name: Ubuntu 26.04 LTS ARM64 (Ampere)
             os: ubuntu-24.04-arm
             container: ubuntu:26.04
-            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git libsqlite3-dev curl xz-utils pkg-config
+            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl xz-utils pkg-config
             zig_cpu: neoverse_n1
             artifact_name: sratim-ubuntu-aarch64
             binary_name: sratim-ubuntu-aarch64-neoverse_n1
@@ -124,7 +124,6 @@ jobs:
 
   deploy:
     name: Deploy to padre.rus9n.com
-    if: false # Temporarily disabled: production host (padre.rus9n.com) is down. Re-enable by removing or toggling this line.
     needs: release
     runs-on: ubuntu-latest
     environment:
