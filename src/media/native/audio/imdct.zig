@@ -198,7 +198,61 @@ fn ifft8(buf: *[8]Complex) void {
 
 fn ifftPass(buf: []Complex, weight: []const f32, n: usize) void {
     butterflyZero(&buf[0], &buf[n], &buf[2 * n], &buf[3 * n]);
-    for (0..n - 1) |s| {
+    var s: usize = 0;
+    const limit = n - 1;
+
+    const mask_even = @Vector(4, i32){ 0, 2, 4, 6 };
+    const mask_odd = @Vector(4, i32){ 1, 3, 5, 7 };
+    const mask_rev = @Vector(4, i32){ 3, 2, 1, 0 };
+    const mask_interleave = @Vector(8, i32){ 0, -1, 1, -2, 2, -3, 3, -4 };
+
+    while (s + 4 <= limit) : (s += 4) {
+        const idx = s + 1;
+
+        const c0: @Vector(8, f32) = @as(*const [8]f32, @ptrCast(&buf[idx])).*;
+        const c1: @Vector(8, f32) = @as(*const [8]f32, @ptrCast(&buf[n + idx])).*;
+        const c2: @Vector(8, f32) = @as(*const [8]f32, @ptrCast(&buf[2 * n + idx])).*;
+        const c3: @Vector(8, f32) = @as(*const [8]f32, @ptrCast(&buf[3 * n + idx])).*;
+
+        const a0_re = @shuffle(f32, c0, undefined, mask_even);
+        const a0_im = @shuffle(f32, c0, undefined, mask_odd);
+        const a1_re = @shuffle(f32, c1, undefined, mask_even);
+        const a1_im = @shuffle(f32, c1, undefined, mask_odd);
+        const a2_re = @shuffle(f32, c2, undefined, mask_even);
+        const a2_im = @shuffle(f32, c2, undefined, mask_odd);
+        const a3_re = @shuffle(f32, c3, undefined, mask_even);
+        const a3_im = @shuffle(f32, c3, undefined, mask_odd);
+
+        const v_wr: @Vector(4, f32) = weight[s..][0..4].*;
+        const raw_wi: @Vector(4, f32) = weight[n - 2 - s - 3 ..][0..4].*;
+        const v_wi = @shuffle(f32, raw_wi, undefined, mask_rev);
+
+        const tmp5 = a2_re * v_wr + a2_im * v_wi;
+        const tmp6 = a2_im * v_wr - a2_re * v_wi;
+        const tmp7 = a3_re * v_wr - a3_im * v_wi;
+        const tmp8 = a3_im * v_wr + a3_re * v_wi;
+
+        const tmp1 = tmp5 + tmp7;
+        const tmp2 = tmp6 + tmp8;
+        const tmp3 = tmp6 - tmp8;
+        const tmp4 = tmp7 - tmp5;
+
+        const new_a2_re = a0_re - tmp1;
+        const new_a2_im = a0_im - tmp2;
+        const new_a3_re = a1_re - tmp3;
+        const new_a3_im = a1_im - tmp4;
+        const new_a0_re = a0_re + tmp1;
+        const new_a0_im = a0_im + tmp2;
+        const new_a1_re = a1_re + tmp3;
+        const new_a1_im = a1_im + tmp4;
+
+        @as(*[8]f32, @ptrCast(&buf[idx])).* = @shuffle(f32, new_a0_re, new_a0_im, mask_interleave);
+        @as(*[8]f32, @ptrCast(&buf[n + idx])).* = @shuffle(f32, new_a1_re, new_a1_im, mask_interleave);
+        @as(*[8]f32, @ptrCast(&buf[2 * n + idx])).* = @shuffle(f32, new_a2_re, new_a2_im, mask_interleave);
+        @as(*[8]f32, @ptrCast(&buf[3 * n + idx])).* = @shuffle(f32, new_a3_re, new_a3_im, mask_interleave);
+    }
+
+    while (s < limit) : (s += 1) {
         const idx = s + 1;
         const wr = weight[s];
         const wi = weight[n - 2 - s];
@@ -240,36 +294,77 @@ pub fn ifft128(buf: *[128]Complex) void {
 
 pub fn imdct512(data: *[256]f32, delay: *[256]f32) void {
     var buf: [128]Complex = undefined;
-    for (0..128) |i| {
-        const k = FFT_ORDER[i];
-        const t_r = PRE1[i].real;
-        const t_i = PRE1[i].imag;
-        buf[i].real = t_i * data[255 - k] + t_r * data[k];
-        buf[i].imag = t_r * data[255 - k] - t_i * data[k];
+    const mask_pre_interleave = @Vector(8, i32){ 0, -1, 1, -2, 2, -3, 3, -4 };
+    const mask_even = @Vector(4, i32){ 0, 2, 4, 6 };
+    const mask_odd = @Vector(4, i32){ 1, 3, 5, 7 };
+
+    var pre_i: usize = 0;
+    while (pre_i < 128) : (pre_i += 4) {
+        const k0 = FFT_ORDER[pre_i];
+        const k1 = FFT_ORDER[pre_i + 1];
+        const k2 = FFT_ORDER[pre_i + 2];
+        const k3 = FFT_ORDER[pre_i + 3];
+
+        const dk: @Vector(4, f32) = .{ data[k0], data[k1], data[k2], data[k3] };
+        const d_rev: @Vector(4, f32) = .{ data[255 - k0], data[255 - k1], data[255 - k2], data[255 - k3] };
+
+        const c_pre: @Vector(8, f32) = @as(*const [8]f32, @ptrCast(&PRE1[pre_i])).*;
+        const tr = @shuffle(f32, c_pre, undefined, mask_even);
+        const ti = @shuffle(f32, c_pre, undefined, mask_odd);
+
+        const buf_re = ti * d_rev + tr * dk;
+        const buf_im = tr * d_rev - ti * dk;
+
+        @as(*[8]f32, @ptrCast(&buf[pre_i])).* = @shuffle(f32, buf_re, buf_im, mask_pre_interleave);
     }
 
     ifft128(&buf);
 
-    for (0..64) |i| {
-        const t_r = POST1[i].real;
-        const t_i = POST1[i].imag;
+    var post_i: usize = 0;
+    const mask_post_even = @Vector(4, i32){ 0, 2, 4, 6 };
+    const mask_post_odd = @Vector(4, i32){ 1, 3, 5, 7 };
+    const mask_post_rev = @Vector(4, i32){ 3, 2, 1, 0 };
+    const mask_post_interleave = @Vector(8, i32){ 0, -1, 1, -2, 2, -3, 3, -4 };
+    const mask_rev_8 = @Vector(8, i32){ 7, 6, 5, 4, 3, 2, 1, 0 };
+    const sign_front = @Vector(8, f32){ -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0 };
+    const sign_back = @Vector(8, f32){ 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0 };
 
-        const a_r = t_r * buf[i].real + t_i * buf[i].imag;
-        const a_i = t_i * buf[i].real - t_r * buf[i].imag;
-        const b_r = t_i * buf[127 - i].real + t_r * buf[127 - i].imag;
-        const b_i = t_r * buf[127 - i].real - t_i * buf[127 - i].imag;
+    while (post_i < 64) : (post_i += 4) {
+        const c_buf: @Vector(8, f32) = @as(*const [8]f32, @ptrCast(&buf[post_i])).*;
+        const buf_re = @shuffle(f32, c_buf, undefined, mask_post_even);
+        const buf_im = @shuffle(f32, c_buf, undefined, mask_post_odd);
 
-        var w_1 = KBD_WINDOW[2 * i];
-        var w_2 = KBD_WINDOW[255 - 2 * i];
-        data[2 * i] = delay[2 * i] * w_2 - a_r * w_1;
-        data[255 - 2 * i] = delay[2 * i] * w_1 + a_r * w_2;
-        delay[2 * i] = a_i;
+        const c_back: @Vector(8, f32) = @as(*const [8]f32, @ptrCast(&buf[127 - post_i - 3])).*;
+        const back_re_raw = @shuffle(f32, c_back, undefined, mask_post_even);
+        const back_im_raw = @shuffle(f32, c_back, undefined, mask_post_odd);
+        const back_re = @shuffle(f32, back_re_raw, undefined, mask_post_rev);
+        const back_im = @shuffle(f32, back_im_raw, undefined, mask_post_rev);
 
-        w_1 = KBD_WINDOW[2 * i + 1];
-        w_2 = KBD_WINDOW[254 - 2 * i];
-        data[2 * i + 1] = delay[2 * i + 1] * w_2 + b_r * w_1;
-        data[254 - 2 * i] = delay[2 * i + 1] * w_1 - b_r * w_2;
-        delay[2 * i + 1] = b_i;
+        const c_post: @Vector(8, f32) = @as(*const [8]f32, @ptrCast(&POST1[post_i])).*;
+        const tr = @shuffle(f32, c_post, undefined, mask_post_even);
+        const ti = @shuffle(f32, c_post, undefined, mask_post_odd);
+
+        const ar = tr * buf_re + ti * buf_im;
+        const ai = ti * buf_re - tr * buf_im;
+        const br = ti * back_re + tr * back_im;
+        const bi = tr * back_re - ti * back_im;
+
+        const r_interleaved = @shuffle(f32, ar, br, mask_post_interleave);
+        const i_interleaved = @shuffle(f32, ai, bi, mask_post_interleave);
+
+        const k = 2 * post_i;
+        const w1_vec: @Vector(8, f32) = KBD_WINDOW[k..][0..8].*;
+        const w2_raw: @Vector(8, f32) = KBD_WINDOW[255 - k - 7 ..][0..8].*;
+        const w2_vec = @shuffle(f32, w2_raw, undefined, mask_rev_8);
+
+        const delay_front: @Vector(8, f32) = delay[k..][0..8].*;
+
+        const data_front = delay_front * w2_vec + (r_interleaved * sign_front) * w1_vec;
+        const data_back = delay_front * w1_vec + (r_interleaved * sign_back) * w2_vec;
+
+        @as(*[8]f32, @ptrCast(&data[k])).* = data_front;
+        @as(*[8]f32, @ptrCast(&data[255 - k - 7])).* = @shuffle(f32, data_back, undefined, mask_rev_8);
+        @as(*[8]f32, @ptrCast(&delay[k])).* = i_interleaved;
     }
 }
 

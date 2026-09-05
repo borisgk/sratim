@@ -661,6 +661,13 @@ pub const Eac3Decoder = struct {
                 while (j < end_remat and b < 4) : (b += 1) {
                     const endband = @min(remat_bands[b], end_remat);
                     if (((self.rematflg >> @intCast(b)) & 1) != 0) {
+                        const V = @Vector(4, f32);
+                        while (j + 4 <= endband) : (j += 4) {
+                            const left: V = block_samples[0][j..][0..4].*;
+                            const right: V = block_samples[1][j..][0..4].*;
+                            block_samples[0][j..][0..4].* = left + right;
+                            block_samples[1][j..][0..4].* = left - right;
+                        }
                         while (j < endband) : (j += 1) {
                             const left = block_samples[0][j];
                             const right = block_samples[1][j];
@@ -683,28 +690,52 @@ pub const Eac3Decoder = struct {
 
             // Downmix to Stereo Interleaved PCM for this block
             const blk_offset = blk * 256 * 2;
+            const V = @Vector(4, f32);
+            const mask_0_1 = @Vector(4, i32){ 0, -1, 1, -2 };
+            const mask_2_3 = @Vector(4, i32){ 2, -3, 3, -4 };
             switch (self.acmod) {
                 2 => { // 2.0 Stereo
-                    for (0..256) |s| {
-                        out_stereo_pcm[blk_offset + s * 2 + 0] = block_samples[0][s];
-                        out_stereo_pcm[blk_offset + s * 2 + 1] = block_samples[1][s];
+                    var s: usize = 0;
+                    while (s < 256) : (s += 4) {
+                        const l: V = block_samples[0][s..][0..4].*;
+                        const r: V = block_samples[1][s..][0..4].*;
+                        const pair_0_1 = @shuffle(f32, l, r, mask_0_1);
+                        const pair_2_3 = @shuffle(f32, l, r, mask_2_3);
+                        out_stereo_pcm[blk_offset + s * 2 ..][0..4].* = pair_0_1;
+                        out_stereo_pcm[blk_offset + s * 2 + 4 ..][0..4].* = pair_2_3;
                     }
                 },
                 1 => { // 1.0 Mono
-                    for (0..256) |s| {
-                        out_stereo_pcm[blk_offset + s * 2 + 0] = block_samples[0][s];
-                        out_stereo_pcm[blk_offset + s * 2 + 1] = block_samples[0][s];
+                    const mask_mono_0_1 = @Vector(4, i32){ 0, 0, 1, 1 };
+                    const mask_mono_2_3 = @Vector(4, i32){ 2, 2, 3, 3 };
+                    var s: usize = 0;
+                    while (s < 256) : (s += 4) {
+                        const m: V = block_samples[0][s..][0..4].*;
+                        const pair_0_1 = @shuffle(f32, m, undefined, mask_mono_0_1);
+                        const pair_2_3 = @shuffle(f32, m, undefined, mask_mono_2_3);
+                        out_stereo_pcm[blk_offset + s * 2 ..][0..4].* = pair_0_1;
+                        out_stereo_pcm[blk_offset + s * 2 + 4 ..][0..4].* = pair_2_3;
                     }
                 },
                 7 => { // 3/2 Surround (5.1 with LFE)
-                    for (0..256) |s| {
-                        const l = block_samples[0][s];
-                        const c = block_samples[1][s];
-                        const r = block_samples[2][s];
-                        const ls = block_samples[3][s];
-                        const rs = block_samples[4][s];
-                        out_stereo_pcm[blk_offset + s * 2 + 0] = l + c * tables.ac3_tables.LEVEL_3DB + ls * tables.ac3_tables.LEVEL_3DB;
-                        out_stereo_pcm[blk_offset + s * 2 + 1] = r + c * tables.ac3_tables.LEVEL_3DB + rs * tables.ac3_tables.LEVEL_3DB;
+                    const v_lev: V = @splat(tables.ac3_tables.LEVEL_3DB);
+                    var s: usize = 0;
+                    while (s < 256) : (s += 4) {
+                        const l: V = block_samples[0][s..][0..4].*;
+                        const c: V = block_samples[1][s..][0..4].*;
+                        const r: V = block_samples[2][s..][0..4].*;
+                        const ls: V = block_samples[3][s..][0..4].*;
+                        const rs: V = block_samples[4][s..][0..4].*;
+
+                        const c_lev = c * v_lev;
+                        const left_4 = l + c_lev + ls * v_lev;
+                        const right_4 = r + c_lev + rs * v_lev;
+
+                        const pair_0_1 = @shuffle(f32, left_4, right_4, mask_0_1);
+                        const pair_2_3 = @shuffle(f32, left_4, right_4, mask_2_3);
+
+                        out_stereo_pcm[blk_offset + s * 2 ..][0..4].* = pair_0_1;
+                        out_stereo_pcm[blk_offset + s * 2 + 4 ..][0..4].* = pair_2_3;
                     }
                 },
                 else => {
