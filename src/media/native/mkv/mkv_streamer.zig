@@ -282,6 +282,7 @@ pub fn streamMkvGeneric(
     defer raw_audio_packet_buf.deinit(allocator);
 
     var next_gop_keyframe: ?MkvBlock = null;
+    var first_audio_seen = false;
 
     // 5. Stream GOP fragments
     while (!has_error.*) {
@@ -337,6 +338,18 @@ pub fn streamMkvGeneric(
                 if (seq_num == 1) {
                     const kf_pts = pending_video_blocks.items[0].pts_ms;
                     if (blk.pts_ms + 25 < kf_pts) continue;
+
+                    if (!first_audio_seen) {
+                        first_audio_seen = true;
+                        if (needs_audio_transcode and audio_transcoder != null and blk.pts_ms > kf_pts + 25) {
+                            const gap_ms = blk.pts_ms - kf_pts;
+                            const gap_samples = (gap_ms * @as(u64, audio_timescale)) / 1000;
+                            var sim_gap: u64 = 0;
+                            while (sim_gap + 1024 <= gap_samples) : (sim_gap += 1024) {
+                                try audio_transcoder.?.encodeSilenceFrame(allocator, &transcoded_audio_frames);
+                            }
+                        }
+                    }
                 }
 
                 if (needs_audio_transcode) {

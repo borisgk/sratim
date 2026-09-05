@@ -3,8 +3,8 @@ const ebml = @import("../ebml.zig");
 const types = @import("types.zig");
 const languages = @import("../languages.zig");
 
-const MkvTrackInfo = types.MkvTrackInfo;
-const MkvTrackType = types.MkvTrackType;
+pub const MkvTrackInfo = types.MkvTrackInfo;
+pub const MkvTrackType = types.MkvTrackType;
 
 /// Parses all tracks from an MKV file, converting CodecPrivate into standard ISOBMFF stsd boxes.
 pub fn parseMkvTracks(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8) ![]MkvTrackInfo {

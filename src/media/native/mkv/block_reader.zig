@@ -2,7 +2,7 @@ const std = @import("std");
 const ebml = @import("../ebml.zig");
 const types = @import("types.zig");
 
-const MkvBlock = types.MkvBlock;
+pub const MkvBlock = types.MkvBlock;
 const MkvLacingType = types.MkvLacingType;
 
 pub const BlockReader = struct {

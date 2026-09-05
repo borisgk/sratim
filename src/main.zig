@@ -8,6 +8,11 @@ const library_mod = @import("db/library.zig");
 const scanner_mod = @import("db/scanner.zig");
 const fetcher = @import("media/fetcher.zig");
 
+pub const track_parser = @import("media/native/mkv/track_parser.zig");
+pub const block_reader = @import("media/native/mkv/block_reader.zig");
+pub const transcoder = @import("media/stream_audio_transcoder.zig");
+pub const mkv_streamer = @import("media/native/mkv/mkv_streamer.zig");
+
 /// The application entry point.
 /// Initializes the asynchronous I/O backend and starts accepting incoming HTTP connections.
 pub var app_dir: std.Io.Dir = undefined;
