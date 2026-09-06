@@ -4,12 +4,14 @@ const session_mod = @import("../../db/session.zig");
 const admin_handler = @import("../handlers/admin.zig");
 const users_admin_handler = @import("../handlers/users_admin.zig");
 const unmatched_admin_handler = @import("../handlers/unmatched_admin.zig");
+const analytics_admin_handler = @import("../handlers/analytics_admin.zig");
 
 pub fn route(
     request: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     io: std.Io,
     database: *db_mod.Database,
+    logs_database: *db_mod.Database,
     session_info_opt: ?session_mod.SessionInfo,
     resp_buf: *[8192]u8,
 ) !bool {
@@ -40,6 +42,14 @@ pub fn route(
     if (std.mem.eql(u8, target, "/admin")) {
         admin_handler.serveAdminPage(request, allocator, database) catch |err| {
             std.debug.print("Admin handler error: {}\n", .{err});
+            try request.respond("Internal Server Error", .{ .status = .internal_server_error });
+        };
+        return true;
+    }
+
+    if (std.mem.eql(u8, target, "/admin/analytics")) {
+        analytics_admin_handler.serveAnalyticsPage(request, allocator, database, logs_database) catch |err| {
+            std.debug.print("Analytics page handler error: {}\n", .{err});
             try request.respond("Internal Server Error", .{ .status = .internal_server_error });
         };
         return true;

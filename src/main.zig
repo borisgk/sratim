@@ -141,6 +141,8 @@ test {
     _ = @import("media/native/mkv/gop_builder.zig");
     _ = @import("media/native/mkv/mkv_streamer.zig");
     _ = @import("storage/test_storage.zig");
+    _ = @import("db/analytics.zig");
+    _ = @import("web/handlers/analytics_admin.zig");
     if (build_options.test_audio) {
         _ = @import("media/native/audio/test_ac3_mkv.zig");
         _ = @import("media/native/audio/test_eac3_mkv.zig");

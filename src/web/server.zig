@@ -128,7 +128,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             continue;
         }
 
-        if (admin_router.route(&request, allocator, io, database, session_info, &resp_buf) catch return) {
+        if (admin_router.route(&request, allocator, io, database, logs_database, session_info, &resp_buf) catch return) {
             continue;
         }
 

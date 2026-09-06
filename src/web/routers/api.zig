@@ -7,6 +7,7 @@ const library_handler = @import("../handlers/library.zig");
 const browse_handler = @import("../handlers/browse.zig");
 const watch_handler = @import("../handlers/watch.zig");
 const metadata_handler = @import("../handlers/metadata.zig");
+const analytics_admin_handler = @import("../handlers/analytics_admin.zig");
 
 pub fn route(
     request: *std.http.Server.Request,
@@ -36,6 +37,18 @@ pub fn route(
     }
 
     const session_info = session_info_opt.?;
+
+    if (std.mem.startsWith(u8, target, "/api/v1/admin/analytics") and method == .GET) {
+        if (!session_info.is_admin) {
+            try request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden });
+            return true;
+        }
+        analytics_admin_handler.handleApiAnalytics(request, allocator, database, logs_database) catch |err| {
+            std.debug.print("API Admin Analytics error: {}\n", .{err});
+            try request.respond("Internal Server Error", .{ .status = .internal_server_error });
+        };
+        return true;
+    }
 
     if (std.mem.startsWith(u8, target, "/libraries/add") and method == .POST) {
         if (!session_info.is_admin) {
