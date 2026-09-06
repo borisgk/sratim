@@ -361,11 +361,11 @@ pub const Ac3Decoder = struct {
     /// Decodes a single AC-3 audio frame (1536 samples per channel) into stereo interleaved float PCM.
     /// out_stereo_pcm must have capacity for at least 1536 * 2 = 3072 f32 samples.
     /// Returns 1536 (the number of decoded stereo samples).
-    pub fn decodeFrame(self: *Ac3Decoder, bytes: []const u8, out_stereo_pcm: []f32) !usize {
-        if (bytes.len < 7) return error.InputBufferTooSmall;
+    pub fn decodeFrame(self: *Ac3Decoder, in_frame: []const u8, out_stereo_pcm: []f32) !usize {
+        if (in_frame.len < 7) return error.InputBufferTooSmall;
         if (out_stereo_pcm.len < 1536 * 2) return error.OutputBufferTooSmall;
 
-        var reader = BitReader.init(bytes);
+        var reader = BitReader.init(in_frame);
         const syncword = try reader.readBits(u16, 16);
         if (syncword != 0x0B77) return error.InvalidSyncword;
 
@@ -614,15 +614,16 @@ pub const Ac3Decoder = struct {
                 try coeffGet(&reader, &block_samples[5], &self.lfe_exp, &self.lfe_bap, &quantizer, 1.0, false, 7, &self.lfsr_state);
             }
 
-            // Rematrixing for 2/0 stereo
+            // Rematrixing for 2/0 stereo (ATSC A/52 Section 7.5.4)
             if (self.acmod == 2) {
-                var j: usize = 0;
                 const end_remat = if (self.chincpl != 0) self.cplstrtmant else self.endmant[0];
-                const remat_bands = [4]usize{ 25, 37, 61, 253 };
-                var b: usize = 0;
-                while (j < end_remat and b < 4) : (b += 1) {
-                    const endband = @min(remat_bands[b], end_remat);
+                const remat_starts = [4]usize{ 13, 25, 37, 61 };
+                const remat_ends = [4]usize{ 25, 37, 61, 253 };
+                for (0..4) |b| {
+                    if (remat_starts[b] >= end_remat) break;
                     if (((self.rematflg >> @intCast(b)) & 1) != 0) {
+                        var j = remat_starts[b];
+                        const endband = @min(remat_ends[b], end_remat);
                         const V = @Vector(4, f32);
                         while (j + 4 <= endband) : (j += 4) {
                             const left: V = block_samples[0][j..][0..4].*;
@@ -636,8 +637,6 @@ pub const Ac3Decoder = struct {
                             block_samples[0][j] = left + right;
                             block_samples[1][j] = left - right;
                         }
-                    } else {
-                        j = endband;
                     }
                 }
             }
