@@ -106,11 +106,14 @@ pub fn build(b: *std.Build) void {
     }
 
 
+    const test_filter = b.option([]const u8, "test-filter", "Filter tests to run");
+
     // Creates an executable that will run `test` blocks from the executable's
     // root module. Note that test executables only test one module at a time,
     // hence why we have to create two separate ones.
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
+        .filters = if (test_filter) |f| &.{f} else &.{},
     });
 
     // A run step that will run the second test executable.

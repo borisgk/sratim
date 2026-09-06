@@ -298,21 +298,20 @@ pub fn streamMkvGeneric(
             next_gop_keyframe = null;
         }
 
-        // Phase-Locked Loop (PLL): keep audio strictly locked to video presentation timeline.
-        // If a gap in container audio or dropped packets causes audio to fall behind by > 80ms,
-        // insert silent AAC frames to fill the gap before this GOP's audio blocks are appended.
+        // Phase-Locked Loop (PLL): keep audio locked to video presentation timeline on macro-drift.
+        // MKV cluster interleaving routinely introduces 100-300ms of interleave skew, which is
+        // naturally buffered and smoothed by the browser's MSE engine. The threshold is set to 48,000 samples
+        // (1000ms) to avoid falsely dropping audio or inserting silence during normal cluster interleaving.
         if (needs_audio_transcode and audio_transcoder != null and seek_base_video_dts != null and pending_video_blocks.items.len > 0) {
             const current_v_pts = pending_video_blocks.items[0].pts_ms;
             if (current_v_pts >= seek_base_video_dts.?) {
                 const elapsed_v_ms = current_v_pts - seek_base_video_dts.?;
                 const expected_audio_samples = (elapsed_v_ms * @as(u64, audio_timescale)) / 1000;
-                if (expected_audio_samples > running_audio_samples + 3840) {
-                    var simulated = running_audio_samples;
-                    while (simulated + 1024 <= expected_audio_samples) {
-                        try audio_transcoder.?.encodeSilenceFrame(allocator, &transcoded_audio_frames);
-                        simulated += 1024;
-                    }
-                } else if (running_audio_samples > expected_audio_samples + 3840) {
+                const DRIFT_THRESHOLD_SAMPLES: u64 = 48000; // 1000ms
+                if (expected_audio_samples > running_audio_samples + DRIFT_THRESHOLD_SAMPLES) {
+                    const gap_samples = expected_audio_samples - running_audio_samples;
+                    try audio_transcoder.?.encodeSilenceSamples(allocator, @intCast(gap_samples), &transcoded_audio_frames);
+                } else if (running_audio_samples > expected_audio_samples + DRIFT_THRESHOLD_SAMPLES) {
                     audio_transcoder.?.dropSamples(1024);
                 }
             }
@@ -344,10 +343,7 @@ pub fn streamMkvGeneric(
                         if (needs_audio_transcode and audio_transcoder != null and blk.pts_ms > kf_pts + 25) {
                             const gap_ms = blk.pts_ms - kf_pts;
                             const gap_samples = (gap_ms * @as(u64, audio_timescale)) / 1000;
-                            var sim_gap: u64 = 0;
-                            while (sim_gap + 1024 <= gap_samples) : (sim_gap += 1024) {
-                                try audio_transcoder.?.encodeSilenceFrame(allocator, &transcoded_audio_frames);
-                            }
+                            try audio_transcoder.?.encodeSilenceSamples(allocator, @intCast(gap_samples), &transcoded_audio_frames);
                         }
                     }
                 }
@@ -569,6 +565,31 @@ test "generate MKV fMP4 fragments with AC3 audio transcoding" {
         3, // 3 fragments
         .native,
     );
+    try out_writer.flush();
+}
+
+test "generate MKV fMP4 fragments for Pressure (2026).mkv AC3" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const out_file = std.Io.Dir.cwd().createFile(io, "tmp/pressure_streamed.mp4", .{}) catch return;
+    defer out_file.close(io);
+
+    var out_buf: [65536]u8 = undefined;
+    var out_writer = out_file.writer(io, &out_buf);
+
+    var has_error = false;
+    _ = streamMkvGeneric(
+        allocator,
+        io,
+        "testvideo/Pressure (2026).mkv",
+        0.0,
+        2, // AC3 5.1 track
+        &out_writer.interface,
+        &has_error,
+        20, // 20 fragments
+        .native,
+    ) catch return;
     try out_writer.flush();
 }
 

@@ -115,9 +115,7 @@ pub const StreamAudioTranscoder = struct {
                 }
             } else |_| {
                 // Concealment silence: keep audio clock aligned if packet decode errors
-                var silence_l: [1536]f32 = [_]f32{0.0} ** 1536;
-                var silence_r: [1536]f32 = [_]f32{0.0} ** 1536;
-                try self.writePlanarAndDrain(allocator, &silence_l, &silence_r, out_frames);
+                try self.injectConcealmentSilence(allocator, 1536, out_frames);
             }
             return;
         }
@@ -135,9 +133,7 @@ pub const StreamAudioTranscoder = struct {
                     try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
                 }
             } else |_| {
-                var silence_l: [1536]f32 = [_]f32{0.0} ** 1536;
-                var silence_r: [1536]f32 = [_]f32{0.0} ** 1536;
-                try self.writePlanarAndDrain(allocator, &silence_l, &silence_r, out_frames);
+                try self.injectConcealmentSilence(allocator, 1536, out_frames);
             }
             return;
         }
@@ -155,9 +151,7 @@ pub const StreamAudioTranscoder = struct {
                     try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
                 }
             } else |_| {
-                var silence_l: [1024]f32 = [_]f32{0.0} ** 1024;
-                var silence_r: [1024]f32 = [_]f32{0.0} ** 1024;
-                try self.writePlanarAndDrain(allocator, &silence_l, &silence_r, out_frames);
+                try self.injectConcealmentSilence(allocator, 1024, out_frames);
             }
             return;
         }
@@ -175,14 +169,39 @@ pub const StreamAudioTranscoder = struct {
                     try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
                 }
             } else |_| {
-                var silence_l: [1152]f32 = [_]f32{0.0} ** 1152;
-                var silence_r: [1152]f32 = [_]f32{0.0} ** 1152;
-                try self.writePlanarAndDrain(allocator, &silence_l, &silence_r, out_frames);
+                try self.injectConcealmentSilence(allocator, 1152, out_frames);
             }
             return;
         }
 
         return error.UnsupportedAudioCodec;
+    }
+
+    /// Emits smooth concealment silence (ramped down from previous audio sample if needed)
+    /// to preserve audio clock timing on packet decode error without clicking.
+    fn injectConcealmentSilence(
+        self: *StreamAudioTranscoder,
+        allocator: std.mem.Allocator,
+        comptime count: usize,
+        out_frames: *std.ArrayList(EncodedAacFrame),
+    ) !void {
+        var silence_l: [count]f32 = [_]f32{0.0} ** count;
+        var silence_r: [count]f32 = [_]f32{0.0} ** count;
+
+        // If FIFO has preceding samples, smoothly ramp down over up to 32 samples to prevent clicks
+        if (self.native_fifo.size() > 0) {
+            const last_l = self.native_fifo.left.items[self.native_fifo.left.items.len - 1];
+            const last_r = self.native_fifo.right.items[self.native_fifo.right.items.len - 1];
+            if (@abs(last_l) > 1e-4 or @abs(last_r) > 1e-4) {
+                const ramp_len = @min(count, 32);
+                for (0..ramp_len) |k| {
+                    const factor = @as(f32, @floatFromInt(ramp_len - 1 - k)) / @as(f32, @floatFromInt(ramp_len));
+                    silence_l[k] = last_l * factor;
+                    silence_r[k] = last_r * factor;
+                }
+            }
+        }
+        try self.writePlanarAndDrain(allocator, &silence_l, &silence_r, out_frames);
     }
 
     fn writePlanarAndDrain(
@@ -225,31 +244,59 @@ pub const StreamAudioTranscoder = struct {
         }
     }
 
-    /// Encodes a single 1024-sample frame of silence for gap concealment and timeline drift correction.
+    /// Pushes silence samples into the FIFO and drains ready AAC frames.
+    /// Preserves FIFO ordering and smooths MDCT overlap transitions without phase jumps or clicks.
+    pub fn encodeSilenceSamples(
+        self: *StreamAudioTranscoder,
+        allocator: std.mem.Allocator,
+        sample_count: usize,
+        out_frames: *std.ArrayList(EncodedAacFrame),
+    ) !void {
+        const silence_zeros: [1024]f32 = [_]f32{0.0} ** 1024;
+        var rem = sample_count;
+        while (rem > 0) {
+            const chunk = @min(rem, 1024);
+            try self.native_fifo.write(silence_zeros[0..chunk], silence_zeros[0..chunk]);
+            rem -= chunk;
+        }
+        try self.drainNativeFifo(allocator, out_frames);
+    }
+
+    /// Encodes silence corresponding to 1024 samples for gap concealment and timeline drift correction.
+    /// Queues silence through the FIFO to preserve chronological ordering of pending decoder samples.
     pub fn encodeSilenceFrame(self: *StreamAudioTranscoder, allocator: std.mem.Allocator, out_frames: *std.ArrayList(EncodedAacFrame)) !void {
-        var silence_l: [1024]f32 = [_]f32{0.0} ** 1024;
-        var silence_r: [1024]f32 = [_]f32{0.0} ** 1024;
-        var aac_frame_buf: [2048]u8 = undefined;
-        const aac_len = try self.native_aac_enc.encodeFrame(&silence_l, &silence_r, &aac_frame_buf);
-
-        const frame_buf = try allocator.alloc(u8, aac_len);
-        errdefer allocator.free(frame_buf);
-        @memcpy(frame_buf, aac_frame_buf[0..aac_len]);
-
-        try out_frames.append(allocator, EncodedAacFrame{
-            .data = frame_buf,
-            .sample_count = 1024,
-        });
+        try self.encodeSilenceSamples(allocator, 1024, out_frames);
     }
 
     /// Drops audio samples from the FIFO if audio has drifted ahead of video.
+    /// Applies a smooth cross-fade to prevent step discontinuities (clicks/pops).
     pub fn dropSamples(self: *StreamAudioTranscoder, count: usize) void {
-        var dummy_l: [1024]f32 = undefined;
-        var dummy_r: [1024]f32 = undefined;
-        var rem = count;
-        while (rem >= 1024 and self.native_fifo.size() >= 1024) {
-            _ = self.native_fifo.read(&dummy_l, &dummy_r);
-            rem -= 1024;
+        const avail = self.native_fifo.size();
+        if (avail <= count) {
+            self.native_fifo.clear();
+            return;
+        }
+        const fade_len: usize = 32;
+        if (avail >= count + fade_len) {
+            // Apply quick linear ramp out on pre-drop samples
+            const left_slice = self.native_fifo.left.items[self.native_fifo.read_pos..];
+            const right_slice = self.native_fifo.right.items[self.native_fifo.read_pos..];
+            for (0..fade_len) |i| {
+                const w = @as(f32, @floatFromInt(fade_len - 1 - i)) / @as(f32, @floatFromInt(fade_len));
+                left_slice[i] *= w;
+                right_slice[i] *= w;
+            }
+            self.native_fifo.read_pos += count;
+            // Ramp in the post-drop samples
+            const new_l = self.native_fifo.left.items[self.native_fifo.read_pos..];
+            const new_r = self.native_fifo.right.items[self.native_fifo.read_pos..];
+            for (0..fade_len) |i| {
+                const w = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(fade_len));
+                new_l[i] *= w;
+                new_r[i] *= w;
+            }
+        } else {
+            self.native_fifo.read_pos += count;
         }
     }
 
@@ -391,4 +438,58 @@ test "StreamAudioTranscoder pure Zig AC-3 resamples 44100Hz to 48000Hz" {
     try testing.expect(transcoder.resampler_l != null);
     try testing.expect(transcoder.resampler_r != null);
 }
+
+test "StreamAudioTranscoder encodeSilenceFrame queues through FIFO preserving sample order" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var transcoder = try StreamAudioTranscoder.initFromCodec("A_AC3", null, 2, 48000, true);
+    defer transcoder.deinit();
+
+    var frames = std.ArrayList(EncodedAacFrame).empty;
+    defer {
+        for (frames.items) |f| allocator.free(f.data);
+        frames.deinit(allocator);
+    }
+
+    // Pre-populate FIFO with 512 non-zero audio samples (as left behind by an AC-3 packet)
+    var tone_l: [512]f32 = undefined;
+    var tone_r: [512]f32 = undefined;
+    for (0..512) |i| {
+        tone_l[i] = 0.25;
+        tone_r[i] = 0.25;
+    }
+    try transcoder.native_fifo.write(&tone_l, &tone_r);
+    try testing.expectEqual(@as(usize, 512), transcoder.native_fifo.size());
+
+    // Encode a 1024-sample silence frame
+    try transcoder.encodeSilenceFrame(allocator, &frames);
+
+    // Should have drained exactly 1 AAC frame (1024 samples = 512 tone + 512 silence)
+    try testing.expectEqual(@as(usize, 1), frames.items.len);
+    // 512 samples of silence should remain in FIFO for smooth fade into the next packet
+    try testing.expectEqual(@as(usize, 512), transcoder.native_fifo.size());
+}
+
+test "StreamAudioTranscoder encodeSilenceSamples accurately handles fractional sample counts" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var transcoder = try StreamAudioTranscoder.initFromCodec("A_AC3", null, 2, 48000, true);
+    defer transcoder.deinit();
+
+    var frames = std.ArrayList(EncodedAacFrame).empty;
+    defer {
+        for (frames.items) |f| allocator.free(f.data);
+        frames.deinit(allocator);
+    }
+
+    // Insert 2500 samples of silence (e.g. 52ms gap)
+    try transcoder.encodeSilenceSamples(allocator, 2500, &frames);
+
+    // 2500 samples should produce 2 full AAC frames (2048 samples) and leave 452 samples in FIFO
+    try testing.expectEqual(@as(usize, 2), frames.items.len);
+    try testing.expectEqual(@as(usize, 452), transcoder.native_fifo.size());
+}
+
 
