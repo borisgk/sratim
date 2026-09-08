@@ -49,15 +49,15 @@ case "$OS" in
     ;;
 esac
 
-# CPU Architecture check for Silvermont/Airmont (x86_64 only)
+# CPU Architecture check
 if [ "$ARCH" = "x86_64" ]; then
     if grep -q "model name" /proc/cpuinfo; then
         CPU_MODEL=$(grep "model name" /proc/cpuinfo | head -n1 | cut -d':' -f2 | xargs)
         log_info "Detected CPU: $CPU_MODEL"
         if echo "$CPU_MODEL" | grep -qi -E "N3150|Atom|Celeron"; then
-            log_info "CPU matches expected Silvermont/Airmont architecture."
+            log_info "Detected Silvermont/Airmont CPU. Will use optimized Silvermont build if available."
         else
-            log_warn "CPU does not strictly match Silvermont/Airmont targets. The binary may still work but performance is not guaranteed."
+            log_info "Detected standard x86_64 CPU. Using universal baseline binary."
         fi
     fi
 elif [ "$ARCH" = "aarch64" ]; then
@@ -143,7 +143,7 @@ ConfigurationDirectory=sratim
 
 # Hardening
 ProtectSystem=strict
-ProtectHome=yes
+ProtectHome=read-only
 PrivateTmp=yes
 NoNewPrivileges=yes
 ReadWritePaths=/var/lib/sratim
