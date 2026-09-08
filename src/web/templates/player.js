@@ -16,6 +16,10 @@
         const castingDeviceName = document.getElementById('casting-device-name');
         const castingMediaTitle = document.getElementById('casting-media-title');
         const playerWrapper = document.querySelector('.player-wrapper');
+        const controls = document.getElementById('controls');
+        const btnBack = document.getElementById('back-btn');
+        const topBar = document.getElementById('player-top-bar');
+        const playerTitle = document.getElementById('player-title');
         const btnAudio = document.getElementById('audiobtn');
         const audioMenu = document.getElementById('audio-menu');
         const btnSubtitles = document.getElementById('subtitlesbtn');
@@ -30,6 +34,7 @@
         const START_POSITION = __START_POSITION__;
         const MEDIA_TITLE = '__MEDIA_TITLE__';
         const SERVER_LAN_IP = '__SERVER_LAN_IP__';
+        const RETURN_URL = '__RETURN_URL__';
 
         const svgPlay = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M8 5v14l11-7z"/></svg>';
         const svgPause = '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
@@ -852,10 +857,107 @@
                 }
             });
 
+            function handleBack() {
+                WatchTracker.sendEvent('stop', getAbsoluteTime());
+                if (document.fullscreenElement) {
+                    document.exitFullscreen().catch(() => {});
+                }
+                if (RETURN_URL && RETURN_URL !== '/' && RETURN_URL !== '') {
+                    window.location.href = RETURN_URL;
+                } else if (document.referrer && document.referrer.includes(window.location.host) && !document.referrer.includes('/player')) {
+                    window.location.href = document.referrer;
+                } else {
+                    window.location.href = RETURN_URL || '/';
+                }
+            }
+
+            if (btnBack) {
+                btnBack.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    handleBack();
+                });
+            }
+
+            // Inactivity & auto-hide handling
+            let inactivityTimeout = null;
+            function resetInactivityTimer() {
+                if (topBar) topBar.classList.remove('inactive');
+                if (controls) controls.classList.remove('inactive');
+                playerWrapper.classList.remove('hide-cursor');
+                if (inactivityTimeout) {
+                    clearTimeout(inactivityTimeout);
+                    inactivityTimeout = null;
+                }
+                if (!video.paused && !CastController.isCasting) {
+                    inactivityTimeout = setTimeout(() => {
+                        if (!audioMenu.classList.contains('hidden') || !subtitlesMenu.classList.contains('hidden')) {
+                            return;
+                        }
+                        if (topBar) topBar.classList.add('inactive');
+                        if (controls) controls.classList.add('inactive');
+                        playerWrapper.classList.add('hide-cursor');
+                    }, 3000);
+                }
+            }
+
+            playerWrapper.addEventListener('mousemove', resetInactivityTimer);
+            playerWrapper.addEventListener('pointerdown', resetInactivityTimer);
+            if (topBar) {
+                topBar.addEventListener('mouseenter', () => {
+                    if (inactivityTimeout) clearTimeout(inactivityTimeout);
+                });
+                topBar.addEventListener('mouseleave', resetInactivityTimer);
+            }
+            if (controls) {
+                controls.addEventListener('mouseenter', () => {
+                    if (inactivityTimeout) clearTimeout(inactivityTimeout);
+                });
+                controls.addEventListener('mouseleave', resetInactivityTimer);
+            }
+            video.addEventListener('play', resetInactivityTimer);
+            video.addEventListener('pause', () => {
+                if (topBar) topBar.classList.remove('inactive');
+                if (controls) controls.classList.remove('inactive');
+                playerWrapper.classList.remove('hide-cursor');
+                if (inactivityTimeout) {
+                    clearTimeout(inactivityTimeout);
+                    inactivityTimeout = null;
+                }
+            });
+
+            video.addEventListener('click', () => {
+                if (CastController.isCasting && CastController.remotePlayerController) {
+                    CastController.remotePlayerController.playOrPause();
+                } else {
+                    if (video.paused) {
+                        video.play();
+                        playpause.innerHTML = svgPause;
+                    } else {
+                        video.pause();
+                        playpause.innerHTML = svgPlay;
+                    }
+                }
+            });
+
+            video.addEventListener('dblclick', (e) => {
+                e.preventDefault();
+                if (!document.fullscreenElement) {
+                    playerWrapper.requestFullscreen().catch(err => console.error(err));
+                } else {
+                    document.exitFullscreen();
+                }
+            });
+
             document.addEventListener('keydown', (e) => {
                 if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-                if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                if (e.key === 'Backspace') {
+                    e.preventDefault();
+                    handleBack();
+                } else if (e.key === 'Escape' && !document.fullscreenElement) {
+                    e.preventDefault();
+                    handleBack();
+                } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
                     e.preventDefault();
                     const delta = e.key === 'ArrowRight' ? 10 : -10;
                     const baseTime = pendingSeekTime !== null ? pendingSeekTime : getAbsoluteTime();

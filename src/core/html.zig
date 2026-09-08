@@ -17,6 +17,20 @@ fn escapeForJs(out: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []c
     }
 }
 
+/// Escapes a string for safe HTML content injection.
+fn escapeForHtml(out: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
+    for (input) |ch| {
+        switch (ch) {
+            '&' => try out.appendSlice(allocator, "&amp;"),
+            '<' => try out.appendSlice(allocator, "&lt;"),
+            '>' => try out.appendSlice(allocator, "&gt;"),
+            '"' => try out.appendSlice(allocator, "&quot;"),
+            '\'' => try out.appendSlice(allocator, "&#39;"),
+            else => try out.append(allocator, ch),
+        }
+    }
+}
+
 /// Frontend HTML markup and embedded JavaScript for the custom video player.
 pub fn generatePlayerHtml(
     allocator: std.mem.Allocator,
@@ -30,6 +44,7 @@ pub fn generatePlayerHtml(
     server_lan_ip: []const u8,
     streamer_mode: []const u8,
     audio_transcoder_mode: []const u8,
+    return_url: []const u8,
 ) ![]u8 {
     const min = @as(u32, @intFromFloat(duration)) / 60;
     const sec = @as(u32, @intFromFloat(duration)) % 60;
@@ -40,6 +55,14 @@ pub fn generatePlayerHtml(
     defer title_escaped.deinit(allocator);
     try escapeForJs(&title_escaped, allocator, media_title);
 
+    var title_html: std.ArrayList(u8) = .empty;
+    defer title_html.deinit(allocator);
+    try escapeForHtml(&title_html, allocator, media_title);
+
+    var return_url_escaped: std.ArrayList(u8) = .empty;
+    defer return_url_escaped.deinit(allocator);
+    try escapeForJs(&return_url_escaped, allocator, return_url);
+
     const rendered_js = try template_engine.render(allocator, @embedFile("../web/templates/player.js"), .{
         .DURATION = duration,
         .MEDIA_QUERY = media_query,
@@ -49,6 +72,7 @@ pub fn generatePlayerHtml(
         .START_POSITION = start_position,
         .MEDIA_TITLE = title_escaped.items,
         .SERVER_LAN_IP = server_lan_ip,
+        .RETURN_URL = return_url_escaped.items,
     });
     defer allocator.free(rendered_js);
 
@@ -64,5 +88,7 @@ pub fn generatePlayerHtml(
         .PLAYER_JS = rendered_js,
         .STATS_JS = rendered_stats_js,
         .TIME_STR = time_str,
+        .MEDIA_TITLE = title_html.items,
+        .RETURN_URL = return_url,
     });
 }

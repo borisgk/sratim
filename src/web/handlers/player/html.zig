@@ -136,7 +136,13 @@ pub fn handlePlayer(
     var free_title = false;
     defer if (free_title) allocator.free(media_title);
 
+    var return_url: []const u8 = "/";
+    var free_return_url = false;
+    defer if (free_return_url) allocator.free(return_url);
+
     if (movie_id) |mid| {
+        return_url = try std.fmt.allocPrint(allocator, "/details?id={d}", .{mid});
+        free_return_url = true;
         if (database.catalog) |cat| {
             if (cat.getMovieById(allocator, mid) catch null) |m| {
                 defer {
@@ -154,6 +160,8 @@ pub fn handlePlayer(
                     var mut = ep;
                     mut.deinit(allocator);
                 }
+                return_url = try std.fmt.allocPrint(allocator, "/show?id={d}", .{ep.show_id});
+                free_return_url = true;
                 if (ep.title) |t| {
                     media_title = try allocator.dupe(u8, t);
                     free_title = true;
@@ -188,6 +196,7 @@ pub fn handlePlayer(
         lan_ip,
         streamer_mode,
         audio_mode,
+        return_url,
     );
 
     try request.respond(html_content, .{

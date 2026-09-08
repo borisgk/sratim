@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Sratim Stream</title>
+    <title>__MEDIA_TITLE__ - Sratim</title>
     <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
     <style>
 __PLAYER_CSS__
@@ -12,11 +12,20 @@ __STATS_CSS__
 <body>
     <div class="player-wrapper">
         <video id="video" playsinline></video>
+        <div class="player-top-bar" id="player-top-bar">
+            <button id="back-btn" class="player-back-btn" title="Back" aria-label="Back">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="22" height="22">
+                    <line x1="19" y1="12" x2="5" y2="12"></line>
+                    <polyline points="12 19 5 12 12 5"></polyline>
+                </svg>
+            </button>
+            <div class="player-title" id="player-title">__MEDIA_TITLE__</div>
+        </div>
         <div id="casting-overlay" class="casting-overlay hidden">
             <svg viewBox="0 0 24 24" fill="currentColor" width="64" height="64">
                 <path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2c4.97 0 9 4.03 9 9h2c0-6.08-4.92-11-11-11zm20-7H3c-1.1 0-2 .9-2 2v3h2V5h18v14h-7v2h7c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/>
             </svg>
-            <div class="casting-title" id="casting-media-title">Sratim Stream</div>
+            <div class="casting-title" id="casting-media-title">__MEDIA_TITLE__</div>
             <div class="casting-sub">Casting to <strong id="casting-device-name" style="color: #60a5fa;">TV Device</strong></div>
             <button id="stopcastbtn" class="stop-cast-btn">Disconnect Cast</button>
         </div>
@@ -35,7 +44,7 @@ __STATS_CSS__
             </div>
         </div>
 
-        <div class="controls">
+        <div class="controls" id="controls">
             <button id="playpause">
                 <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
             </button>
