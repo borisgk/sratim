@@ -774,7 +774,59 @@
         // =========================================================================
         // 6. UI Controls & Keyboard Shortcuts
         // =========================================================================
+        function updateVideoLayout() {
+            if (!video || !playerWrapper) return;
+            const vw = video.videoWidth;
+            const vh = video.videoHeight;
+            if (!vw || !vh) {
+                video.style.width = '100%';
+                video.style.height = '100%';
+                video.style.left = '0px';
+                video.style.top = '0px';
+                return;
+            }
+            const cw = playerWrapper.clientWidth;
+            const ch = playerWrapper.clientHeight;
+            if (!cw || !ch) return;
+
+            const videoRatio = vw / vh;
+            const containerRatio = cw / ch;
+
+            let targetW, targetH;
+            if (containerRatio > videoRatio) {
+                // Limited by container height
+                targetH = ch;
+                targetW = Math.round(targetH * videoRatio);
+            } else {
+                // Limited by container width
+                targetW = cw;
+                targetH = Math.round(targetW / videoRatio);
+            }
+
+            const left = Math.round((cw - targetW) / 2);
+            const top = Math.round((ch - targetH) / 2);
+
+            video.style.width = targetW + 'px';
+            video.style.height = targetH + 'px';
+            video.style.left = left + 'px';
+            video.style.top = top + 'px';
+        }
+
         function initControls() {
+            function togglePlayPause() {
+                if (CastController.isCasting && CastController.remotePlayerController) {
+                    CastController.remotePlayerController.playOrPause();
+                } else {
+                    if (video.paused) {
+                        video.play();
+                        playpause.innerHTML = svgPause;
+                    } else {
+                        video.pause();
+                        playpause.innerHTML = svgPlay;
+                    }
+                }
+            }
+
             video.addEventListener('play', () => {
                 playpause.innerHTML = svgPause;
                 WatchTracker.sendEvent('start', getAbsoluteTime());
@@ -783,6 +835,19 @@
             video.addEventListener('pause', () => {
                 playpause.innerHTML = svgPlay;
             });
+
+            video.addEventListener('loadedmetadata', updateVideoLayout);
+            video.addEventListener('resize', updateVideoLayout);
+            window.addEventListener('resize', updateVideoLayout);
+            document.addEventListener('fullscreenchange', () => {
+                setTimeout(updateVideoLayout, 50);
+            });
+            if (window.ResizeObserver) {
+                const ro = new ResizeObserver(() => {
+                    updateVideoLayout();
+                });
+                ro.observe(playerWrapper);
+            }
 
             video.addEventListener('seeked', () => {
                 SubtitleManager.updateOverlay();
@@ -801,18 +866,9 @@
                 }
             });
 
-            playpause.addEventListener('click', () => {
-                if (CastController.isCasting && CastController.remotePlayerController) {
-                    CastController.remotePlayerController.playOrPause();
-                } else {
-                    if (video.paused) {
-                        video.play();
-                        playpause.innerHTML = svgPause;
-                    } else {
-                        video.pause();
-                        playpause.innerHTML = svgPlay;
-                    }
-                }
+            playpause.addEventListener('click', (e) => {
+                e.stopPropagation();
+                togglePlayPause();
             });
 
             seekbar.addEventListener('click', (e) => {
@@ -925,21 +981,26 @@
                 }
             });
 
-            video.addEventListener('click', () => {
-                if (CastController.isCasting && CastController.remotePlayerController) {
-                    CastController.remotePlayerController.playOrPause();
-                } else {
-                    if (video.paused) {
-                        video.play();
-                        playpause.innerHTML = svgPause;
-                    } else {
-                        video.pause();
-                        playpause.innerHTML = svgPlay;
-                    }
+            playerWrapper.addEventListener('click', (e) => {
+                if (e.target.closest('#controls') ||
+                    e.target.closest('#player-top-bar') ||
+                    e.target.closest('#audio-menu') ||
+                    e.target.closest('#subtitles-menu') ||
+                    e.target.closest('#casting-overlay') ||
+                    e.target.closest('#error-overlay') ||
+                    e.target.closest('.stats-panel')) {
+                    return;
                 }
+                togglePlayPause();
             });
 
-            video.addEventListener('dblclick', (e) => {
+            playerWrapper.addEventListener('dblclick', (e) => {
+                if (e.target.closest('#controls') ||
+                    e.target.closest('#player-top-bar') ||
+                    e.target.closest('#audio-menu') ||
+                    e.target.closest('#subtitles-menu')) {
+                    return;
+                }
                 e.preventDefault();
                 if (!document.fullscreenElement) {
                     playerWrapper.requestFullscreen().catch(err => console.error(err));
@@ -984,17 +1045,7 @@
                     }
                 } else if (e.key === ' ') {
                     e.preventDefault();
-                    if (CastController.isCasting && CastController.remotePlayerController) {
-                        CastController.remotePlayerController.playOrPause();
-                    } else {
-                        if (video.paused) {
-                            video.play();
-                            playpause.innerHTML = svgPause;
-                        } else {
-                            video.pause();
-                            playpause.innerHTML = svgPlay;
-                        }
-                    }
+                    togglePlayPause();
                 } else if (e.key === 'f' || e.key === 'F') {
                     if (!document.fullscreenElement) {
                         playerWrapper.requestFullscreen().catch(err => console.error(err));
@@ -1018,6 +1069,7 @@
         AudioManager.initUI();
         CastController.init();
         initControls();
+        updateVideoLayout();
 
         // Auto-select Forced subtitle track if available
         if (SUBTITLE_TRACKS && SUBTITLE_TRACKS.length > 0) {
