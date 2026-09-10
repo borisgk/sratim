@@ -4,6 +4,7 @@ const types = @import("../mkv/types.zig");
 const block_reader = @import("../mkv/block_reader.zig");
 const aac_dec = @import("aac_dec.zig");
 const test_report = @import("test_report.zig");
+const stream_audio_transcoder = @import("../../stream_audio_transcoder.zig");
 
 pub fn runAacTest(
     allocator: std.mem.Allocator,
@@ -166,3 +167,180 @@ test "AacDecoder test_video_h264_aac_stereo.mkv vs pre-transcoded reference" {
     const testing = std.testing;
     try runAacTest(testing.allocator, testing.io, "testvideo/test_video_h264_aac_stereo.mkv", "testvideo/test_video_h264_aac_stereo_ref.pcm", "2.0 Stereo", "tmp/aac_stereo_decoding_report.html", 2);
 }
+
+test "AudioSpecificConfig parsing HE-AAC SBR" {
+    const testing = std.testing;
+    // Protector 2025 extradata: 13 30 56 e5 98
+    const cp = [_]u8{ 0x13, 0x30, 0x56, 0xe5, 0x98 };
+    const cfg = try aac_dec.parseAudioSpecificConfig(&cp);
+    try testing.expectEqual(@as(u8, 2), cfg.audio_object_type);
+    try testing.expectEqual(@as(u4, 6), cfg.sample_rate_idx);
+    try testing.expectEqual(@as(u32, 24000), cfg.sample_rate);
+    try testing.expectEqual(@as(u4, 6), cfg.channel_configuration);
+    try testing.expect(cfg.sbr_present);
+    try testing.expectEqual(@as(?u32, 48000), cfg.ext_sample_rate);
+}
+
+test "AacDecoder decode Protector 2025 frames with 24kHz SWB" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+    const io = testing.io;
+    const file_path = "testvideo/Protector 2025 1080p 10bit WEBRip 6CH x265 HEVC-PSA.mkv";
+
+    const tracks = try track_parser.parseMkvTracks(allocator, io, file_path);
+    defer {
+        for (tracks) |*t| t.deinit(allocator);
+        allocator.free(tracks);
+    }
+
+    var audio_track_opt: ?types.MkvTrackInfo = null;
+    for (tracks) |t| {
+        if (t.track_type == .Audio) {
+            audio_track_opt = t;
+            break;
+        }
+    }
+    const audio_track = audio_track_opt.?;
+
+    const demux_file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
+    defer demux_file.close(io);
+
+    const payload_file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
+    defer payload_file.close(io);
+
+    var demux_buf: [65536]u8 = undefined;
+    var demux_reader = demux_file.reader(io, &demux_buf);
+    var block_rdr = block_reader.BlockReader.init(&demux_reader.interface, 1_000_000);
+
+    var payload_buf: [65536]u8 = undefined;
+    var payload_reader = payload_file.reader(io, &payload_buf);
+
+    var decoder = aac_dec.AacDecoder.init();
+    if (audio_track.codec_private) |cp| {
+        try decoder.configureFromAudioSpecificConfig(cp);
+    } else {
+        decoder.setSampleRate(audio_track.sample_rate);
+        decoder.channels = audio_track.channels;
+    }
+
+    try testing.expectEqual(@as(u32, 24000), decoder.sample_rate);
+    try testing.expectEqual(@as(u4, 6), decoder.sample_rate_idx);
+
+    var raw_pkt_buf = std.ArrayList(u8).empty;
+    defer raw_pkt_buf.deinit(allocator);
+
+    var current_file_pos: u64 = 0;
+    var audio_pkt_count: usize = 0;
+    var success_frames: usize = 0;
+    var failed_frames: usize = 0;
+    var frame_pcm: [2048]f32 = undefined;
+    var active_samples_checked: usize = 0;
+
+    while (try block_rdr.readNextBlock(&current_file_pos)) |blk| {
+        if (blk.track_num == audio_track.track_num) {
+            audio_pkt_count += 1;
+            try payload_reader.seekTo(blk.payload_offset);
+            try raw_pkt_buf.resize(allocator, blk.payload_size);
+            try payload_reader.interface.readSliceAll(raw_pkt_buf.items);
+
+            if (decoder.decodeFrame(raw_pkt_buf.items, &frame_pcm)) |n_samples| {
+                success_frames += 1;
+                for (frame_pcm[0 .. n_samples * 2]) |s| {
+                    try testing.expect(!std.math.isNan(s));
+                    try testing.expect(!std.math.isInf(s));
+                    try testing.expect(@abs(s) <= 2.0);
+                    if (@abs(s) > 0.001) active_samples_checked += 1;
+                }
+            } else |_| {
+                failed_frames += 1;
+            }
+
+            if (audio_pkt_count >= 500) break;
+        }
+    }
+
+    try testing.expectEqual(@as(usize, 500), success_frames);
+    try testing.expectEqual(@as(usize, 0), failed_frames);
+    try testing.expect(active_samples_checked > 0);
+}
+
+test "StreamAudioTranscoder transcode Protector 2025 audio" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+    const io = testing.io;
+    const file_path = "testvideo/Protector 2025 1080p 10bit WEBRip 6CH x265 HEVC-PSA.mkv";
+
+    const tracks = try track_parser.parseMkvTracks(allocator, io, file_path);
+    defer {
+        for (tracks) |*t| t.deinit(allocator);
+        allocator.free(tracks);
+    }
+
+    var audio_track_opt: ?types.MkvTrackInfo = null;
+    for (tracks) |t| {
+        if (t.track_type == .Audio) {
+            audio_track_opt = t;
+            break;
+        }
+    }
+    const audio_track = audio_track_opt.?;
+
+    const transcoder = try stream_audio_transcoder.StreamAudioTranscoder.initFromCodec(
+        audio_track.codec_id,
+        audio_track.codec_private,
+        audio_track.channels,
+        audio_track.sample_rate,
+        true,
+    );
+    defer transcoder.deinit();
+
+    // Verify transcoder activated the 24kHz -> 48kHz resampler
+    try testing.expect(transcoder.resampler_l != null);
+    try testing.expect(transcoder.resampler_r != null);
+    try testing.expectEqual(@as(u32, 24000), transcoder.resampler_l.?.in_rate);
+    try testing.expectEqual(@as(u32, 48000), transcoder.resampler_l.?.out_rate);
+
+    const demux_file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
+    defer demux_file.close(io);
+
+    const payload_file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
+    defer payload_file.close(io);
+
+    var demux_buf: [65536]u8 = undefined;
+    var demux_reader = demux_file.reader(io, &demux_buf);
+    var block_rdr = block_reader.BlockReader.init(&demux_reader.interface, 1_000_000);
+
+    var payload_buf: [65536]u8 = undefined;
+    var payload_reader = payload_file.reader(io, &payload_buf);
+
+    var raw_pkt_buf = std.ArrayList(u8).empty;
+    defer raw_pkt_buf.deinit(allocator);
+
+    var out_frames = std.ArrayList(stream_audio_transcoder.EncodedAacFrame).empty;
+    defer {
+        for (out_frames.items) |f| allocator.free(f.data);
+        out_frames.deinit(allocator);
+    }
+
+    var current_file_pos: u64 = 0;
+    var audio_pkt_count: usize = 0;
+
+    while (try block_rdr.readNextBlock(&current_file_pos)) |blk| {
+        if (blk.track_num == audio_track.track_num) {
+            audio_pkt_count += 1;
+            try payload_reader.seekTo(blk.payload_offset);
+            try raw_pkt_buf.resize(allocator, blk.payload_size);
+            try payload_reader.interface.readSliceAll(raw_pkt_buf.items);
+
+            try transcoder.transcodePacket(allocator, raw_pkt_buf.items, &out_frames);
+            if (audio_pkt_count >= 50) break;
+        }
+    }
+
+    try testing.expect(out_frames.items.len >= 80);
+    for (out_frames.items) |f| {
+        try testing.expect(f.data.len > 0);
+        try testing.expectEqual(@as(usize, 1024), f.sample_count);
+    }
+}
+

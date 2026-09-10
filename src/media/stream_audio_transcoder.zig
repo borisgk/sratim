@@ -50,7 +50,6 @@ pub const StreamAudioTranscoder = struct {
         sample_rate: u32,
         use_native_encoder: bool,
     ) !*StreamAudioTranscoder {
-        _ = codec_private;
         _ = use_native_encoder;
         const allocator = std.heap.c_allocator;
         const is_ac3 = std.mem.eql(u8, codec_name, "A_AC3") or std.mem.eql(u8, codec_name, "ac-3") or std.mem.eql(u8, codec_name, "sac3");
@@ -71,14 +70,25 @@ pub const StreamAudioTranscoder = struct {
         errdefer allocator.destroy(self);
 
         var aac_dec_inst: ?aac_dec.AacDecoder = null;
+        var effective_sample_rate = sample_rate;
+
         if (is_aac) {
             var d = aac_dec.AacDecoder.init();
-            d.sample_rate = sample_rate;
-            d.channels = channels;
+            if (codec_private) |cp| {
+                if (d.configureFromAudioSpecificConfig(cp)) {
+                    effective_sample_rate = d.sample_rate;
+                } else |_| {
+                    d.setSampleRate(sample_rate);
+                    d.channels = channels;
+                }
+            } else {
+                d.setSampleRate(sample_rate);
+                d.channels = channels;
+            }
             aac_dec_inst = d;
         }
 
-        const needs_resample = (sample_rate != 48000 and sample_rate > 0);
+        const needs_resample = (effective_sample_rate != 48000 and effective_sample_rate > 0);
 
         self.* = .{
             .is_pure_native = true,
@@ -88,8 +98,8 @@ pub const StreamAudioTranscoder = struct {
             .native_eac3_dec = if (is_eac3) eac3_dec.Eac3Decoder.init() else null,
             .native_aac_dec = aac_dec_inst,
             .native_mp3_dec = if (is_mp3) mp3_dec.Mp3Decoder.init() else null,
-            .resampler_l = if (needs_resample) dsp.HermiteResampler.init(sample_rate, 48000) else null,
-            .resampler_r = if (needs_resample) dsp.HermiteResampler.init(sample_rate, 48000) else null,
+            .resampler_l = if (needs_resample) dsp.HermiteResampler.init(effective_sample_rate, 48000) else null,
+            .resampler_r = if (needs_resample) dsp.HermiteResampler.init(effective_sample_rate, 48000) else null,
         };
         return self;
     }

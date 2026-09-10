@@ -24,9 +24,96 @@ pub const TnsData = struct {
     coef: [8][4][12]f32 = [_][4][12]f32{[_][12]f32{[_]f32{0.0} ** 12} ** 4} ** 8,
 };
 
+pub const AudioSpecificConfig = struct {
+    audio_object_type: u8,
+    sample_rate_idx: u4,
+    sample_rate: u32,
+    channel_configuration: u4,
+    sbr_present: bool = false,
+    ext_sample_rate_idx: ?u4 = null,
+    ext_sample_rate: ?u32 = null,
+};
+
+pub fn parseAudioSpecificConfig(bytes: []const u8) !AudioSpecificConfig {
+    if (bytes.len < 2) return error.BufferTooSmall;
+    var reader = BitReader.init(bytes);
+
+    var aot: u8 = try reader.readBits(u5, 5);
+    if (aot == 31) {
+        aot = 32 + @as(u8, @intCast(try reader.readBits(u6, 6)));
+    }
+
+    const sr_idx = try reader.readBits(u4, 4);
+    const sample_rate: u32 = if (sr_idx == 15)
+        try reader.readBits(u32, 24)
+    else if (sr_idx < tables.FREQ_INDICES.len)
+        tables.FREQ_INDICES[sr_idx]
+    else
+        return error.InvalidSampleRateIndex;
+
+    const channel_config = try reader.readBits(u4, 4);
+
+    var sbr_present = false;
+    var ext_sr_idx: ?u4 = null;
+    var ext_sample_rate: ?u32 = null;
+
+    if (aot == 5 or aot == 29) { // Explicit SBR or PS
+        sbr_present = true;
+        const e_idx = try reader.readBits(u4, 4);
+        ext_sr_idx = e_idx;
+        ext_sample_rate = if (e_idx == 15)
+            try reader.readBits(u32, 24)
+        else if (e_idx < tables.FREQ_INDICES.len)
+            tables.FREQ_INDICES[e_idx]
+        else
+            null;
+        aot = try reader.readBits(u5, 5);
+        if (aot == 31) {
+            aot = 32 + @as(u8, @intCast(try reader.readBits(u6, 6)));
+        }
+    } else {
+        // Skip GASpecificConfig fields for AAC-LC:
+        // frameLengthFlag (1), dependsOnCoreCoder (1), if (dependsOnCoreCoder) coreCoderDelay (14), extensionFlag (1)
+        if (aot == 2) {
+            _ = reader.readBit() catch 0;
+            const dependsOnCore = (reader.readBit() catch 0) == 1;
+            if (dependsOnCore) _ = reader.readBits(u16, 14) catch 0;
+            _ = reader.readBit() catch 0;
+        }
+        // Check for backward-compatible SBR sync extension (0x2B7)
+        if (reader.bitsLeft() >= 16) {
+            const sync_ext = reader.readBits(u11, 11) catch 0;
+            if (sync_ext == 0x2B7) {
+                const ext_aot = reader.readBits(u5, 5) catch 0;
+                if (ext_aot == 5) {
+                    sbr_present = (reader.readBit() catch 0) == 1;
+                    if (sbr_present and reader.bitsLeft() >= 4) {
+                        const e_idx = reader.readBits(u4, 4) catch 0;
+                        ext_sr_idx = e_idx;
+                        ext_sample_rate = if (e_idx < tables.FREQ_INDICES.len) tables.FREQ_INDICES[e_idx] else null;
+                    }
+                }
+            }
+        }
+    }
+
+    return AudioSpecificConfig{
+        .audio_object_type = aot,
+        .sample_rate_idx = sr_idx,
+        .sample_rate = sample_rate,
+        .channel_configuration = channel_config,
+        .sbr_present = sbr_present,
+        .ext_sample_rate_idx = ext_sr_idx,
+        .ext_sample_rate = ext_sample_rate,
+    };
+}
+
 pub const AacDecoder = struct {
     sample_rate: u32 = 48000,
+    sample_rate_idx: u4 = 3,
     channels: u32 = 6,
+    sbr_present: bool = false,
+    ext_sample_rate: ?u32 = null,
 
     // Overlap-add delay buffers for up to 6 channels:
     // 0: Left, 1: Right, 2: Center, 3: Ls, 4: Rs, 5: LFE
@@ -42,6 +129,22 @@ pub const AacDecoder = struct {
         return .{};
     }
 
+    pub fn setSampleRate(self: *AacDecoder, rate: u32) void {
+        self.sample_rate = rate;
+        self.sample_rate_idx = tables.getSampleRateIndex(rate);
+    }
+
+    pub fn configureFromAudioSpecificConfig(self: *AacDecoder, bytes: []const u8) !void {
+        const cfg = try parseAudioSpecificConfig(bytes);
+        self.sample_rate = cfg.sample_rate;
+        self.sample_rate_idx = cfg.sample_rate_idx;
+        if (cfg.channel_configuration > 0) {
+            self.channels = cfg.channel_configuration;
+        }
+        self.sbr_present = cfg.sbr_present;
+        self.ext_sample_rate = cfg.ext_sample_rate;
+    }
+
     pub fn reset(self: *AacDecoder) void {
         for (&self.delay) |*ch_delay| @memset(ch_delay, 0.0);
         @memset(&self.prev_window_shape, 0);
@@ -55,6 +158,7 @@ pub const AacDecoder = struct {
         if (out_stereo_pcm.len < 2048) return error.OutputBufferTooSmall;
 
         self.frame_count += 1;
+        self.sample_rate_idx = tables.getSampleRateIndex(self.sample_rate);
 
         var raw_bytes = bytes;
         // Check if prefixed by ADTS syncword (0xFFF)
@@ -297,7 +401,7 @@ pub const AacDecoder = struct {
         var spectrum: [1024]f32 = [_]f32{0.0} ** 1024;
         var tns = TnsData{};
         try self.decodeIcsPayload(reader, &ics, global_gain, &spectrum, &tns, null, null);
-        applyTns(&spectrum, &ics, &tns);
+        self.applyTns(&spectrum, &ics, &tns);
 
         self.applyImdctAndWindow(&ics, &spectrum, out_pcm, ch_idx);
     }
@@ -356,7 +460,7 @@ pub const AacDecoder = struct {
 
         // Apply Mid/Side (M/S) stereo and Intensity Stereo if common window
         if (common_window) {
-            const swb_offset = if (ics_l.window_sequence == 2) &tables.SWB_OFFSET_SHORT_48000 else &tables.SWB_OFFSET_48000;
+            const swb_offset = if (ics_l.window_sequence == 2) tables.SWB_OFFSETS_128[self.sample_rate_idx] else tables.SWB_OFFSETS_1024[self.sample_rate_idx];
             const win_len: usize = 1024 / ics_l.num_windows;
             var g_win_start: usize = 0;
             for (0..ics_l.num_window_groups) |g| {
@@ -393,8 +497,8 @@ pub const AacDecoder = struct {
             }
         }
 
-        applyTns(&spec_l, &ics_l, &tns_l);
-        applyTns(&spec_r, &ics_r, &tns_r);
+        self.applyTns(&spec_l, &ics_l, &tns_l);
+        self.applyTns(&spec_r, &ics_r, &tns_r);
 
         self.applyImdctAndWindow(&ics_l, &spec_l, out_l, ch_l);
         self.applyImdctAndWindow(&ics_r, &spec_r, out_r, ch_r);
@@ -410,7 +514,6 @@ pub const AacDecoder = struct {
         out_cb: ?*[8][64]u4,
         out_sf: ?*[8][64]i32,
     ) !void {
-        _ = self;
         var sfb_cb: [8][64]u4 = [_][64]u4{[_]u4{0} ** 64} ** 8;
         var sfb_sf: [8][64]i32 = [_][64]i32{[_]i32{0} ** 64} ** 8;
 
@@ -496,7 +599,7 @@ pub const AacDecoder = struct {
         _ = try reader.readBit();
 
         // 6. Spectral data decoding & Dequantization (ISO/IEC 14496-3 Table 4.56)
-        const swb_offset = if (ics.window_sequence == 2) &tables.SWB_OFFSET_SHORT_48000 else &tables.SWB_OFFSET_48000;
+        const swb_offset = if (ics.window_sequence == 2) tables.SWB_OFFSETS_128[self.sample_rate_idx] else tables.SWB_OFFSETS_1024[self.sample_rate_idx];
         const win_len: usize = 1024 / ics.num_windows;
         var g_win_start: usize = 0;
         var q_buf: [1024]i32 = [_]i32{0} ** 1024;
@@ -557,16 +660,16 @@ pub const AacDecoder = struct {
         }
     }
 
-    fn applyTns(spectrum: *[1024]f32, ics: *const IcsInfo, tns: *const TnsData) void {
+    fn applyTns(self: *const AacDecoder, spectrum: *[1024]f32, ics: *const IcsInfo, tns: *const TnsData) void {
         if (!tns.present) return;
 
         const is8 = (ics.window_sequence == 2);
-        const tns_max_bands: usize = if (is8) tables.TNS_MAX_BANDS_128[3] else tables.TNS_MAX_BANDS_1024[3];
+        const tns_max_bands: usize = if (is8) tables.TNS_MAX_BANDS_128[self.sample_rate_idx] else tables.TNS_MAX_BANDS_1024[self.sample_rate_idx];
         const mmm = @min(tns_max_bands, ics.max_sfb);
         if (mmm == 0) return;
 
-        const num_swb: usize = if (is8) tables.NUM_SHORT_SFBS_48000 else tables.NUM_SFBS_48000;
-        const swb_offset = if (is8) &tables.SWB_OFFSET_SHORT_48000 else &tables.SWB_OFFSET_48000;
+        const num_swb: usize = if (is8) tables.NUM_SWB_128[self.sample_rate_idx] else tables.NUM_SWB_1024[self.sample_rate_idx];
+        const swb_offset = if (is8) tables.SWB_OFFSETS_128[self.sample_rate_idx] else tables.SWB_OFFSETS_1024[self.sample_rate_idx];
 
         for (0..ics.num_windows) |w| {
             var bottom: usize = num_swb;
