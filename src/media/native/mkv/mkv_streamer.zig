@@ -256,7 +256,15 @@ pub fn streamMkvGeneric(
             1152
         else
             1024;
-        block_rdr.setAudioTrackParams(at.track_num, spf, at.sample_rate);
+        var effective_rate = at.sample_rate;
+        if (std.mem.eql(u8, at.codec_id, "A_AAC") or std.mem.eql(u8, at.codec_id, "mp4a")) {
+            if (at.codec_private) |cp| {
+                if (transcoder_mod.aac_dec.parseAudioSpecificConfig(cp)) |asc| {
+                    effective_rate = asc.sample_rate;
+                } else |_| {}
+            }
+        }
+        block_rdr.setAudioTrackParams(at.track_num, spf, effective_rate);
     }
     var current_file_pos = seek_cluster_offset;
 

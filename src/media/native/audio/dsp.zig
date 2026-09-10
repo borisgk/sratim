@@ -198,13 +198,17 @@ pub fn downmixInterleavedToStereo(
     }
 }
 
-/// High-quality Cubic Hermite Interpolation audio resampler with continuous phase preservation.
+/// High-quality Cubic Hermite Interpolation audio resampler with continuous phase preservation
+/// and zero-loss sample buffering across chunk boundaries.
 pub const HermiteResampler = struct {
     in_rate: u32,
     out_rate: u32,
     ratio: f64,
     phase: f64 = 0.0,
-    history: [4]f32 = [_]f32{ 0.0, 0.0, 0.0, 0.0 },
+    tail: [16]f32 = [_]f32{0.0} ** 16,
+    tail_len: usize = 0,
+    prev_sample: f32 = 0.0,
+    has_prev: bool = false,
 
     pub fn init(in_rate: u32, out_rate: u32) HermiteResampler {
         return .{
@@ -212,17 +216,31 @@ pub const HermiteResampler = struct {
             .out_rate = out_rate,
             .ratio = @as(f64, @floatFromInt(in_rate)) / @as(f64, @floatFromInt(out_rate)),
             .phase = 0.0,
-            .history = [_]f32{ 0.0, 0.0, 0.0, 0.0 },
+            .tail = [_]f32{0.0} ** 16,
+            .tail_len = 0,
+            .prev_sample = 0.0,
+            .has_prev = false,
         };
     }
 
     pub fn reset(self: *HermiteResampler) void {
         self.phase = 0.0;
-        self.history = [_]f32{ 0.0, 0.0, 0.0, 0.0 };
+        self.tail = [_]f32{0.0} ** 16;
+        self.tail_len = 0;
+        self.prev_sample = 0.0;
+        self.has_prev = false;
+    }
+
+    inline fn getSample(self: *const HermiteResampler, input: []const f32, idx: usize) f32 {
+        if (idx < self.tail_len) {
+            return self.tail[idx];
+        } else {
+            return input[idx - self.tail_len];
+        }
     }
 
     /// Resamples an input slice of single-channel float PCM into an output buffer.
-    /// Returns the number of output samples generated.
+    /// Returns the number of output samples generated without losing boundary samples.
     pub fn process(self: *HermiteResampler, input: []const f32, output: []f32) usize {
         if (self.in_rate == self.out_rate) {
             const count = @min(input.len, output.len);
@@ -230,20 +248,26 @@ pub const HermiteResampler = struct {
             return count;
         }
 
+        const total_len = self.tail_len + input.len;
+        if (total_len == 0) return 0;
+
         var out_idx: usize = 0;
 
         while (out_idx < output.len) {
             const current_sample_idx = @as(usize, @intFromFloat(self.phase));
-            if (current_sample_idx + 2 >= input.len) break;
+            if (current_sample_idx + 2 >= total_len) break;
 
             const t: f32 = @floatCast(self.phase - @as(f64, @floatFromInt(current_sample_idx)));
 
             // 4-point cubic Hermite spline interpolation:
             // p0, p1, p2, p3
-            const p0 = if (current_sample_idx == 0) self.history[3] else input[current_sample_idx - 1];
-            const p1 = input[current_sample_idx];
-            const p2 = input[current_sample_idx + 1];
-            const p3 = input[current_sample_idx + 2];
+            const p0 = if (current_sample_idx == 0)
+                (if (self.has_prev) self.prev_sample else self.getSample(input, 0))
+            else
+                self.getSample(input, current_sample_idx - 1);
+            const p1 = self.getSample(input, current_sample_idx);
+            const p2 = self.getSample(input, current_sample_idx + 1);
+            const p3 = self.getSample(input, current_sample_idx + 2);
 
             const c0 = p1;
             const c1 = 0.5 * (p2 - p0);
@@ -255,15 +279,22 @@ pub const HermiteResampler = struct {
             self.phase += self.ratio;
         }
 
-        // Maintain phase and history for seamless streaming across packet boundaries
-        if (input.len >= 4) {
-            self.history[0] = input[input.len - 4];
-            self.history[1] = input[input.len - 3];
-            self.history[2] = input[input.len - 2];
-            self.history[3] = input[input.len - 1];
-        }
+        // Maintain phase and carry unconsumed tail samples over to next call
         const consumed = @as(usize, @intFromFloat(self.phase));
-        self.phase -= @as(f64, @floatFromInt(@min(consumed, input.len)));
+        self.phase -= @as(f64, @floatFromInt(consumed));
+
+        if (consumed > 0) {
+            self.prev_sample = self.getSample(input, consumed - 1);
+            self.has_prev = true;
+        }
+
+        const remaining = total_len - consumed;
+        const copy_count = @min(remaining, self.tail.len);
+        var k: usize = 0;
+        while (k < copy_count) : (k += 1) {
+            self.tail[k] = self.getSample(input, consumed + k);
+        }
+        self.tail_len = copy_count;
 
         return out_idx;
     }
@@ -327,4 +358,29 @@ test "HermiteResampler 44100 to 48000 Hz preserves sine continuity" {
         if (@abs(s) > max_amp) max_amp = @abs(s);
     }
     try std.testing.expect(max_amp > 0.90 and max_amp <= 1.05);
+}
+
+test "HermiteResampler 24000 to 48000 Hz zero cumulative drift across chunks" {
+    var resampler = HermiteResampler.init(24000, 48000);
+
+    var input: [1024]f32 = undefined;
+    for (0..1024) |i| {
+        input[i] = @sin(@as(f32, @floatFromInt(i)) * 0.1);
+    }
+
+    var output: [4096]f32 = undefined;
+    var total_out: usize = 0;
+
+    // Simulate 50 consecutive chunks of 1024 samples
+    for (0..50) |chunk_idx| {
+        const n = resampler.process(&input, &output);
+        total_out += n;
+        if (chunk_idx > 0) {
+            // From chunk 1 onwards, every 1024-sample chunk MUST output exactly 2048 samples
+            try std.testing.expectEqual(@as(usize, 2048), n);
+        }
+    }
+
+    // 50 * 1024 in = 51,200 samples. Total out is 102,400 - 4 (initial 4-sample latency) = 102,396.
+    try std.testing.expectEqual(@as(usize, 102396), total_out);
 }
