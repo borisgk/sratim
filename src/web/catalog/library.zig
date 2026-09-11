@@ -147,7 +147,6 @@ pub fn generateLibraryContentHtml(
     return try template_engine.render(allocator, @embedFile("../templates/library_view.html"), .{
         .INLINE_CSS = global_css,
         .LIBRARY_NAME = lib.name,
-        .LIBRARY_PATH = lib.path,
         .RECENTLY_ADDED_SECTION = recently_added_section_buf.items,
         .MOVIE_CARDS = cards_buf.items,
         .RESCAN_BTN = rescan_btn_html,
