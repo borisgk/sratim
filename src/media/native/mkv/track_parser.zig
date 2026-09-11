@@ -169,6 +169,10 @@ fn parseTrackEntry(
             if (codec_private_opt) |cp| {
                 stsd_raw = try buildHevcStsd(allocator, cp, width, height);
             }
+        } else if (std.mem.eql(u8, codec_id, "V_AV1")) {
+            if (codec_private_opt) |cp| {
+                stsd_raw = try buildAv1Stsd(allocator, cp, width, height);
+            }
         }
     } else if (track_type == .Audio) {
         if (std.mem.eql(u8, codec_id, "A_AAC")) {
@@ -193,6 +197,15 @@ fn parseTrackEntry(
     };
 }
 
+/// Returns true if the MKV video codec ID can be transmuxed into browser-compatible fMP4.
+pub fn isSupportedVideoCodec(codec_id: []const u8) bool {
+    const supported_codecs = .{ "V_MPEG4/ISO/AVC", "V_MPEGH/ISO/HEVC", "V_AV1" };
+    inline for (supported_codecs) |c| {
+        if (std.mem.eql(u8, codec_id, c)) return true;
+    }
+    return false;
+}
+
 /// Builds standard ISOBMFF stsd box containing avc1 and avcC records.
 pub fn buildAvc1Stsd(
     allocator: std.mem.Allocator,
@@ -211,6 +224,16 @@ pub fn buildHevcStsd(
     height: u32,
 ) ![]u8 {
     return buildVisualStsd(allocator, "hev1", "hvcC", hvcC_payload, width, height);
+}
+
+/// Builds standard ISOBMFF stsd box containing av01 and av1C records.
+pub fn buildAv1Stsd(
+    allocator: std.mem.Allocator,
+    av1C_payload: []const u8,
+    width: u32,
+    height: u32,
+) ![]u8 {
+    return buildVisualStsd(allocator, "av01", "av1C", av1C_payload, width, height);
 }
 
 fn buildVisualStsd(
@@ -352,4 +375,13 @@ test "buildAvc1Stsd and buildAacStsd structure" {
     try std.testing.expectEqualStrings("stsd", aac_stsd[4..8]);
     try std.testing.expect(std.mem.indexOf(u8, aac_stsd, "mp4a") != null);
     try std.testing.expect(std.mem.indexOf(u8, aac_stsd, "esds") != null);
+
+    const mock_av1C = [_]u8{ 0x81, 0x00, 0x0C, 0x00 }; // Marker=1, version=1, profile 0, level 0.0, 8-bit
+    const av1_stsd = try buildAv1Stsd(allocator, &mock_av1C, 320, 240);
+    defer allocator.free(av1_stsd);
+
+    try std.testing.expect(av1_stsd.len > 86);
+    try std.testing.expectEqualStrings("stsd", av1_stsd[4..8]);
+    try std.testing.expect(std.mem.indexOf(u8, av1_stsd, "av01") != null);
+    try std.testing.expect(std.mem.indexOf(u8, av1_stsd, "av1C") != null);
 }

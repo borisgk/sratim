@@ -269,3 +269,32 @@ test "streamMkvGeneric on tests/Reacher.mkv with Pure Zig E-AC-3 transcode" {
     try out_writer.flush();
     try std.testing.expect(!has_error);
 }
+
+test "streamMkvGeneric on AV1 video track" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const file_path = "tmp/test_video_av1.mkv";
+
+    const in_file = std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only }) catch return;
+    in_file.close(io);
+
+    const out_file = std.Io.Dir.cwd().createFile(io, "tmp/av1_streamed.mp4", .{}) catch return;
+    defer out_file.close(io);
+    var out_buf: [65536]u8 = undefined;
+    var out_writer = out_file.writer(io, &out_buf);
+    var has_error = false;
+
+    try streamMkvGeneric(
+        allocator,
+        io,
+        file_path,
+        0.0,
+        1,
+        &out_writer.interface,
+        &has_error,
+        2,
+        .native,
+    );
+    try out_writer.flush();
+    try std.testing.expect(!has_error);
+}

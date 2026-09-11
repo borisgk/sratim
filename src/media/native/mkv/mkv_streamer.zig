@@ -34,7 +34,7 @@ pub fn canStreamMkvNatively(
     var has_supported_video = false;
     for (tracks) |t| {
         if (t.track_type == .Video) {
-            if (std.mem.eql(u8, t.codec_id, "V_MPEG4/ISO/AVC") or std.mem.eql(u8, t.codec_id, "V_MPEGH/ISO/HEVC")) {
+            if (track_parser.isSupportedVideoCodec(t.codec_id)) {
                 has_supported_video = true;
                 break;
             }
@@ -111,7 +111,7 @@ pub fn streamMkvGeneric(
 
     for (tracks) |*t| {
         if (t.track_type == .Video and video_track_opt == null) {
-            if (std.mem.eql(u8, t.codec_id, "V_MPEG4/ISO/AVC") or std.mem.eql(u8, t.codec_id, "V_MPEGH/ISO/HEVC")) {
+            if (track_parser.isSupportedVideoCodec(t.codec_id)) {
                 video_track_opt = t;
             }
         }
