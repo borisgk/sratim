@@ -82,3 +82,31 @@ pub fn downloadImages(allocator: std.mem.Allocator, io: std.Io, poster_path: ?[]
         }
     }
 }
+
+pub fn downloadProfileImage(allocator: std.mem.Allocator, io: std.Io, profile_path: []const u8, proxy_url: ?[]const u8) !void {
+    main.app_dir.createDirPath(io, "images") catch |err| std.debug.print("Dir create err: {}\n", .{err});
+    main.app_dir.createDirPath(io, "images/profiles") catch |err| std.debug.print("Dir create err: {}\n", .{err});
+    main.app_dir.createDirPath(io, "images/profiles/w185") catch |err| std.debug.print("Dir create err: {}\n", .{err});
+
+    const dest = try std.fmt.allocPrint(allocator, "images/profiles/w185{s}", .{profile_path});
+    defer allocator.free(dest);
+
+    // Skip if already cached
+    if (main.app_dir.statFile(io, dest, .{})) |_| {
+        return;
+    } else |_| {}
+
+    var client = try client_mod.createClient(allocator, proxy_url);
+    defer client.deinit();
+
+    const profile_url = try std.fmt.allocPrint(allocator, "https://image.tmdb.org/t/p/w185{s}", .{profile_path});
+    defer allocator.free(profile_url);
+
+    if (client.get(profile_url, .{})) |response| {
+        var res = response;
+        defer res.deinit();
+        if (res.status.isSuccess() and res.body != null) {
+            main.app_dir.writeFile(io, .{ .sub_path = dest, .data = res.body.? }) catch |err| std.debug.print("Failed to save profile image: {}\n", .{err});
+        }
+    } else |_| {}
+}

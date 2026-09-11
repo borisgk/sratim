@@ -243,6 +243,26 @@ pub fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: s
         first_movie.release_date,
     );
 
+    // Fetch credits & profile pictures
+    if (tmdb.fetchMovieCredits(allocator, io, first_movie.id, token, config.tmdb_proxy)) |credits_parsed| {
+        defer credits_parsed.deinit();
+        const credits = credits_parsed.value;
+        const cast_limit = @min(credits.cast.len, 10);
+        for (credits.cast[0..cast_limit]) |c| {
+            if (c.profile_path) |p| {
+                tmdb.downloadProfileImage(allocator, io, p, config.tmdb_proxy) catch {};
+            }
+        }
+        for (credits.crew) |cr| {
+            if (std.mem.eql(u8, cr.job, "Director") or std.mem.eql(u8, cr.department, "Directing")) {
+                if (cr.profile_path) |p| {
+                    tmdb.downloadProfileImage(allocator, io, p, config.tmdb_proxy) catch {};
+                }
+            }
+        }
+        metadata_mod.saveMovieCredits(database, movie_id, credits.cast, credits.crew) catch {};
+    } else |_| {}
+
     request.respond("OK", .{ .status = .ok }) catch return;
 }
 
@@ -353,6 +373,26 @@ pub fn handleApiMetadataManualLink(request: *std.http.Server.Request, allocator:
         movie.backdrop_path,
         movie.release_date,
     );
+
+    // Fetch credits & profile pictures
+    if (tmdb.fetchMovieCredits(allocator, io, movie.id, token, config.tmdb_proxy)) |credits_parsed| {
+        defer credits_parsed.deinit();
+        const credits = credits_parsed.value;
+        const cast_limit = @min(credits.cast.len, 10);
+        for (credits.cast[0..cast_limit]) |c| {
+            if (c.profile_path) |p| {
+                tmdb.downloadProfileImage(allocator, io, p, config.tmdb_proxy) catch {};
+            }
+        }
+        for (credits.crew) |cr| {
+            if (std.mem.eql(u8, cr.job, "Director") or std.mem.eql(u8, cr.department, "Directing")) {
+                if (cr.profile_path) |p| {
+                    tmdb.downloadProfileImage(allocator, io, p, config.tmdb_proxy) catch {};
+                }
+            }
+        }
+        metadata_mod.saveMovieCredits(database, movie_id, credits.cast, credits.crew) catch {};
+    } else |_| {}
 
     request.respond("OK", .{ .status = .ok }) catch return;
 }

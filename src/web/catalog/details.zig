@@ -83,6 +83,98 @@ pub fn generateDetailsHtml(
 
     try play_url.appendSlice(allocator, "&start=0");
 
+    // Fetch credits (cast & directors)
+    const credits_opt = metadata_mod.getMovieCredits(database, allocator, movie_id) catch null;
+    defer if (credits_opt) |cr| {
+        for (cr) |*c| {
+            var mut_c = c.*;
+            mut_c.deinit(allocator);
+        }
+        allocator.free(cr);
+    };
+    const credits = credits_opt orelse &[_]db_mod.schema.MovieCredit{};
+
+    var directors_buf = std.ArrayList(u8).empty;
+    defer directors_buf.deinit(allocator);
+
+    var cast_section_buf = std.ArrayList(u8).empty;
+    defer cast_section_buf.deinit(allocator);
+
+    var has_directors = false;
+    for (credits) |c| {
+        if (!c.is_cast and (std.mem.eql(u8, c.department, "Directing") or (c.job != null and std.mem.eql(u8, c.job.?, "Director")))) {
+            if (!has_directors) {
+                try directors_buf.appendSlice(allocator, "<span class=\"details-separator\">•</span><span class=\"details-director-label\">Directed by</span> ");
+                has_directors = true;
+            } else {
+                try directors_buf.appendSlice(allocator, ", ");
+            }
+            const dir_html = try std.fmt.allocPrint(allocator, "<a href=\"/person?id={d}\" class=\"director-link\">{s}</a>", .{ c.person_id, c.name });
+            defer allocator.free(dir_html);
+            try directors_buf.appendSlice(allocator, dir_html);
+        }
+    }
+
+    var cast_count: usize = 0;
+    for (credits) |c| {
+        if (c.is_cast) cast_count += 1;
+    }
+
+    if (cast_count > 0) {
+        try cast_section_buf.appendSlice(allocator,
+            \\<div class="details-cast-section">
+            \\    <h2 class="details-section-title">Cast</h2>
+            \\    <div class="cast-carousel">
+        );
+
+        for (credits) |c| {
+            if (!c.is_cast) continue;
+
+            const char_str = c.character orelse "";
+            if (c.profile_path) |p| {
+                const card_html = try std.fmt.allocPrint(allocator,
+                    \\        <a href="/person?id={d}" class="cast-card">
+                    \\            <div class="cast-avatar-wrapper">
+                    \\                <img class="cast-avatar" src="/images/profiles/w185{s}" alt="{s}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+                    \\                <div class="cast-avatar-placeholder" style="display:none;">
+                    \\                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="28" height="28">
+                    \\                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                    \\                        <circle cx="12" cy="7" r="4"></circle>
+                    \\                    </svg>
+                    \\                </div>
+                    \\            </div>
+                    \\            <div class="cast-name">{s}</div>
+                    \\            <div class="cast-character">{s}</div>
+                    \\        </a>
+                , .{ c.person_id, p, c.name, c.name, char_str });
+                defer allocator.free(card_html);
+                try cast_section_buf.appendSlice(allocator, card_html);
+            } else {
+                const card_html = try std.fmt.allocPrint(allocator,
+                    \\        <a href="/person?id={d}" class="cast-card">
+                    \\            <div class="cast-avatar-wrapper">
+                    \\                <div class="cast-avatar-placeholder">
+                    \\                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="28" height="28">
+                    \\                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                    \\                        <circle cx="12" cy="7" r="4"></circle>
+                    \\                    </svg>
+                    \\                </div>
+                    \\            </div>
+                    \\            <div class="cast-name">{s}</div>
+                    \\            <div class="cast-character">{s}</div>
+                    \\        </a>
+                , .{ c.person_id, c.name, char_str });
+                defer allocator.free(card_html);
+                try cast_section_buf.appendSlice(allocator, card_html);
+            }
+        }
+
+        try cast_section_buf.appendSlice(allocator,
+            \\    </div>
+            \\</div>
+        );
+    }
+
     var html = std.ArrayList(u8).empty;
     defer html.deinit(allocator);
     try html.appendSlice(allocator, template);
@@ -93,6 +185,8 @@ pub fn generateDetailsHtml(
         .{ "__TITLE__", title },
         .{ "__OVERVIEW__", overview },
         .{ "__RELEASE_DATE__", release_date },
+        .{ "__DIRECTORS_HTML__", directors_buf.items },
+        .{ "__CAST_SECTION_HTML__", cast_section_buf.items },
         .{ "__POSTER_STYLE__", poster_style_buf.items },
         .{ "__BACKDROP_STYLE__", backdrop_style_buf.items },
         .{ "__PLAY_URL__", play_url.items },

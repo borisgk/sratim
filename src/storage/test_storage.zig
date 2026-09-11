@@ -93,6 +93,122 @@ test "SratimStorage: CRUD, concurrency, and snapshot roundtrip" {
     try testing.expectEqualStrings("The Matrix", restored_movie.title.?);
 }
 
+test "SratimStorage: Credits, Persons, and filmography lookups" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_credits.json";
+    const wal_path = "tmp/test_credits.wal";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path);
+    defer storage.deinit();
+
+    // 1. Create a movie
+    const lib = try storage.addLibrary("Movies", "/movies", .Movies);
+    const mov_id = try storage.addOrUpdateMovie(.{
+        .id = 0,
+        .library_id = lib.id,
+        .file_path = "/movies/Inception.mkv",
+        .clean_name = "Inception",
+        .is_present = true,
+    });
+
+    // 2. Add Person (Leonardo DiCaprio - TMDB 6193) and Director (Christopher Nolan - TMDB 525)
+    try storage.addOrUpdatePerson(.{
+        .id = 6193,
+        .name = "Leonardo DiCaprio",
+        .profile_path = "/wo2tpe19lP71a399x47xVqUq8A.jpg",
+        .known_for_department = "Acting",
+    });
+    try storage.addOrUpdatePerson(.{
+        .id = 525,
+        .name = "Christopher Nolan",
+        .profile_path = "/xuAIuYSmsUzKlUMBFGVZaWsY3Z5.jpg",
+        .known_for_department = "Directing",
+    });
+
+    // 3. Add Credits
+    _ = try storage.addMovieCredit(.{
+        .id = 0,
+        .movie_id = mov_id,
+        .person_id = 6193,
+        .name = "Leonardo DiCaprio",
+        .character = "Dom Cobb",
+        .department = "Acting",
+        .profile_path = "/wo2tpe19lP71a399x47xVqUq8A.jpg",
+        .order = 0,
+        .is_cast = true,
+    });
+    _ = try storage.addMovieCredit(.{
+        .id = 0,
+        .movie_id = mov_id,
+        .person_id = 525,
+        .name = "Christopher Nolan",
+        .job = "Director",
+        .department = "Directing",
+        .profile_path = "/xuAIuYSmsUzKlUMBFGVZaWsY3Z5.jpg",
+        .order = 0,
+        .is_cast = false,
+    });
+
+    // 4. Query Credits for movie
+    const credits = try storage.getCreditsByMovie(allocator, mov_id);
+    defer {
+        for (credits) |*c| c.deinit(allocator);
+        allocator.free(credits);
+    }
+    try testing.expectEqual(@as(usize, 2), credits.len);
+    try testing.expect(credits[0].is_cast); // Cast first
+    try testing.expectEqualStrings("Leonardo DiCaprio", credits[0].name);
+    try testing.expectEqualStrings("Dom Cobb", credits[0].character.?);
+    try testing.expect(!credits[1].is_cast); // Crew next
+    try testing.expectEqualStrings("Christopher Nolan", credits[1].name);
+
+    // 5. Query filmography by person
+    const nolan_movies = try storage.getMoviesByPerson(allocator, 525);
+    defer {
+        for (nolan_movies) |*m| m.deinit(allocator);
+        allocator.free(nolan_movies);
+    }
+    try testing.expectEqual(@as(usize, 1), nolan_movies.len);
+    try testing.expectEqualStrings("Inception", nolan_movies[0].clean_name);
+
+    // 6. Snapshot roundtrip
+    try storage.snapshot();
+
+    var restored = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path);
+    defer restored.deinit();
+    const loaded = try restored.load();
+    try testing.expect(loaded);
+
+    const leo_person = (try restored.getPersonById(allocator, 6193)).?;
+    defer {
+        var p = leo_person;
+        p.deinit(allocator);
+    }
+    try testing.expectEqualStrings("Leonardo DiCaprio", leo_person.name);
+
+    const restored_credits = try restored.getCreditsByMovie(allocator, mov_id);
+    defer {
+        for (restored_credits) |*c| c.deinit(allocator);
+        allocator.free(restored_credits);
+    }
+    try testing.expectEqual(@as(usize, 2), restored_credits.len);
+
+    var people_map = try restored.getMoviePeopleNamesMap(allocator);
+    defer {
+        var it = people_map.iterator();
+        while (it.next()) |e| allocator.free(e.value_ptr.*);
+        people_map.deinit();
+    }
+    try testing.expect(people_map.contains(mov_id));
+    const names = people_map.get(mov_id).?;
+    try testing.expect(std.mem.indexOf(u8, names, "Leonardo DiCaprio") != null);
+    try testing.expect(std.mem.indexOf(u8, names, "Christopher Nolan") != null);
+}
+
 test "LogsStorage: Progress, logs, and recently watched" {
     const testing = std.testing;
     const allocator = testing.allocator;

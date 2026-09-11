@@ -6,6 +6,9 @@ pub const TmdbSearchResponse = types.TmdbSearchResponse;
 pub const TmdbShow = types.TmdbShow;
 pub const TmdbShowSearchResponse = types.TmdbShowSearchResponse;
 pub const TmdbEpisode = types.TmdbEpisode;
+pub const TmdbCastMember = types.TmdbCastMember;
+pub const TmdbCrewMember = types.TmdbCrewMember;
+pub const TmdbCreditsResponse = types.TmdbCreditsResponse;
 
 pub const client = @import("tmdb/client.zig");
 pub const movies = @import("tmdb/movies.zig");
@@ -15,10 +18,12 @@ pub const images = @import("tmdb/images.zig");
 
 pub const searchMovie = movies.searchMovie;
 pub const fetchMovieDetails = movies.fetchMovieDetails;
+pub const fetchMovieCredits = movies.fetchMovieCredits;
 pub const searchShow = shows.searchShow;
 pub const fetchShowDetails = shows.fetchShowDetails;
 pub const fetchEpisode = episodes.fetchEpisode;
 pub const downloadImages = images.downloadImages;
+pub const downloadProfileImage = images.downloadProfileImage;
 
 pub fn parseYearAndCleanName(allocator: std.mem.Allocator, raw_name: []const u8) !struct { clean: []const u8, year: ?[]const u8 } {
     var year_idx: ?usize = null;

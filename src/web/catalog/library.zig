@@ -3,6 +3,7 @@ const template_engine = @import("../../core/template.zig");
 const db_mod = @import("../../db/db.zig");
 const library_mod = @import("../../db/library.zig");
 const logging_mod = @import("../../db/logging.zig");
+const metadata_db = @import("../../db/metadata.zig");
 const cards = @import("cards.zig");
 
 const global_css: []const u8 = @embedFile("../style.css");
@@ -78,6 +79,15 @@ pub fn generateLibraryContentHtml(
         var recent_cards_buf = std.ArrayList(u8).empty;
         defer recent_cards_buf.deinit(allocator);
 
+        var cast_names_map = metadata_db.getMoviePeopleNamesMap(database, allocator) catch null;
+        defer if (cast_names_map) |*map| {
+            var it = map.iterator();
+            while (it.next()) |e| {
+                allocator.free(e.value_ptr.*);
+            }
+            map.deinit();
+        };
+
         for (recent_movies) |m| {
             var progress_pct: ?f64 = null;
             for (progress_list) |item| {
@@ -89,7 +99,8 @@ pub fn generateLibraryContentHtml(
                 }
             }
 
-            try cards.appendMovieCard(&recent_cards_buf, allocator, m.id, m.file_path, m.clean_name, m.title, m.poster_path, m.tmdb_id, progress_pct, is_admin);
+            const cast_terms = if (cast_names_map) |*map| map.get(m.id) else null;
+            try cards.appendMovieCard(&recent_cards_buf, allocator, m.id, m.file_path, m.clean_name, m.title, m.poster_path, m.tmdb_id, progress_pct, is_admin, cast_terms);
         }
 
         if (recent_movies.len > 0) {
@@ -128,7 +139,8 @@ pub fn generateLibraryContentHtml(
                 }
             }
 
-            try cards.appendMovieCard(&cards_buf, allocator, m.id, m.file_path, m.clean_name, m.title, m.poster_path, m.tmdb_id, progress_pct, is_admin);
+            const cast_terms = if (cast_names_map) |*map| map.get(m.id) else null;
+            try cards.appendMovieCard(&cards_buf, allocator, m.id, m.file_path, m.clean_name, m.title, m.poster_path, m.tmdb_id, progress_pct, is_admin, cast_terms);
         }
     }
 

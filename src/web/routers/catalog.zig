@@ -6,6 +6,7 @@ const utils = @import("../utils.zig");
 const catalog_index = @import("../catalog/index.zig");
 const catalog_library = @import("../catalog/library.zig");
 const catalog_details = @import("../catalog/details.zig");
+const catalog_person = @import("../catalog/person.zig");
 const show_handler = @import("../handlers/show.zig");
 
 pub fn route(
@@ -110,6 +111,31 @@ pub fn route(
             std.debug.print("Show view error: {}\n", .{err});
             try request.respond("Internal Server Error", .{ .status = .internal_server_error });
         };
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, target, "/person")) {
+        const person_id = utils.parseQueryInt(i64, target, "id") orelse {
+            try request.respond("Missing person id", .{ .status = .bad_request });
+            return true;
+        };
+
+        const html_content = catalog_person.generatePersonHtml(allocator, database, logs_database, person_id, session_info.username, session_info.is_admin) catch |err| {
+            std.debug.print("Person view error: {}\n", .{err});
+            if (err == error.PersonNotFound) {
+                try request.respond("Person not found", .{ .status = .not_found });
+            } else {
+                try request.respond("Internal Server Error", .{ .status = .internal_server_error });
+            }
+            return true;
+        };
+
+        try request.respond(html_content, .{
+            .status = .ok,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "text/html; charset=utf-8" },
+            },
+        });
         return true;
     }
 

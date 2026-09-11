@@ -1,5 +1,6 @@
 const std = @import("std");
 const db_mod = @import("db.zig");
+const tmdb = @import("../media/tmdb.zig");
 
 pub const MovieMetadata = struct {
     movie_id: i64,
@@ -278,4 +279,105 @@ pub fn resetShowEpisodesMetadata(database: *db_mod.Database, show_id: i64) !void
             e.value_ptr.still_path = null;
         }
     }
+}
+
+pub fn saveMovieCredits(
+    database: *db_mod.Database,
+    movie_id: i64,
+    cast: []const tmdb.TmdbCastMember,
+    crew: []const tmdb.TmdbCrewMember,
+) !void {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    cat.clearMovieCredits(movie_id);
+
+    // Save top cast (up to 20)
+    const cast_limit = @min(cast.len, 20);
+    for (cast[0..cast_limit]) |c| {
+        try cat.addOrUpdatePerson(.{
+            .id = c.id,
+            .name = c.name,
+            .profile_path = c.profile_path,
+            .known_for_department = "Acting",
+        });
+        _ = try cat.addMovieCredit(.{
+            .id = 0,
+            .movie_id = movie_id,
+            .person_id = c.id,
+            .name = c.name,
+            .character = c.character,
+            .department = "Acting",
+            .profile_path = c.profile_path,
+            .order = c.order,
+            .is_cast = true,
+        });
+    }
+
+    // Save directors from crew
+    for (crew) |cr| {
+        if (std.mem.eql(u8, cr.job, "Director") or std.mem.eql(u8, cr.department, "Directing")) {
+            try cat.addOrUpdatePerson(.{
+                .id = cr.id,
+                .name = cr.name,
+                .profile_path = cr.profile_path,
+                .known_for_department = "Directing",
+            });
+            _ = try cat.addMovieCredit(.{
+                .id = 0,
+                .movie_id = movie_id,
+                .person_id = cr.id,
+                .name = cr.name,
+                .job = cr.job,
+                .department = cr.department,
+                .profile_path = cr.profile_path,
+                .order = 0,
+                .is_cast = false,
+            });
+        }
+    }
+
+    cat.snapshot() catch {};
+}
+
+pub fn getMovieCredits(
+    database: *db_mod.Database,
+    allocator: std.mem.Allocator,
+    movie_id: i64,
+) ![]db_mod.schema.MovieCredit {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    return cat.getCreditsByMovie(allocator, movie_id);
+}
+
+pub fn getPersonById(
+    database: *db_mod.Database,
+    allocator: std.mem.Allocator,
+    person_id: i64,
+) !?db_mod.schema.Person {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    return cat.getPersonById(allocator, person_id);
+}
+
+pub fn getMoviesByPerson(
+    database: *db_mod.Database,
+    allocator: std.mem.Allocator,
+    person_id: i64,
+) ![]db_mod.schema.Movie {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    return cat.getMoviesByPerson(allocator, person_id);
+}
+
+pub fn getCreditsByPerson(
+    database: *db_mod.Database,
+    allocator: std.mem.Allocator,
+    person_id: i64,
+) ![]db_mod.schema.MovieCredit {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    return cat.getCreditsByPerson(allocator, person_id);
+}
+
+pub fn getMoviePeopleNamesMap(
+    database: *db_mod.Database,
+    allocator: std.mem.Allocator,
+) !std.AutoHashMap(i64, []const u8) {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    return cat.getMoviePeopleNamesMap(allocator);
 }

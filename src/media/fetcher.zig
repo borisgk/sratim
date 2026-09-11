@@ -70,6 +70,30 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
                 ) catch |err| {
                     std.debug.print("TMDB fetcher error saving metadata for {s}: {}\n", .{movie.clean_name, err});
                 };
+
+                // Fetch cast & directors
+                if (tmdb.fetchMovieCredits(allocator, io, first.id, token, proxy_url)) |credits_parsed| {
+                    defer credits_parsed.deinit();
+                    const credits = credits_parsed.value;
+                    const cast_limit = @min(credits.cast.len, 10);
+                    for (credits.cast[0..cast_limit]) |c| {
+                        if (c.profile_path) |p| {
+                            tmdb.downloadProfileImage(allocator, io, p, proxy_url) catch {};
+                        }
+                    }
+                    for (credits.crew) |cr| {
+                        if (std.mem.eql(u8, cr.job, "Director") or std.mem.eql(u8, cr.department, "Directing")) {
+                            if (cr.profile_path) |p| {
+                                tmdb.downloadProfileImage(allocator, io, p, proxy_url) catch {};
+                            }
+                        }
+                    }
+                    metadata_mod.saveMovieCredits(database, movie.id, credits.cast, credits.crew) catch |err| {
+                        std.debug.print("TMDB fetcher error saving credits for {s}: {}\n", .{movie.clean_name, err});
+                    };
+                } else |err| {
+                    std.debug.print("TMDB fetcher error fetching credits for {s}: {}\n", .{movie.clean_name, err});
+                }
             } else {
                 std.debug.print("TMDB fetcher found NO MATCH for: {s}\n", .{movie.clean_name});
                 metadata_mod.markMetadataNotFound(database, movie.id) catch |err| {

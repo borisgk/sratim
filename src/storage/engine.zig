@@ -3,6 +3,7 @@ pub const schema = @import("schema.zig");
 pub const snapshot_mod = @import("snapshot.zig");
 pub const users_mod = @import("users.zig");
 pub const media_mod = @import("media.zig");
+pub const credits_mod = @import("credits.zig");
 
 pub const SratimStorage = struct {
     allocator: std.mem.Allocator,
@@ -17,12 +18,15 @@ pub const SratimStorage = struct {
     movies: std.AutoHashMap(i64, schema.Movie),
     shows: std.AutoHashMap(i64, schema.Show),
     episodes: std.AutoHashMap(i64, schema.Episode),
+    people: std.AutoHashMap(i64, schema.Person),
+    movie_credits: std.AutoHashMap(i64, schema.MovieCredit),
 
     next_user_id: i64 = 1,
     next_library_id: i64 = 1,
     next_movie_id: i64 = 1,
     next_show_id: i64 = 1,
     next_episode_id: i64 = 1,
+    next_credit_id: i64 = 1,
 
     pub fn writeLock(self: *SratimStorage) void {
         self.rwlock.lockUncancelable(self.io);
@@ -53,6 +57,8 @@ pub const SratimStorage = struct {
             .movies = std.AutoHashMap(i64, schema.Movie).init(allocator),
             .shows = std.AutoHashMap(i64, schema.Show).init(allocator),
             .episodes = std.AutoHashMap(i64, schema.Episode).init(allocator),
+            .people = std.AutoHashMap(i64, schema.Person).init(allocator),
+            .movie_credits = std.AutoHashMap(i64, schema.MovieCredit).init(allocator),
         };
     }
 
@@ -95,6 +101,18 @@ pub const SratimStorage = struct {
             entry.value_ptr.deinit(self.allocator);
         }
         self.episodes.deinit();
+
+        var p_iter = self.people.iterator();
+        while (p_iter.next()) |entry| {
+            entry.value_ptr.deinit(self.allocator);
+        }
+        self.people.deinit();
+
+        var cr_iter = self.movie_credits.iterator();
+        while (cr_iter.next()) |entry| {
+            entry.value_ptr.deinit(self.allocator);
+        }
+        self.movie_credits.deinit();
     }
 
     // Snapshot operations
@@ -158,4 +176,14 @@ pub const SratimStorage = struct {
     pub const linkEpisodeMetadata = media_mod.linkEpisodeMetadata;
     pub const countEpisodes = media_mod.countEpisodes;
     pub const totalEpisodeStorage = media_mod.totalEpisodeStorage;
+
+    // Person & Credit operations
+    pub const addOrUpdatePerson = credits_mod.addOrUpdatePerson;
+    pub const getPersonById = credits_mod.getPersonById;
+    pub const addMovieCredit = credits_mod.addMovieCredit;
+    pub const clearMovieCredits = credits_mod.clearMovieCredits;
+    pub const getCreditsByMovie = credits_mod.getCreditsByMovie;
+    pub const getCreditsByPerson = credits_mod.getCreditsByPerson;
+    pub const getMoviesByPerson = credits_mod.getMoviesByPerson;
+    pub const getMoviePeopleNamesMap = credits_mod.getMoviePeopleNamesMap;
 };

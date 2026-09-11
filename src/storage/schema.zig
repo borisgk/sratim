@@ -339,3 +339,61 @@ pub const LoginLog = struct {
         allocator.free(self.ip_address);
     }
 };
+
+pub const Person = struct {
+    id: i64, // TMDB Person ID
+    name: []const u8,
+    profile_path: ?[]const u8 = null,
+    known_for_department: ?[]const u8 = null,
+
+    pub fn clone(self: Person, allocator: std.mem.Allocator) !Person {
+        return .{
+            .id = self.id,
+            .name = try allocator.dupe(u8, self.name),
+            .profile_path = if (self.profile_path) |p| try allocator.dupe(u8, p) else null,
+            .known_for_department = if (self.known_for_department) |d| try allocator.dupe(u8, d) else null,
+        };
+    }
+
+    pub fn deinit(self: *Person, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        if (self.profile_path) |p| allocator.free(p);
+        if (self.known_for_department) |d| allocator.free(d);
+    }
+};
+
+pub const MovieCredit = struct {
+    id: i64,
+    movie_id: i64,
+    person_id: i64,
+    name: []const u8,
+    character: ?[]const u8 = null,
+    job: ?[]const u8 = null,
+    department: []const u8 = "Acting",
+    profile_path: ?[]const u8 = null,
+    order: i32 = 0,
+    is_cast: bool = true,
+
+    pub fn clone(self: MovieCredit, allocator: std.mem.Allocator) !MovieCredit {
+        return .{
+            .id = self.id,
+            .movie_id = self.movie_id,
+            .person_id = self.person_id,
+            .name = try allocator.dupe(u8, self.name),
+            .character = if (self.character) |c| try allocator.dupe(u8, c) else null,
+            .job = if (self.job) |j| try allocator.dupe(u8, j) else null,
+            .department = try allocator.dupe(u8, self.department),
+            .profile_path = if (self.profile_path) |p| try allocator.dupe(u8, p) else null,
+            .order = self.order,
+            .is_cast = self.is_cast,
+        };
+    }
+
+    pub fn deinit(self: *MovieCredit, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        if (self.character) |c| allocator.free(c);
+        if (self.job) |j| allocator.free(j);
+        allocator.free(self.department);
+        if (self.profile_path) |p| allocator.free(p);
+    }
+};

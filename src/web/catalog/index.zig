@@ -86,7 +86,7 @@ pub fn generateHtml(
                     }
 
                     recent_count += 1;
-                    try cards.appendMovieCard(&recent_cards_buf, allocator, item.item_id, null, mov.clean_name, mov.title, mov.poster_path, null, progress_pct, false);
+                    try cards.appendMovieCard(&recent_cards_buf, allocator, item.item_id, null, mov.clean_name, mov.title, mov.poster_path, null, progress_pct, false, null);
                 }
             }
         } else if (item.media_type == .episode) {

@@ -13,6 +13,7 @@ pub fn appendMovieCard(
     tmdb_id: ?i64,
     progress_pct: ?f64,
     is_admin: bool,
+    extra_search_terms: ?[]const u8,
 ) !void {
     var tmdb_id_buf: [32]u8 = undefined;
     const tmdb_id_str = if (tmdb_id) |tid| (std.fmt.bufPrint(&tmdb_id_buf, "{d}", .{tid}) catch "") else "";
@@ -30,6 +31,10 @@ pub fn appendMovieCard(
     if (file_path) |fp| {
         try cards_buf.appendSlice(allocator, " ");
         try utils.escapeHtml(cards_buf, allocator, fp);
+    }
+    if (extra_search_terms) |terms| {
+        try cards_buf.appendSlice(allocator, " ");
+        try utils.escapeHtml(cards_buf, allocator, terms);
     }
     try cards_buf.appendSlice(allocator, "\">\n");
     

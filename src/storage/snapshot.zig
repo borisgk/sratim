@@ -10,12 +10,15 @@ pub const SnapshotData = struct {
     next_movie_id: i64 = 1,
     next_show_id: i64 = 1,
     next_episode_id: i64 = 1,
+    next_credit_id: i64 = 1,
     users: []const schema.User = &.{},
     sessions: []const schema.Session = &.{},
     libraries: []const schema.Library = &.{},
     movies: []const schema.Movie = &.{},
     shows: []const schema.Show = &.{},
     episodes: []const schema.Episode = &.{},
+    people: []const schema.Person = &.{},
+    movie_credits: []const schema.MovieCredit = &.{},
 };
 
 pub fn snapshot(self: *SratimStorage) !void {
@@ -52,6 +55,16 @@ pub fn snapshot(self: *SratimStorage) !void {
     var ep_it = self.episodes.iterator();
     while (ep_it.next()) |e| try ep_list.append(self.allocator, e.value_ptr.*);
 
+    var p_list = std.ArrayList(schema.Person).empty;
+    defer p_list.deinit(self.allocator);
+    var p_it = self.people.iterator();
+    while (p_it.next()) |e| try p_list.append(self.allocator, e.value_ptr.*);
+
+    var cr_list = std.ArrayList(schema.MovieCredit).empty;
+    defer cr_list.deinit(self.allocator);
+    var cr_it = self.movie_credits.iterator();
+    while (cr_it.next()) |e| try cr_list.append(self.allocator, e.value_ptr.*);
+
     const snap = SnapshotData{
         .version = 1,
         .next_user_id = self.next_user_id,
@@ -59,12 +72,15 @@ pub fn snapshot(self: *SratimStorage) !void {
         .next_movie_id = self.next_movie_id,
         .next_show_id = self.next_show_id,
         .next_episode_id = self.next_episode_id,
+        .next_credit_id = self.next_credit_id,
         .users = user_list.items,
         .sessions = sess_list.items,
         .libraries = lib_list.items,
         .movies = mov_list.items,
         .shows = show_list.items,
         .episodes = ep_list.items,
+        .people = p_list.items,
+        .movie_credits = cr_list.items,
     };
 
     const json_str = try std.json.Stringify.valueAlloc(self.allocator, snap, .{ .whitespace = .indent_2 });
@@ -115,6 +131,7 @@ pub fn load(self: *SratimStorage) !bool {
     self.next_movie_id = val.next_movie_id;
     self.next_show_id = val.next_show_id;
     self.next_episode_id = val.next_episode_id;
+    self.next_credit_id = val.next_credit_id;
 
     for (val.users) |u| {
         const cloned = try u.clone(self.allocator);
@@ -139,6 +156,14 @@ pub fn load(self: *SratimStorage) !bool {
     for (val.episodes) |ep| {
         const cloned = try ep.clone(self.allocator);
         try self.episodes.put(cloned.id, cloned);
+    }
+    for (val.people) |p| {
+        const cloned = try p.clone(self.allocator);
+        try self.people.put(cloned.id, cloned);
+    }
+    for (val.movie_credits) |cr| {
+        const cloned = try cr.clone(self.allocator);
+        try self.movie_credits.put(cloned.id, cloned);
     }
 
     return true;

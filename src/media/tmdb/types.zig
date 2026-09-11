@@ -30,3 +30,25 @@ pub const TmdbEpisode = struct {
     overview: ?[]const u8 = null,
     still_path: ?[]const u8 = null,
 };
+
+pub const TmdbCastMember = struct {
+    id: i64,
+    name: []const u8,
+    character: ?[]const u8 = null,
+    profile_path: ?[]const u8 = null,
+    order: i32 = 0,
+};
+
+pub const TmdbCrewMember = struct {
+    id: i64,
+    name: []const u8,
+    job: []const u8,
+    department: []const u8,
+    profile_path: ?[]const u8 = null,
+};
+
+pub const TmdbCreditsResponse = struct {
+    id: i64,
+    cast: []TmdbCastMember = &.{},
+    crew: []TmdbCrewMember = &.{},
+};
