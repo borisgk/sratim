@@ -140,6 +140,8 @@ test {
     _ = @import("media/native/mkv/track_parser.zig");
     _ = @import("media/native/mkv/gop_builder.zig");
     _ = @import("media/native/mkv/mkv_streamer.zig");
+    _ = @import("media/stream_audio_transcoder.zig");
+    _ = @import("media/native/audio/dts_dec.zig");
     _ = @import("storage/test_storage.zig");
     _ = @import("db/analytics.zig");
     _ = @import("web/handlers/analytics_admin.zig");

@@ -132,7 +132,7 @@ test "generate MKV fMP4 fragments for Along Came Polly with AC3 5.1" {
     try out_writer.flush();
 }
 
-test "verify canStreamMkvNatively rejects Night at the Museum DTS 5.1" {
+test "generate MKV fMP4 fragments for Night at the Museum with DTS 5.1" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -143,10 +143,10 @@ test "verify canStreamMkvNatively rejects Night at the Museum DTS 5.1" {
     var out_buf: [65536]u8 = undefined;
     var out_writer = out_file.writer(io, &out_buf);
 
-    try std.testing.expect(!canStreamMkvNatively(allocator, io, museum_path, 1));
+    try std.testing.expect(canStreamMkvNatively(allocator, io, museum_path, 1));
 
     var has_error = false;
-    const res = streamMkvGeneric(
+    try streamMkvGeneric(
         allocator,
         io,
         museum_path,
@@ -157,7 +157,7 @@ test "verify canStreamMkvNatively rejects Night at the Museum DTS 5.1" {
         3, // 3 fragments
         .native,
     );
-    try std.testing.expectError(error.UnsupportedAudioCodec, res);
+    try out_writer.flush();
 }
 
 test "generate MKV fMP4 fragments for Fiddler on the Roof with AC3 2.0" {
@@ -185,7 +185,7 @@ test "generate MKV fMP4 fragments for Fiddler on the Roof with AC3 2.0" {
     try out_writer.flush();
 }
 
-test "verify canStreamMkvNatively rejects Fiddler on the Roof DTS 5.1" {
+test "generate MKV fMP4 fragments for Fiddler on the Roof with DTS 5.1" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -196,10 +196,10 @@ test "verify canStreamMkvNatively rejects Fiddler on the Roof DTS 5.1" {
     var out_buf: [65536]u8 = undefined;
     var out_writer = out_file.writer(io, &out_buf);
 
-    try std.testing.expect(!canStreamMkvNatively(allocator, io, fiddler_path, 1));
+    try std.testing.expect(canStreamMkvNatively(allocator, io, fiddler_path, 1));
 
     var has_error = false;
-    const res = streamMkvGeneric(
+    try streamMkvGeneric(
         allocator,
         io,
         fiddler_path,
@@ -210,7 +210,7 @@ test "verify canStreamMkvNatively rejects Fiddler on the Roof DTS 5.1" {
         3, // 3 fragments
         .native,
     );
-    try std.testing.expectError(error.UnsupportedAudioCodec, res);
+    try out_writer.flush();
 }
 
 test "compare seek in Sof Ha Olam Smola AAC vs AC3" {

@@ -175,10 +175,19 @@ pub fn build(b: *std.Build) void {
     const test_mp3_step = b.step("test-mp3", "Run standalone MP3 decoding tests");
     test_mp3_step.dependOn(&run_mp3_tests.step);
 
+    // Dedicated test step for standalone DTS decoding validation
+    const dts_tests = b.addTest(.{
+        .root_module = audio_test_mod,
+        .filters = &.{"DtsDecoder"},
+    });
+    const run_dts_tests = b.addRunArtifact(dts_tests);
+    const test_dts_step = b.step("test-dts", "Run standalone DTS decoding tests");
+    test_dts_step.dependOn(&run_dts_tests.step);
+
     // Dedicated test step for running all heavy audio transcoding tests
     const all_audio_tests = b.addTest(.{
         .root_module = audio_test_mod,
-        .filters = &.{ "Ac3Decoder", "Eac3Decoder", "AacDecoder", "Mp3Decoder", "StreamAudioTranscoder", "Inspect native AAC" },
+        .filters = &.{ "Ac3Decoder", "Eac3Decoder", "AacDecoder", "Mp3Decoder", "DtsDecoder", "StreamAudioTranscoder", "Inspect native AAC" },
     });
     const run_all_audio_tests = b.addRunArtifact(all_audio_tests);
     const test_audio_step = b.step("test-audio", "Run all heavy audio transcoding tests");

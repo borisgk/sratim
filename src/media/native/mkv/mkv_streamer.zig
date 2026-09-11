@@ -174,6 +174,8 @@ pub fn streamMkvGeneric(
             std.fmt.bufPrint(&audio_desc_buf, "Pure Zig Multichannel AAC-LC ({d}ch) -> Pure Zig AAC-LC", .{at.channels})
         else if (std.mem.startsWith(u8, at.codec_id, "A_MPEG/L"))
             std.fmt.bufPrint(&audio_desc_buf, "Pure Zig MP3 ({d}ch) -> Pure Zig AAC-LC", .{at.channels})
+        else if (std.mem.eql(u8, at.codec_id, "A_DTS") or std.mem.startsWith(u8, at.codec_id, "A_DTS/"))
+            std.fmt.bufPrint(&audio_desc_buf, "Pure Zig DTS ({d}ch) -> Pure Zig AAC-LC", .{at.channels})
         else
             std.fmt.bufPrint(&audio_desc_buf, "Native Audio Transcode ({s}, {d}ch)", .{ at.codec_id, at.channels })) catch "Native Audio Transcode";
         streamer.logStreamStatus(file_path, audio_idx_requested, "Native MKV Slicer", "Zero-copy passthrough", audio_desc);
@@ -274,6 +276,14 @@ pub fn streamMkvGeneric(
     var seek_base_video_dts: ?u64 = null;
     var running_audio_samples: u64 = 0;
 
+    var tv_setup_done: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv_setup_done, null);
+    const t_setup_us = (@as(i64, tv_setup_done.sec) * 1_000_000 + tv_setup_done.usec) - (start_wall_time * 1000);
+    var t_collect_us: i64 = 0;
+    var t_demux_us: i64 = 0;
+    var t_audio_us: i64 = 0;
+    var t_gop_builder_us: i64 = 0;
+
     var pending_video_blocks = std.ArrayList(MkvBlock).empty;
     defer pending_video_blocks.deinit(allocator);
 
@@ -325,9 +335,17 @@ pub fn streamMkvGeneric(
             }
         }
 
+        var tv_coll_0: std.c.timeval = undefined;
+        _ = std.c.gettimeofday(&tv_coll_0, null);
+
         // Collect blocks until the next video keyframe or EOF
         while (true) {
+            var tv_d0: std.c.timeval = undefined;
+            _ = std.c.gettimeofday(&tv_d0, null);
             const blk = (try block_rdr.readNextBlock(&current_file_pos)) orelse break;
+            var tv_d1: std.c.timeval = undefined;
+            _ = std.c.gettimeofday(&tv_d1, null);
+            t_demux_us += (@as(i64, tv_d1.sec) - @as(i64, tv_d0.sec)) * 1_000_000 + (@as(i64, tv_d1.usec) - @as(i64, tv_d0.usec));
 
             if (blk.track_num == video_trk.track_num) {
                 if (pending_video_blocks.items.len == 0) {
@@ -357,6 +375,8 @@ pub fn streamMkvGeneric(
                 }
 
                 if (needs_audio_transcode) {
+                    var tv_a0: std.c.timeval = undefined;
+                    _ = std.c.gettimeofday(&tv_a0, null);
                     payload_reader.seekTo(blk.payload_offset) catch {
                         has_error.* = true;
                         break;
@@ -368,17 +388,29 @@ pub fn streamMkvGeneric(
                         break;
                     };
                     try audio_transcoder.?.transcodePacket(allocator, raw_audio_packet_buf.items, &transcoded_audio_frames);
+                    var tv_a1: std.c.timeval = undefined;
+                    _ = std.c.gettimeofday(&tv_a1, null);
+                    t_audio_us += (@as(i64, tv_a1.sec) - @as(i64, tv_a0.sec)) * 1_000_000 + (@as(i64, tv_a1.usec) - @as(i64, tv_a0.usec));
                 } else {
                     try pending_audio_blocks.append(allocator, blk);
                 }
             }
         }
 
+        var tv_coll_1: std.c.timeval = undefined;
+        _ = std.c.gettimeofday(&tv_coll_1, null);
+        t_collect_us += (@as(i64, tv_coll_1.sec) - @as(i64, tv_coll_0.sec)) * 1_000_000 + (@as(i64, tv_coll_1.usec) - @as(i64, tv_coll_0.usec));
+
         if (pending_video_blocks.items.len == 0) break; // EOF reached
 
         // Resolve GOP video samples (DTS, PTS, CTTS)
+        var tv_g0: std.c.timeval = undefined;
+        _ = std.c.gettimeofday(&tv_g0, null);
         const v_samples = try gop_builder.buildGopMediaSamples(allocator, pending_video_blocks.items, 1000, 33);
         defer allocator.free(v_samples);
+        var tv_g1: std.c.timeval = undefined;
+        _ = std.c.gettimeofday(&tv_g1, null);
+        t_gop_builder_us += (@as(i64, tv_g1.sec) - @as(i64, tv_g0.sec)) * 1_000_000 + (@as(i64, tv_g1.usec) - @as(i64, tv_g0.usec));
 
         if (seek_base_video_dts == null) {
             seek_base_video_dts = v_samples[0].dts;
@@ -431,11 +463,28 @@ pub fn streamMkvGeneric(
         if (seq_num == 1) {
             var tv_now: std.c.timeval = undefined;
             _ = std.c.gettimeofday(&tv_now, null);
-            const now_ms = @as(i64, tv_now.sec) * 1000 + @divTrunc(tv_now.usec, 1000);
-            std.debug.print("[TIMING] Frag 1 generated in {} ms (V_bytes={}, A_bytes={})\n", .{
-                now_ms - start_wall_time,
+            const now_us = (@as(i64, tv_now.sec) * 1_000_000 + tv_now.usec) - (start_wall_time * 1000);
+            const v_dur_ms = if (v_samples.len > 0) v_samples[v_samples.len - 1].pts_sec - v_samples[0].pts_sec else 0.0;
+            const a_dur_ms = @as(f64, @floatFromInt(a_samples.items.len * 1024)) / 48.0;
+            std.debug.print(
+                \\[TIMING] Frag 1 generated in {d:.2} ms (V_bytes={}, A_bytes={}, V_frames={}, V_dur={d:.2}s, A_frames={}, A_dur={d:.2}s)
+                \\  -> setup_ms = {d:.2}
+                \\  -> collect_blocks_ms = {d:.2} (demux_read={d:.2}ms, audio_transcode={d:.2}ms)
+                \\  -> gop_builder_ms = {d:.2}
+                \\
+            , .{
+                @as(f64, @floatFromInt(now_us)) / 1000.0,
                 total_v_bytes,
                 total_a_bytes,
+                v_samples.len,
+                v_dur_ms,
+                a_samples.items.len,
+                a_dur_ms / 1000.0,
+                @as(f64, @floatFromInt(t_setup_us)) / 1000.0,
+                @as(f64, @floatFromInt(t_collect_us)) / 1000.0,
+                @as(f64, @floatFromInt(t_demux_us)) / 1000.0,
+                @as(f64, @floatFromInt(t_audio_us)) / 1000.0,
+                @as(f64, @floatFromInt(t_gop_builder_us)) / 1000.0,
             });
         }
 

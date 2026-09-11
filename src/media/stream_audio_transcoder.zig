@@ -6,6 +6,7 @@ pub const aac_enc = @import("native/audio/aac_enc.zig");
 pub const audio_fifo = @import("native/audio/fifo.zig");
 
 pub const mp3_dec = @import("native/audio/mp3_dec.zig");
+pub const dts_dec = @import("native/audio/dts_dec.zig");
 pub const dsp = @import("native/audio/dsp.zig");
 
 pub const EncodedAacFrame = struct {
@@ -13,10 +14,11 @@ pub const EncodedAacFrame = struct {
     sample_count: u32 = 1024,
 };
 
-/// Standalone pure Zig audio transcoder that converts compressed audio packets (AC-3, E-AC-3, MP3, multichannel AAC)
+/// Standalone pure Zig audio transcoder that converts compressed audio packets (AC-3, E-AC-3, MP3, DTS, multichannel AAC)
 /// into standardized 48kHz Stereo AAC frames for native fMP4 container muxing.
 /// Operates 100% in pure Zig with zero FFmpeg dependencies.
 pub const StreamAudioTranscoder = struct {
+    target_channels: u8 = 2,
     is_pure_native: bool = true,
     native_fifo: audio_fifo.AudioFifo,
     native_aac_enc: aac_enc.AacEncoder,
@@ -24,6 +26,7 @@ pub const StreamAudioTranscoder = struct {
     native_eac3_dec: ?eac3_dec.Eac3Decoder = null,
     native_aac_dec: ?aac_dec.AacDecoder = null,
     native_mp3_dec: ?mp3_dec.Mp3Decoder = null,
+    native_dts_dec: ?dts_dec.DtsDecoder = null,
     resampler_l: ?dsp.HermiteResampler = null,
     resampler_r: ?dsp.HermiteResampler = null,
 
@@ -40,7 +43,13 @@ pub const StreamAudioTranscoder = struct {
             std.mem.eql(u8, codec_name, "A_MPEG/L1") or
             std.mem.eql(u8, codec_name, ".mp3") or
             std.mem.eql(u8, codec_name, "mp3") or
-            std.mem.eql(u8, codec_name, "mp3 ");
+            std.mem.eql(u8, codec_name, "mp3 ") or
+            std.mem.eql(u8, codec_name, "A_DTS") or
+            std.mem.startsWith(u8, codec_name, "A_DTS/") or
+            std.mem.eql(u8, codec_name, "dts ") or
+            std.mem.eql(u8, codec_name, "dtsc") or
+            std.mem.eql(u8, codec_name, "dtsh") or
+            std.mem.eql(u8, codec_name, "dts-hd");
     }
 
     pub fn initFromCodec(
@@ -61,8 +70,14 @@ pub const StreamAudioTranscoder = struct {
             std.mem.eql(u8, codec_name, ".mp3") or
             std.mem.eql(u8, codec_name, "mp3") or
             std.mem.eql(u8, codec_name, "mp3 ");
+        const is_dts = std.mem.eql(u8, codec_name, "A_DTS") or
+            std.mem.startsWith(u8, codec_name, "A_DTS/") or
+            std.mem.eql(u8, codec_name, "dts ") or
+            std.mem.eql(u8, codec_name, "dtsc") or
+            std.mem.eql(u8, codec_name, "dtsh") or
+            std.mem.eql(u8, codec_name, "dts-hd");
 
-        if (!is_ac3 and !is_eac3 and !is_aac and !is_mp3) {
+        if (!is_ac3 and !is_eac3 and !is_aac and !is_mp3 and !is_dts) {
             return error.UnsupportedAudioCodec;
         }
 
@@ -98,6 +113,7 @@ pub const StreamAudioTranscoder = struct {
             .native_eac3_dec = if (is_eac3) eac3_dec.Eac3Decoder.init() else null,
             .native_aac_dec = aac_dec_inst,
             .native_mp3_dec = if (is_mp3) mp3_dec.Mp3Decoder.init() else null,
+            .native_dts_dec = if (is_dts) dts_dec.DtsDecoder.init() else null,
             .resampler_l = if (needs_resample) dsp.HermiteResampler.init(effective_sample_rate, 48000) else null,
             .resampler_r = if (needs_resample) dsp.HermiteResampler.init(effective_sample_rate, 48000) else null,
         };
@@ -180,6 +196,24 @@ pub const StreamAudioTranscoder = struct {
                 }
             } else |_| {
                 try self.injectConcealmentSilence(allocator, 1152, out_frames);
+            }
+            return;
+        }
+
+        if (self.native_dts_dec) |*dec| {
+            var stereo_interleaved: [2048 * 2]f32 = undefined;
+            if (dec.decodeFrame(raw_payload, &stereo_interleaved)) |n_samples| {
+                if (n_samples > 0) {
+                    var planar_l: [2048]f32 = undefined;
+                    var planar_r: [2048]f32 = undefined;
+                    for (0..n_samples) |i| {
+                        planar_l[i] = stereo_interleaved[i * 2];
+                        planar_r[i] = stereo_interleaved[i * 2 + 1];
+                    }
+                    try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
+                }
+            } else |_| {
+                try self.injectConcealmentSilence(allocator, 1024, out_frames);
             }
             return;
         }
@@ -500,6 +534,54 @@ test "StreamAudioTranscoder encodeSilenceSamples accurately handles fractional s
     // 2500 samples should produce 2 full AAC frames (2048 samples) and leave 452 samples in FIFO
     try testing.expectEqual(@as(usize, 2), frames.items.len);
     try testing.expectEqual(@as(usize, 452), transcoder.native_fifo.size());
+}
+
+test "StreamAudioTranscoder DTS native mode initializes correctly" {
+    const testing = std.testing;
+
+    var transcoder = try StreamAudioTranscoder.initFromCodec("A_DTS", null, 6, 48000, true);
+    defer transcoder.deinit();
+
+    try testing.expect(transcoder.is_pure_native);
+    try testing.expect(transcoder.native_dts_dec != null);
+    try testing.expectEqual(@as(usize, 0), transcoder.native_fifo.size());
+}
+
+test "StreamAudioTranscoder pure Zig DTS transcode end-to-end" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const file = std.Io.Dir.cwd().openFile(testing.io, "tests/test_dts_5s.dts", .{}) catch return;
+    defer file.close(testing.io);
+
+    var buf: [16384]u8 = undefined;
+    var reader_file = file.reader(testing.io, &buf);
+    const bytes_read = try reader_file.interface.readSliceShort(&buf);
+    try testing.expect(bytes_read > 2000);
+
+    var transcoder = try StreamAudioTranscoder.initFromCodec("A_DTS", null, 6, 48000, true);
+    defer transcoder.deinit();
+
+    var frames = std.ArrayList(EncodedAacFrame).empty;
+    defer {
+        for (frames.items) |f| allocator.free(f.data);
+        frames.deinit(allocator);
+    }
+
+    // Find first DTS frame
+    const sync = dts_dec.findSync(buf[0..bytes_read]) orelse return error.SyncNotFound;
+    var cur_off = sync.offset;
+    for (0..2) |_| {
+        var sub_r = dts_dec.BitReader.init(buf[cur_off..bytes_read]);
+        const sub_hdr = try dts_dec.parseHeader(&sub_r);
+        try transcoder.transcodePacket(allocator, buf[cur_off .. cur_off + sub_hdr.frame_size], &frames);
+        cur_off += sub_hdr.frame_size;
+    }
+
+    // 2 x 512 DTS samples fed into FIFO should have encoded 1 AAC frame of 1024 samples
+    try testing.expectEqual(@as(usize, 1), frames.items.len);
+    try testing.expect(frames.items[0].data.len > 0);
+    try testing.expectEqual(@as(usize, 0), transcoder.native_fifo.size());
 }
 
 
