@@ -209,6 +209,95 @@ test "SratimStorage: Credits, Persons, and filmography lookups" {
     try testing.expect(std.mem.indexOf(u8, names, "Christopher Nolan") != null);
 }
 
+test "SratimStorage: Credits backfill tracking and querying" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_backfill.json";
+    const wal_path = "tmp/test_backfill.wal";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path);
+    defer storage.deinit();
+
+    const lib = try storage.addLibrary("Movies", "/tmp/movies", .Movies);
+    const lib_id = lib.id;
+
+    // Movie 1: has TMDB ID, no credits fetched
+    const m1_id = try storage.addOrUpdateMovie(.{
+        .id = 0,
+        .library_id = lib_id,
+        .file_path = "m1.mkv",
+        .clean_name = "Movie 1",
+        .tmdb_id = 100,
+        .is_present = true,
+        .credits_fetched = false,
+    });
+
+    // Movie 2: has TMDB ID, credits_fetched = true
+    const m2_id = try storage.addOrUpdateMovie(.{
+        .id = 0,
+        .library_id = lib_id,
+        .file_path = "m2.mkv",
+        .clean_name = "Movie 2",
+        .tmdb_id = 200,
+        .is_present = true,
+        .credits_fetched = true,
+    });
+
+    // Movie 3: has NO TMDB ID
+    _ = try storage.addOrUpdateMovie(.{
+        .id = 0,
+        .library_id = lib_id,
+        .file_path = "m3.mkv",
+        .clean_name = "Movie 3",
+        .tmdb_id = null,
+        .is_present = true,
+    });
+
+    // Query missing credits -> only m1 should be returned
+    const missing = try storage.getMoviesMissingCredits(allocator);
+    defer {
+        for (missing) |*m| m.deinit(allocator);
+        allocator.free(missing);
+    }
+    try testing.expectEqual(@as(usize, 1), missing.len);
+    try testing.expectEqual(m1_id, missing[0].id);
+
+    // Mark m1 fetched
+    storage.markMovieCreditsFetched(m1_id);
+
+    // Query missing again -> should be 0
+    const missing_after = try storage.getMoviesMissingCredits(allocator);
+    defer {
+        for (missing_after) |*m| m.deinit(allocator);
+        allocator.free(missing_after);
+    }
+    try testing.expectEqual(@as(usize, 0), missing_after.len);
+
+    // Test snapshot roundtrip preserves credits_fetched
+    try storage.snapshot();
+
+    var restored = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path);
+    defer restored.deinit();
+    try testing.expect(try restored.load());
+
+    const restored_m1 = (try restored.getMovieById(allocator, m1_id)).?;
+    defer {
+        var m = restored_m1;
+        m.deinit(allocator);
+    }
+    try testing.expect(restored_m1.credits_fetched);
+
+    const restored_m2 = (try restored.getMovieById(allocator, m2_id)).?;
+    defer {
+        var m = restored_m2;
+        m.deinit(allocator);
+    }
+    try testing.expect(restored_m2.credits_fetched);
+}
+
 test "LogsStorage: Progress, logs, and recently watched" {
     const testing = std.testing;
     const allocator = testing.allocator;

@@ -75,6 +75,7 @@ pub const Movie = struct {
     backdrop_path: ?[]const u8 = null,
     release_date: ?[]const u8 = null,
     file_size: i64 = 0,
+    credits_fetched: bool = false,
 
     pub fn clone(self: Movie, allocator: std.mem.Allocator) !Movie {
         return .{
@@ -90,6 +91,7 @@ pub const Movie = struct {
             .backdrop_path = if (self.backdrop_path) |b| try allocator.dupe(u8, b) else null,
             .release_date = if (self.release_date) |r| try allocator.dupe(u8, r) else null,
             .file_size = self.file_size,
+            .credits_fetched = self.credits_fetched,
         };
     }
 

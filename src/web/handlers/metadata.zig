@@ -397,3 +397,35 @@ pub fn handleApiMetadataManualLink(request: *std.http.Server.Request, allocator:
     request.respond("OK", .{ .status = .ok }) catch return;
 }
 
+pub fn handleApiMetadataSyncCredits(
+    request: *std.http.Server.Request,
+    allocator: std.mem.Allocator,
+    database: *db_mod.Database,
+    is_admin: bool,
+) !void {
+    if (!is_admin) {
+        request.respond("Forbidden", .{ .status = .forbidden }) catch return;
+        return;
+    }
+
+    const missing_credits = metadata_mod.getMoviesMissingCredits(database, allocator) catch {
+        request.respond("Failed to query missing credits", .{ .status = .internal_server_error }) catch return;
+        return;
+    };
+    const count = missing_credits.len;
+    for (missing_credits) |*m| {
+        var mut = m.*;
+        mut.deinit(allocator);
+    }
+    allocator.free(missing_credits);
+
+    var res_buf: [128]u8 = undefined;
+    const json_res = std.fmt.bufPrint(&res_buf, "{{\"status\":\"ok\",\"pending\":{d}}}", .{count}) catch "{\"status\":\"ok\"}";
+
+    var headers_buf: [2]std.http.Header = .{
+        .{ .name = "content-type", .value = "application/json" },
+        .{ .name = "cache-control", .value = "no-cache" },
+    };
+    request.respond(json_res, .{ .extra_headers = &headers_buf, .status = .ok }) catch return;
+}
+

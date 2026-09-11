@@ -205,3 +205,58 @@ pub fn getMoviePeopleNamesMap(self: *SratimStorage, allocator: std.mem.Allocator
 
     return result_map;
 }
+
+/// Checks whether any credits exist for a given movie ID.
+pub fn hasMovieCredits(self: *SratimStorage, movie_id: i64) bool {
+    self.readLock();
+    defer self.readUnlock();
+
+    var it = self.movie_credits.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.movie_id == movie_id) return true;
+    }
+    return false;
+}
+
+/// Marks a movie as having had its credits fetched (even if empty or failed).
+pub fn markMovieCreditsFetched(self: *SratimStorage, movie_id: i64) void {
+    self.writeLock();
+    defer self.writeUnlock();
+
+    if (self.movies.getPtr(movie_id)) |ptr| {
+        ptr.credits_fetched = true;
+    }
+}
+
+/// Retrieves all present movies with valid TMDB IDs that have not yet had their credits fetched or populated.
+pub fn getMoviesMissingCredits(self: *SratimStorage, allocator: std.mem.Allocator) ![]schema.Movie {
+    self.readLock();
+    defer self.readUnlock();
+
+    var existing_credit_movies = std.AutoHashMap(i64, void).init(allocator);
+    defer existing_credit_movies.deinit();
+
+    var it_c = self.movie_credits.iterator();
+    while (it_c.next()) |e| {
+        try existing_credit_movies.put(e.value_ptr.movie_id, {});
+    }
+
+    var list = std.ArrayList(schema.Movie).empty;
+    errdefer {
+        for (list.items) |*m| m.deinit(allocator);
+        list.deinit(allocator);
+    }
+
+    var it = self.movies.iterator();
+    while (it.next()) |e| {
+        const m = e.value_ptr;
+        if (m.is_present and m.tmdb_id != null and m.tmdb_id.? > 0) {
+            if (!m.credits_fetched and !existing_credit_movies.contains(m.id)) {
+                try list.append(allocator, try m.clone(allocator));
+            }
+        }
+    }
+
+    return list.toOwnedSlice(allocator);
+}
+

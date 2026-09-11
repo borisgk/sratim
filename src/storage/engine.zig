@@ -186,4 +186,7 @@ pub const SratimStorage = struct {
     pub const getCreditsByPerson = credits_mod.getCreditsByPerson;
     pub const getMoviesByPerson = credits_mod.getMoviesByPerson;
     pub const getMoviePeopleNamesMap = credits_mod.getMoviePeopleNamesMap;
+    pub const hasMovieCredits = credits_mod.hasMovieCredits;
+    pub const markMovieCreditsFetched = credits_mod.markMovieCreditsFetched;
+    pub const getMoviesMissingCredits = credits_mod.getMoviesMissingCredits;
 };

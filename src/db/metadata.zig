@@ -335,7 +335,22 @@ pub fn saveMovieCredits(
         }
     }
 
+    cat.markMovieCreditsFetched(movie_id);
     cat.snapshot() catch {};
+}
+
+pub fn markMovieCreditsFetched(database: *db_mod.Database, movie_id: i64) void {
+    const cat = database.catalog orelse return;
+    cat.markMovieCreditsFetched(movie_id);
+    cat.snapshot() catch {};
+}
+
+pub fn getMoviesMissingCredits(
+    database: *db_mod.Database,
+    allocator: std.mem.Allocator,
+) ![]db_mod.schema.Movie {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    return cat.getMoviesMissingCredits(allocator);
 }
 
 pub fn getMovieCredits(

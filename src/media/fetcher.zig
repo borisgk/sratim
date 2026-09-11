@@ -226,6 +226,66 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
 
         allocator.free(missing_episodes);
 
+        // Backfill Credits for existing movies that have TMDB IDs but missing credits
+        const missing_credits = metadata_mod.getMoviesMissingCredits(database, allocator) catch |err| {
+            std.debug.print("TMDB fetcher error querying movies missing credits: {}\n", .{err});
+            io.sleep(std.Io.Duration.fromSeconds(30), .awake) catch {};
+            continue;
+        };
+        defer {
+            for (missing_credits) |*m| {
+                var mut = m.*;
+                mut.deinit(allocator);
+            }
+            allocator.free(missing_credits);
+        }
+
+        if (missing_credits.len > 0) {
+            std.debug.print("TMDB fetcher found {d} movies needing credits backfill.\n", .{missing_credits.len});
+            for (missing_credits, 0..) |movie, idx| {
+                const tmdb_id = movie.tmdb_id orelse {
+                    metadata_mod.markMovieCreditsFetched(database, movie.id);
+                    continue;
+                };
+
+                const display_title = movie.title orelse movie.clean_name;
+                std.debug.print("TMDB backfilling credits [{d}/{d}]: {s} (TMDB ID {d})\n", .{
+                    idx + 1, missing_credits.len, display_title, tmdb_id,
+                });
+
+                if (tmdb.fetchMovieCredits(allocator, io, tmdb_id, token, proxy_url)) |credits_parsed| {
+                    defer credits_parsed.deinit();
+                    const credits = credits_parsed.value;
+
+                    // Download profile pictures for top cast
+                    const cast_limit = @min(credits.cast.len, 10);
+                    for (credits.cast[0..cast_limit]) |c| {
+                        if (c.profile_path) |p| {
+                            tmdb.downloadProfileImage(allocator, io, p, proxy_url) catch {};
+                        }
+                    }
+                    // Download profile pictures for directors
+                    for (credits.crew) |cr| {
+                        if (std.mem.eql(u8, cr.job, "Director") or std.mem.eql(u8, cr.department, "Directing")) {
+                            if (cr.profile_path) |p| {
+                                tmdb.downloadProfileImage(allocator, io, p, proxy_url) catch {};
+                            }
+                        }
+                    }
+
+                    metadata_mod.saveMovieCredits(database, movie.id, credits.cast, credits.crew) catch |err| {
+                        std.debug.print("TMDB fetcher error saving credits for {s}: {}\n", .{ movie.clean_name, err });
+                    };
+                } else |err| {
+                    std.debug.print("TMDB fetcher error fetching credits for {s}: {}\n", .{ movie.clean_name, err });
+                    metadata_mod.markMovieCreditsFetched(database, movie.id);
+                }
+
+                // 1-second interval between TMDB requests
+                io.sleep(std.Io.Duration.fromSeconds(1), .awake) catch {};
+            }
+        }
+
         // Sleep 30 seconds before polling again
         io.sleep(std.Io.Duration.fromSeconds(30), .awake) catch {};
     }
