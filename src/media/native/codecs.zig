@@ -53,35 +53,48 @@ pub fn getVideoCodecStringFromFourCC(allocator: std.mem.Allocator, fourcc: [4]u8
     return CodecResult{ .static_str = "video/mp4; codecs=\"avc1.4d401e, mp4a.40.2\"" };
 }
 
+/// Comptime perfect hash map for exact codec ID/FourCC to display name lookups.
+const codec_display_map = std.StaticStringMap([]const u8).initComptime(.{
+    .{ "A_AC3", "AC-3 (Dolby Digital)" },
+    .{ "ac-3", "AC-3 (Dolby Digital)" },
+    .{ "sac3", "AC-3 (Dolby Digital)" },
+    .{ "A_EAC3", "E-AC-3 (Dolby Digital Plus)" },
+    .{ "ec-3", "E-AC-3 (Dolby Digital Plus)" },
+    .{ "A_AAC", "AAC-LC" },
+    .{ "mp4a", "AAC-LC" },
+    .{ ".mp3", "MP3" },
+    .{ "mp3", "MP3" },
+    .{ "mp3 ", "MP3" },
+    .{ "A_MPEG/L3", "MP3" },
+    .{ "A_MPEG/L2", "MP2" },
+    .{ "A_MPEG/L1", "MP1" },
+    .{ "A_DTS", "DTS" },
+    .{ "dts ", "DTS" },
+    .{ "dtsc", "DTS" },
+    .{ "dtsh", "DTS" },
+    .{ "dts-hd", "DTS" },
+    .{ "A_FLAC", "FLAC" },
+    .{ "flac", "FLAC" },
+    .{ "A_OPUS", "Opus" },
+    .{ "Opus", "Opus" },
+    .{ "opus", "Opus" },
+    .{ "A_VORBIS", "Vorbis" },
+    .{ "vorbis", "Vorbis" },
+    .{ "A_TRUEHD", "TrueHD" },
+    .{ "mlpa", "TrueHD" },
+});
+
 /// Maps container audio codec IDs or sample FourCCs to clean, human-readable display names.
 pub fn getAudioCodecDisplayName(codec_id_or_fourcc: []const u8) []const u8 {
-    if (std.mem.eql(u8, codec_id_or_fourcc, "A_AC3") or std.mem.eql(u8, codec_id_or_fourcc, "ac-3") or std.mem.eql(u8, codec_id_or_fourcc, "sac3")) {
-        return "AC-3 (Dolby Digital)";
-    } else if (std.mem.eql(u8, codec_id_or_fourcc, "A_EAC3") or std.mem.eql(u8, codec_id_or_fourcc, "ec-3")) {
-        return "E-AC-3 (Dolby Digital Plus)";
-    } else if (std.mem.eql(u8, codec_id_or_fourcc, "A_AAC") or std.mem.eql(u8, codec_id_or_fourcc, "mp4a")) {
-        return "AAC-LC";
-    } else if (std.mem.startsWith(u8, codec_id_or_fourcc, "A_MPEG/L3") or std.mem.eql(u8, codec_id_or_fourcc, ".mp3") or std.mem.eql(u8, codec_id_or_fourcc, "mp3 ") or std.mem.eql(u8, codec_id_or_fourcc, "mp3")) {
-        return "MP3";
-    } else if (std.mem.startsWith(u8, codec_id_or_fourcc, "A_MPEG/L2")) {
-        return "MP2";
-    } else if (std.mem.startsWith(u8, codec_id_or_fourcc, "A_MPEG/L1")) {
-        return "MP1";
-    } else if (std.mem.startsWith(u8, codec_id_or_fourcc, "A_DTS") or std.mem.eql(u8, codec_id_or_fourcc, "dts ") or std.mem.eql(u8, codec_id_or_fourcc, "dtsc") or std.mem.eql(u8, codec_id_or_fourcc, "dtsh")) {
-        return "DTS";
-    } else if (std.mem.eql(u8, codec_id_or_fourcc, "A_FLAC") or std.mem.eql(u8, codec_id_or_fourcc, "flac")) {
-        return "FLAC";
-    } else if (std.mem.eql(u8, codec_id_or_fourcc, "A_OPUS") or std.mem.eql(u8, codec_id_or_fourcc, "Opus") or std.mem.eql(u8, codec_id_or_fourcc, "opus")) {
-        return "Opus";
-    } else if (std.mem.eql(u8, codec_id_or_fourcc, "A_VORBIS") or std.mem.eql(u8, codec_id_or_fourcc, "vorbis")) {
-        return "Vorbis";
-    } else if (std.mem.eql(u8, codec_id_or_fourcc, "A_TRUEHD") or std.mem.eql(u8, codec_id_or_fourcc, "mlpa")) {
-        return "TrueHD";
-    } else if (std.mem.startsWith(u8, codec_id_or_fourcc, "A_PCM")) {
-        return "PCM";
-    } else if (codec_id_or_fourcc.len > 0) {
-        return codec_id_or_fourcc;
-    }
+    // O(1) exact match via comptime perfect hash
+    if (codec_display_map.get(codec_id_or_fourcc)) |name| return name;
+    // Prefix fallback for codec families with sub-variants
+    if (std.mem.startsWith(u8, codec_id_or_fourcc, "A_DTS")) return "DTS";
+    if (std.mem.startsWith(u8, codec_id_or_fourcc, "A_MPEG/L3")) return "MP3";
+    if (std.mem.startsWith(u8, codec_id_or_fourcc, "A_MPEG/L2")) return "MP2";
+    if (std.mem.startsWith(u8, codec_id_or_fourcc, "A_MPEG/L1")) return "MP1";
+    if (std.mem.startsWith(u8, codec_id_or_fourcc, "A_PCM")) return "PCM";
+    if (codec_id_or_fourcc.len > 0) return codec_id_or_fourcc;
     return "Unknown";
 }
 

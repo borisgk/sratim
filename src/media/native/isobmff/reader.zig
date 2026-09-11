@@ -46,9 +46,9 @@ pub fn skipBytes(r: *std.Io.Reader, count: u64) !void {
     }
 }
 
-/// Checks if a 4-byte box type matches a FourCC string.
-pub fn isFourCC(box_type: [4]u8, expected: *const [4]u8) bool {
-    return std.mem.eql(u8, &box_type, expected);
+/// Checks if a 4-byte box type matches a FourCC string using comptime u32 comparison.
+pub fn isFourCC(box_type: [4]u8, comptime expected: *const [4]u8) bool {
+    return std.mem.readInt(u32, &box_type, .big) == comptime std.mem.readInt(u32, expected, .big);
 }
 
 /// Quick probe to determine if a file is an MP4/MOV container by looking for ftyp, moov, free, mdat.

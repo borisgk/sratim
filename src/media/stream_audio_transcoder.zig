@@ -30,26 +30,31 @@ pub const StreamAudioTranscoder = struct {
     resampler_l: ?dsp.HermiteResampler = null,
     resampler_r: ?dsp.HermiteResampler = null,
 
+    // Comptime codec name tuples — single source of truth for codec matching.
+    const ac3_codecs = .{ "A_AC3", "ac-3", "sac3" };
+    const eac3_codecs = .{ "A_EAC3", "ec-3" };
+    const aac_codecs = .{ "A_AAC", "mp4a" };
+    const mp3_codecs = .{ "A_MPEG/L3", "A_MPEG/L2", "A_MPEG/L1", ".mp3", "mp3", "mp3 " };
+    const dts_codecs = .{ "A_DTS", "dts ", "dtsc", "dtsh", "dts-hd" };
+
+    /// Comptime-unrolled string match against a tuple of known codec names.
+    fn matchesAny(codec_name: []const u8, comptime names: anytype) bool {
+        inline for (names) |name| {
+            if (std.mem.eql(u8, codec_name, name)) return true;
+        }
+        return false;
+    }
+
+    fn matchesDts(codec_name: []const u8) bool {
+        return matchesAny(codec_name, dts_codecs) or std.mem.startsWith(u8, codec_name, "A_DTS/");
+    }
+
     pub fn isNativeSupportedCodec(codec_name: []const u8) bool {
-        return std.mem.eql(u8, codec_name, "A_AC3") or
-            std.mem.eql(u8, codec_name, "ac-3") or
-            std.mem.eql(u8, codec_name, "sac3") or
-            std.mem.eql(u8, codec_name, "A_EAC3") or
-            std.mem.eql(u8, codec_name, "ec-3") or
-            std.mem.eql(u8, codec_name, "A_AAC") or
-            std.mem.eql(u8, codec_name, "mp4a") or
-            std.mem.eql(u8, codec_name, "A_MPEG/L3") or
-            std.mem.eql(u8, codec_name, "A_MPEG/L2") or
-            std.mem.eql(u8, codec_name, "A_MPEG/L1") or
-            std.mem.eql(u8, codec_name, ".mp3") or
-            std.mem.eql(u8, codec_name, "mp3") or
-            std.mem.eql(u8, codec_name, "mp3 ") or
-            std.mem.eql(u8, codec_name, "A_DTS") or
-            std.mem.startsWith(u8, codec_name, "A_DTS/") or
-            std.mem.eql(u8, codec_name, "dts ") or
-            std.mem.eql(u8, codec_name, "dtsc") or
-            std.mem.eql(u8, codec_name, "dtsh") or
-            std.mem.eql(u8, codec_name, "dts-hd");
+        return matchesAny(codec_name, ac3_codecs) or
+            matchesAny(codec_name, eac3_codecs) or
+            matchesAny(codec_name, aac_codecs) or
+            matchesAny(codec_name, mp3_codecs) or
+            matchesDts(codec_name);
     }
 
     pub fn initFromCodec(
@@ -61,21 +66,11 @@ pub const StreamAudioTranscoder = struct {
     ) !*StreamAudioTranscoder {
         _ = use_native_encoder;
         const allocator = std.heap.c_allocator;
-        const is_ac3 = std.mem.eql(u8, codec_name, "A_AC3") or std.mem.eql(u8, codec_name, "ac-3") or std.mem.eql(u8, codec_name, "sac3");
-        const is_eac3 = std.mem.eql(u8, codec_name, "A_EAC3") or std.mem.eql(u8, codec_name, "ec-3");
-        const is_aac = std.mem.eql(u8, codec_name, "A_AAC") or std.mem.eql(u8, codec_name, "mp4a");
-        const is_mp3 = std.mem.eql(u8, codec_name, "A_MPEG/L3") or
-            std.mem.eql(u8, codec_name, "A_MPEG/L2") or
-            std.mem.eql(u8, codec_name, "A_MPEG/L1") or
-            std.mem.eql(u8, codec_name, ".mp3") or
-            std.mem.eql(u8, codec_name, "mp3") or
-            std.mem.eql(u8, codec_name, "mp3 ");
-        const is_dts = std.mem.eql(u8, codec_name, "A_DTS") or
-            std.mem.startsWith(u8, codec_name, "A_DTS/") or
-            std.mem.eql(u8, codec_name, "dts ") or
-            std.mem.eql(u8, codec_name, "dtsc") or
-            std.mem.eql(u8, codec_name, "dtsh") or
-            std.mem.eql(u8, codec_name, "dts-hd");
+        const is_ac3 = matchesAny(codec_name, ac3_codecs);
+        const is_eac3 = matchesAny(codec_name, eac3_codecs);
+        const is_aac = matchesAny(codec_name, aac_codecs);
+        const is_mp3 = matchesAny(codec_name, mp3_codecs);
+        const is_dts = matchesDts(codec_name);
 
         if (!is_ac3 and !is_eac3 and !is_aac and !is_mp3 and !is_dts) {
             return error.UnsupportedAudioCodec;

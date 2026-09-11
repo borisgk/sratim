@@ -56,7 +56,20 @@ pub const DtsDecoder = struct {
         self.last_header = null;
     }
 
-    fn mapPrmChToSpeaker(mode: AudioMode, ch: usize) Speaker {
+    /// Comptime-generated 2D speaker map: [audio_mode][channel] -> Speaker.
+    /// Eliminates nested runtime switch branching in the decode loop.
+    const speaker_map: [10][MAX_CHANNELS]Speaker = blk: {
+        @setEvalBranchQuota(1000);
+        var map: [10][MAX_CHANNELS]Speaker = undefined;
+        for (0..10) |mode_idx| {
+            for (0..MAX_CHANNELS) |ch| {
+                map[mode_idx][ch] = computeSpeaker(@enumFromInt(mode_idx), ch);
+            }
+        }
+        break :blk map;
+    };
+
+    fn computeSpeaker(mode: AudioMode, ch: usize) Speaker {
         return switch (mode) {
             .mono => if (ch == 0) .center else .none,
             .dual_mono, .stereo, .stereo_sumdiff, .stereo_total => switch (ch) {
@@ -104,6 +117,12 @@ pub const DtsDecoder = struct {
                 else => .none,
             },
         };
+    }
+
+    fn mapPrmChToSpeaker(mode: AudioMode, ch: usize) Speaker {
+        const mode_idx = @intFromEnum(mode);
+        if (mode_idx >= 10 or ch >= MAX_CHANNELS) return .none;
+        return speaker_map[mode_idx][ch];
     }
 
     /// Decodes a DTS frame into interleaved float32 stereo PCM.

@@ -300,6 +300,23 @@ pub const LfeDsp = struct {
         dec_select: bool,
         out_pcm: []f32,
     ) void {
+        if (dec_select) {
+            self.interpolateLfeT(true, lfe_samples, npcmblocks, out_pcm);
+        } else {
+            self.interpolateLfeT(false, lfe_samples, npcmblocks, out_pcm);
+        }
+    }
+
+    /// Comptime-specialized LFE interpolation. The comptime dec_select parameter
+    /// allows the compiler to fully unroll the inner ncoeffs loop (4 or 8 iterations)
+    /// and inline the correct filter coefficient pointer.
+    fn interpolateLfeT(
+        self: *LfeDsp,
+        comptime dec_select: bool,
+        lfe_samples: []const i32,
+        npcmblocks: usize,
+        out_pcm: []f32,
+    ) void {
         const factor: usize = if (dec_select) 128 else 64;
         const ncoeffs: usize = if (dec_select) 4 else 8;
         const nlfesamples: usize = npcmblocks >> (if (dec_select) 2 else 1);
@@ -314,7 +331,8 @@ pub const LfeDsp = struct {
                 var res1: f64 = 0.0;
                 var res2: f64 = 0.0;
 
-                for (0..ncoeffs) |k| {
+                // Inner loop is unrolled at comptime (4 or 8 iterations)
+                inline for (0..ncoeffs) |k| {
                     const sample_val: f64 = @floatFromInt(lfe_samples[src_idx - k]);
                     res1 += filter_coeff[j * ncoeffs + k] * sample_val;
                     res2 += filter_coeff[255 - j * ncoeffs - k] * sample_val;
