@@ -131,11 +131,22 @@ pub fn generateDetailsHtml(
             if (!c.is_cast) continue;
 
             const char_str = c.character orelse "";
-            if (c.profile_path) |p| {
+            var person_opt: ?db_mod.schema.Person = null;
+            defer if (person_opt) |*p| p.deinit(allocator);
+
+            var profile_path = c.profile_path;
+            if (profile_path == null) {
+                if (metadata_mod.getPersonById(database, allocator, c.person_id) catch null) |p| {
+                    person_opt = p;
+                    profile_path = person_opt.?.profile_path;
+                }
+            }
+
+            if (profile_path) |p| {
                 const card_html = try std.fmt.allocPrint(allocator,
                     \\        <a href="/person?id={d}" class="cast-card">
                     \\            <div class="cast-avatar-wrapper">
-                    \\                <img class="cast-avatar" src="/images/profiles/w185{s}" alt="{s}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+                    \\                <img class="cast-avatar" src="/images/profiles/w185{s}" alt="{s}" loading="lazy" onerror="if(!this.dataset.triedTmdb){{this.dataset.triedTmdb='1';this.src='https://image.tmdb.org/t/p/w185{s}';fetch('/api/images/cache?path='+encodeURIComponent('{s}')).catch(()=>{{}});}}else{{this.style.display='none';this.nextElementSibling.style.display='flex';}}">
                     \\                <div class="cast-avatar-placeholder" style="display:none;">
                     \\                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40">
                     \\                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
@@ -146,7 +157,7 @@ pub fn generateDetailsHtml(
                     \\            <div class="cast-name">{s}</div>
                     \\            <div class="cast-character">{s}</div>
                     \\        </a>
-                , .{ c.person_id, p, c.name, c.name, char_str });
+                , .{ c.person_id, p, c.name, p, p, c.name, char_str });
                 defer allocator.free(card_html);
                 try cast_section_buf.appendSlice(allocator, card_html);
             } else {

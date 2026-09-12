@@ -24,6 +24,19 @@ pub fn addOrUpdatePerson(self: *SratimStorage, person: schema.Person) !void {
     }
 }
 
+/// Updates the profile_path for an existing person if it wasn't set or is empty.
+pub fn updatePersonProfilePath(self: *SratimStorage, person_id: i64, profile_path: []const u8) !void {
+    self.writeLock();
+    defer self.writeUnlock();
+
+    if (self.people.getPtr(person_id)) |existing| {
+        if (existing.profile_path == null or existing.profile_path.?.len == 0) {
+            if (existing.profile_path) |p| self.allocator.free(p);
+            existing.profile_path = try self.allocator.dupe(u8, profile_path);
+        }
+    }
+}
+
 /// Saves full details (bio, birth/death, place of birth, IMDb, and filmography) to cold disk storage.
 pub fn savePersonDetails(
     self: *SratimStorage,

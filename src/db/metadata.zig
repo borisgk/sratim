@@ -435,6 +435,12 @@ pub fn markPersonDetailsFetched(database: *db_mod.Database, person_id: i64) void
     cat.snapshot() catch {};
 }
 
+pub fn updatePersonProfilePath(database: *db_mod.Database, person_id: i64, profile_path: []const u8) !void {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    try cat.updatePersonProfilePath(person_id, profile_path);
+    cat.snapshot() catch {};
+}
+
 pub fn getPersonDetails(
     database: *db_mod.Database,
     allocator: std.mem.Allocator,

@@ -90,7 +90,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
         }
 
         // Static assets handler (/style.css, /favicon.ico, /fonts/*, /images/*)
-        const served_static = static_handler.serveStaticAsset(&request, allocator, io) catch |err| {
+        const served_static = static_handler.serveStaticAsset(&request, allocator, io, config) catch |err| {
             std.debug.print("Static asset error: {}\n", .{err});
             return;
         };

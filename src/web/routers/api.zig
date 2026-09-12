@@ -163,5 +163,13 @@ pub fn route(
         return true;
     }
 
+    if (std.mem.startsWith(u8, target, "/api/images/cache")) {
+        metadata_handler.handleApiImageCache(request, allocator, io, config) catch |err| {
+            std.debug.print("API Image Cache error: {}\n", .{err});
+            try request.respond("Internal Server Error", .{ .status = .internal_server_error });
+        };
+        return true;
+    }
+
     return false;
 }

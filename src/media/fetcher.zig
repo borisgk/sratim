@@ -340,6 +340,13 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
                     ) catch |err| {
                         std.debug.print("TMDB fetcher error saving person details for {s}: {}\n", .{ person.name, err });
                     };
+
+                    if (d.profile_path) |prof| {
+                        metadata_mod.updatePersonProfilePath(database, person.id, prof) catch {};
+                        tmdb.downloadProfileImage(allocator, io, prof, proxy_url) catch {};
+                    } else if (person.profile_path) |prof| {
+                        tmdb.downloadProfileImage(allocator, io, prof, proxy_url) catch {};
+                    }
                 } else |err| {
                     std.debug.print("TMDB fetcher error fetching details for {s}: {}\n", .{ person.name, err });
                     metadata_mod.markPersonDetailsFetched(database, person.id);

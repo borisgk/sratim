@@ -55,6 +55,13 @@ pub fn generatePersonHtml(
                     filmography_json,
                 ) catch {};
 
+                if (details.profile_path) |prof| {
+                    metadata_mod.updatePersonProfilePath(database, person.id, prof) catch {};
+                    tmdb.downloadProfileImage(allocator, io, prof, config.tmdb_proxy) catch {};
+                } else if (person.profile_path) |prof| {
+                    tmdb.downloadProfileImage(allocator, io, prof, config.tmdb_proxy) catch {};
+                }
+
                 // Reload person with updated details
                 if (metadata_mod.getPersonById(database, allocator, person_id) catch null) |updated| {
                     person.deinit(allocator);
@@ -109,14 +116,14 @@ pub fn generatePersonHtml(
 
     if (person.profile_path) |p| {
         const av_html = try std.fmt.allocPrint(allocator,
-            \\<img class="person-avatar-large" src="/images/profiles/w185{s}" alt="{s}" loading="lazy" onerror="if(!this.dataset.triedTmdb){{this.dataset.triedTmdb='1';this.src='https://image.tmdb.org/t/p/w185{s}';}}else{{this.style.display='none';this.nextElementSibling.style.display='flex';}}">
+            \\<img class="person-avatar-large" src="/images/profiles/w185{s}" alt="{s}" loading="lazy" onerror="if(!this.dataset.triedTmdb){{this.dataset.triedTmdb='1';this.src='https://image.tmdb.org/t/p/w185{s}';fetch('/api/images/cache?path='+encodeURIComponent('{s}')).catch(()=>{{}});}}else{{this.style.display='none';this.nextElementSibling.style.display='flex';}}">
             \\<div class="person-avatar-large-placeholder" style="display:none;">
             \\    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48">
             \\        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
             \\        <circle cx="12" cy="7" r="4"></circle>
             \\    </svg>
             \\</div>
-        , .{ p, person.name, p });
+        , .{ p, person.name, p, p });
         defer allocator.free(av_html);
         try avatar_buf.appendSlice(allocator, av_html);
     } else {
