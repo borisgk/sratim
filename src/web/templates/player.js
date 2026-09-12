@@ -52,6 +52,9 @@
         let pendingSeekTime = null;
         let seekDebounceTimeout = null;
         let lastReportedPosition = -100;
+        let streamDisconnected = false;
+        let isReconnecting = false;
+        let lastReconnectTime = 0;
 
         function getAbsoluteTime() {
             if (pendingSeekTime !== null) {
@@ -366,12 +369,17 @@
                 }, 150);
             },
 
-            async fetchAndAppend(sourceBuffer, startTime, signal) {
+            async fetchAndAppend(sourceBuffer, startTime, signal, autoPlay = true) {
                 let onUpdateEnd = null;
                 try {
                     const audioParam = currentAudioIdx >= 0 ? `&audio=${currentAudioIdx}` : '';
                     const response = await fetch(`/stream?${MEDIA_QUERY}&start=${startTime}${audioParam}`, { signal });
                     if (!response.ok) {
+                        if (response.status === 502 || response.status === 503 || response.status === 504) {
+                            console.warn(`Gateway error ${response.status} from proxy. Scheduling auto-reconnect.`);
+                            streamDisconnected = true;
+                            return;
+                        }
                         const errMsg = await response.text();
                         showFormatError(errMsg || 'This media format is not supported for native playback.');
                         return;
@@ -427,11 +435,20 @@
                             hasInitializedPlayback = true;
                             video.currentTime = 0;
                             pendingSeekTime = null;
-                            video.play().catch(e => console.error("Play failed:", e));
+                            if (autoPlay) {
+                                video.play().catch(e => console.error("Play failed:", e));
+                            } else {
+                                video.pause();
+                                playpause.innerHTML = svgPlay;
+                            }
                         }
                         processQueue();
                     };
                     sourceBuffer.addEventListener('updateend', onUpdateEnd);
+
+                    let isBufferPaused = false;
+                    const MAX_BUFFER_AHEAD = 45; // Buffer up to 45 seconds ahead
+                    const MIN_BUFFER_RESUME = 30; // Resume reading when buffer drops below 30s (max TCP idle gap <= 15s)
 
                     while (!signal.aborted) {
                         if (isQuotaExceeded || queue.length > 50) {
@@ -441,15 +458,30 @@
 
                         if (sourceBuffer.buffered.length > 0) {
                             const end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
-                            if (end - video.currentTime > 120) {
-                                if (window.__onStreamState) window.__onStreamState('Buffer Full (Idle)');
-                                await new Promise(r => setTimeout(r, 1000));
+                            const bufferAhead = end - video.currentTime;
+                            if (!isBufferPaused && bufferAhead > MAX_BUFFER_AHEAD) {
+                                isBufferPaused = true;
+                            } else if (isBufferPaused && bufferAhead < MIN_BUFFER_RESUME) {
+                                isBufferPaused = false;
+                            }
+
+                            if (isBufferPaused) {
+                                if (window.__onStreamState) window.__onStreamState('Buffer Full (Paced)');
+                                await new Promise(r => setTimeout(r, 500));
                                 continue;
                             }
                         }
 
                         const { done, value } = await reader.read();
-                        if (done) break;
+                        if (done) {
+                            const currentPos = currentSeekTime + (video.currentTime || 0);
+                            const isPremature = !signal.aborted && (DURATION <= 0 || (currentPos < DURATION - 5));
+                            if (isPremature) {
+                                console.warn(`Stream connection closed prematurely at ${currentPos.toFixed(1)}s (total ${DURATION}s). Marked for auto-reconnect.`);
+                                streamDisconnected = true;
+                            }
+                            break;
+                        }
 
                         if (window.__onStreamChunk && value) {
                             window.__onStreamChunk(value.byteLength);
@@ -460,7 +492,15 @@
                     }
                     if (window.__onStreamState) window.__onStreamState('Idle');
                 } catch (e) {
-                    if (e.name !== 'AbortError') console.error('Fetch error:', e);
+                    if (e.name !== 'AbortError') {
+                        console.error('Fetch error:', e);
+                        const currentPos = currentSeekTime + (video.currentTime || 0);
+                        const isPremature = !signal.aborted && (DURATION <= 0 || (currentPos < DURATION - 5));
+                        if (isPremature) {
+                            console.warn(`Stream connection lost at ${currentPos.toFixed(1)}s due to network error. Marked for auto-reconnect.`);
+                            streamDisconnected = true;
+                        }
+                    }
                 } finally {
                     if (onUpdateEnd) {
                         try {
@@ -470,8 +510,29 @@
                 }
             },
 
-            loadVideo(startTime, retryCount) {
+            attemptReconnect() {
+                if (isReconnecting || (abortController && abortController.signal.aborted)) return;
+                const now = Date.now();
+                if (now - lastReconnectTime < 2500) return;
+                lastReconnectTime = now;
+
+                const absTime = getAbsoluteTime();
+                if (DURATION > 0 && absTime >= DURATION - 5) {
+                    streamDisconnected = false;
+                    return;
+                }
+
+                console.log(`StreamEngine: Auto-reconnecting stream from ${absTime.toFixed(1)}s`);
+                isReconnecting = true;
+                streamDisconnected = false;
+                const wasPlaying = !video.paused;
+                this.loadVideo(absTime, 0, wasPlaying);
+            },
+
+            loadVideo(startTime, retryCount, autoPlay = true) {
                 hideFormatError();
+                streamDisconnected = false;
+                isReconnecting = false;
                 if (seekDebounceTimeout) {
                     clearTimeout(seekDebounceTimeout);
                     seekDebounceTimeout = null;
@@ -497,7 +558,7 @@
 
                         const startNewStream = () => {
                             currentSeekTime = startTime;
-                            this.fetchAndAppend(currentSourceBuffer, startTime, signal);
+                            this.fetchAndAppend(currentSourceBuffer, startTime, signal, autoPlay);
                         };
 
                         if (currentSourceBuffer.buffered.length > 0) {
@@ -526,7 +587,9 @@
                     } else {
                         doSeek();
                     }
-                    playpause.innerHTML = svgPause;
+                    if (autoPlay) {
+                        playpause.innerHTML = svgPause;
+                    }
                     return;
                 }
 
@@ -546,21 +609,25 @@
                     if (ms.readyState !== 'open') {
                         console.error('MediaSource readyState is', ms.readyState, '- retrying');
                         if (retryCount < 3) {
-                            setTimeout(() => StreamEngine.loadVideo(startTime, retryCount + 1), 100);
+                            setTimeout(() => StreamEngine.loadVideo(startTime, retryCount + 1, autoPlay), 100);
                         }
                         return;
                     }
                     const sb = ms.addSourceBuffer(codecStr);
                     currentSourceBuffer = sb;
                     currentSeekTime = startTime;
-                    this.fetchAndAppend(sb, startTime, signal);
+                    this.fetchAndAppend(sb, startTime, signal, autoPlay);
                 });
 
                 video.src = currentObjectUrl;
-                playpause.innerHTML = svgPause;
+                if (autoPlay) {
+                    playpause.innerHTML = svgPause;
+                }
             },
 
             detach() {
+                streamDisconnected = false;
+                isReconnecting = false;
                 if (seekDebounceTimeout) {
                     clearTimeout(seekDebounceTimeout);
                     seekDebounceTimeout = null;
@@ -830,11 +897,48 @@
             video.addEventListener('play', () => {
                 playpause.innerHTML = svgPause;
                 WatchTracker.sendEvent('start', getAbsoluteTime());
+                if (streamDisconnected) {
+                    const remainingBuffer = (currentSourceBuffer && currentSourceBuffer.buffered.length > 0)
+                        ? (currentSourceBuffer.buffered.end(currentSourceBuffer.buffered.length - 1) - video.currentTime)
+                        : 0;
+                    if (remainingBuffer <= 10) {
+                        StreamEngine.attemptReconnect();
+                    }
+                }
             });
 
             video.addEventListener('pause', () => {
                 playpause.innerHTML = svgPlay;
             });
+
+            const handleStreamStall = () => {
+                if (streamDisconnected && !isReconnecting) {
+                    StreamEngine.attemptReconnect();
+                } else if (!isReconnecting && currentSourceBuffer) {
+                    const remaining = (currentSourceBuffer.buffered.length > 0)
+                        ? (currentSourceBuffer.buffered.end(currentSourceBuffer.buffered.length - 1) - video.currentTime)
+                        : 0;
+                    if (remaining <= 0.5) {
+                        const absTime = getAbsoluteTime();
+                        if (DURATION <= 0 || absTime < DURATION - 5) {
+                            StreamEngine.attemptReconnect();
+                        }
+                    }
+                }
+            };
+            video.addEventListener('waiting', handleStreamStall);
+            video.addEventListener('stalled', handleStreamStall);
+
+            setInterval(() => {
+                if (streamDisconnected && !isReconnecting && !video.paused) {
+                    const remainingBuffer = (currentSourceBuffer && currentSourceBuffer.buffered.length > 0)
+                        ? (currentSourceBuffer.buffered.end(currentSourceBuffer.buffered.length - 1) - video.currentTime)
+                        : 0;
+                    if (remainingBuffer <= 4 || video.readyState < 3) {
+                        StreamEngine.attemptReconnect();
+                    }
+                }
+            }, 2000);
 
             video.addEventListener('loadedmetadata', updateVideoLayout);
             video.addEventListener('resize', updateVideoLayout);
@@ -863,6 +967,15 @@
                 if (Math.abs(actualTime - lastReportedPosition) >= 10) {
                     lastReportedPosition = actualTime;
                     WatchTracker.sendEvent('progress', actualTime);
+                }
+
+                if (streamDisconnected && !isReconnecting) {
+                    const remainingBuffer = (currentSourceBuffer && currentSourceBuffer.buffered.length > 0)
+                        ? (currentSourceBuffer.buffered.end(currentSourceBuffer.buffered.length - 1) - video.currentTime)
+                        : 0;
+                    if (remainingBuffer <= 4) {
+                        StreamEngine.attemptReconnect();
+                    }
                 }
             });
 
