@@ -43,6 +43,10 @@ pub fn main() !void {
     const sratim_json_path = if (std.mem.eql(u8, config_path, "config.json")) "sratim.json" else "/var/lib/sratim/sratim.json";
     const sratim_wal_path = if (std.mem.eql(u8, config_path, "config.json")) "sratim.wal" else "/var/lib/sratim/sratim.wal";
     const persons_dir = if (std.mem.eql(u8, config_path, "config.json")) ".sratim/persons" else "/var/lib/sratim/persons";
+    std.Io.Dir.cwd().createDirPath(io, persons_dir) catch |err| {
+        std.debug.print("Failed to ensure persons directory {s}: {}\n", .{ persons_dir, err });
+    };
+    std.debug.print("Person details directory: {s}\n", .{persons_dir});
     const logs_json_path = if (std.mem.eql(u8, config_path, "config.json")) "logs.json" else "/var/lib/sratim/logs.json";
     const logs_wal_path = if (std.mem.eql(u8, config_path, "config.json")) "logs.wal" else "/var/lib/sratim/logs.wal";
 

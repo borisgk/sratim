@@ -660,3 +660,81 @@ test "SratimStorage: legacy person snapshot migration to disk files" {
     defer allocator.free(content);
     try testing.expect(std.mem.indexOf(u8, content, "Legacy person bio") == null);
 }
+
+test "SratimStorage: legacy snapshot without details_updated_at is migrated and NOT re-backfilled" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_no_updated_at.json";
+    const wal_path = "tmp/test_no_updated_at.wal";
+    const persons_dir = "tmp/test_no_updated_at_persons";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
+
+    // Legacy JSON from commit 8535a27: details_fetched = true, biography present, NO details_updated_at field
+    const legacy_json =
+        \\{
+        \\  "version": 1,
+        \\  "next_user_id": 1,
+        \\  "next_library_id": 1,
+        \\  "next_movie_id": 1,
+        \\  "next_show_id": 1,
+        \\  "next_episode_id": 1,
+        \\  "next_credit_id": 1,
+        \\  "users": [],
+        \\  "libraries": [],
+        \\  "movies": [],
+        \\  "shows": [],
+        \\  "episodes": [],
+        \\  "people": [
+        \\    {
+        \\      "id": 888,
+        \\      "name": "Christopher Nolan",
+        \\      "profile_path": "/nolan.jpg",
+        \\      "known_for_department": "Directing",
+        \\      "details_fetched": true,
+        \\      "biography": "Christopher Nolan was born in London...",
+        \\      "birthday": "1970-07-30",
+        \\      "filmography_json": "[{\"id\":157336,\"title\":\"Interstellar\"}]"
+        \\    }
+        \\  ],
+        \\  "movie_credits": []
+        \\}
+    ;
+    const file = try std.Io.Dir.cwd().createFile(testing.io, snap_path, .{});
+    try file.writeStreamingAll(testing.io, legacy_json);
+    file.close(testing.io);
+
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
+    defer storage.deinit();
+
+    const loaded = try storage.load();
+    try testing.expect(loaded);
+
+    // 1. In-memory person should exist and have details_fetched = true AND details_updated_at > 0
+    const p_opt = try storage.getPersonById(allocator, 888);
+    try testing.expect(p_opt != null);
+    var p = p_opt.?;
+    defer p.deinit(allocator);
+    try testing.expect(p.details_fetched);
+    try testing.expect(p.details_updated_at > 0);
+
+    // 2. Cold file should exist on disk
+    const cold_details = try storage.getPersonDetails(allocator, 888);
+    try testing.expect(cold_details != null);
+    var details = cold_details.?;
+    defer details.deinit();
+    try testing.expectEqualStrings("Christopher Nolan was born in London...", details.value.biography.?);
+
+    // 3. getPeopleNeedingRefresh MUST NOT return Nolan! (He was migrated, not unfetched!)
+    const needing = try storage.getPeopleNeedingRefresh(allocator, 30 * 86400);
+    defer {
+        for (needing) |*item| {
+            var mut_item = item.*;
+            mut_item.deinit(allocator);
+        }
+        allocator.free(needing);
+    }
+    try testing.expectEqual(@as(usize, 0), needing.len);
+}

@@ -306,7 +306,7 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
             const max_stale_per_pass: usize = 10;
 
             for (refresh_people, 0..) |person, idx| {
-                const is_stale = person.details_updated_at != 0;
+                const is_stale = person.details_fetched;
                 if (is_stale) {
                     if (stale_count >= max_stale_per_pass) continue;
                     stale_count += 1;

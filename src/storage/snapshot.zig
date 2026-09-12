@@ -191,46 +191,69 @@ pub fn load(self: *SratimStorage) !bool {
         const cloned = try ep.clone(self.allocator);
         try self.episodes.put(cloned.id, cloned);
     }
+    std.Io.Dir.cwd().createDirPath(self.io, self.persons_dir) catch |err| {
+        std.debug.print("Failed to ensure persons directory {s}: {}\n", .{ self.persons_dir, err });
+    };
+
+    var migrated_count: usize = 0;
     for (val.people) |p| {
+        const dest_path = std.fmt.allocPrint(self.allocator, "{s}/{d}.json", .{ self.persons_dir, p.id }) catch null;
+        var file_exists = false;
+        if (dest_path) |dp| {
+            file_exists = if (std.Io.Dir.cwd().statFile(self.io, dp, .{})) |_| true else |_| false;
+        }
+
+        const has_legacy_details = (p.biography != null or p.filmography_json != null or p.birthday != null or p.deathday != null or p.place_of_birth != null or p.imdb_id != null);
+
         // Automatic migration of legacy details to cold disk storage
-        if (p.biography != null or p.filmography_json != null) {
-            std.Io.Dir.cwd().createDirPath(self.io, self.persons_dir) catch {};
-            const dest_path = std.fmt.allocPrint(self.allocator, "{s}/{d}.json", .{ self.persons_dir, p.id }) catch null;
+        if ((has_legacy_details or p.details_fetched) and !file_exists) {
             if (dest_path) |dp| {
-                defer self.allocator.free(dp);
-                const file_exists = if (std.Io.Dir.cwd().statFile(self.io, dp, .{})) |_| true else |_| false;
-                if (!file_exists) {
-                    const details = schema.PersonDetails{
-                        .biography = p.biography,
-                        .birthday = p.birthday,
-                        .deathday = p.deathday,
-                        .place_of_birth = p.place_of_birth,
-                        .imdb_id = p.imdb_id,
-                        .filmography_json = p.filmography_json,
-                    };
-                    if (std.json.Stringify.valueAlloc(self.allocator, details, .{})) |json_str| {
-                        defer self.allocator.free(json_str);
-                        if (std.Io.Dir.cwd().createFile(self.io, dp, .{})) |f| {
-                            defer f.close(self.io);
-                            var buf: [4096]u8 = undefined;
-                            var w = f.writer(self.io, &buf);
-                            w.interface.writeAll(json_str) catch {};
-                            w.interface.flush() catch {};
-                        } else |_| {}
-                    } else |_| {}
-                }
+                const details = schema.PersonDetails{
+                    .biography = p.biography,
+                    .birthday = p.birthday,
+                    .deathday = p.deathday,
+                    .place_of_birth = p.place_of_birth,
+                    .imdb_id = p.imdb_id,
+                    .filmography_json = p.filmography_json,
+                };
+                if (std.json.Stringify.valueAlloc(self.allocator, details, .{})) |json_str| {
+                    defer self.allocator.free(json_str);
+                    if (std.Io.Dir.cwd().createFile(self.io, dp, .{})) |f| {
+                        defer f.close(self.io);
+                        var buf: [4096]u8 = undefined;
+                        var w = f.writer(self.io, &buf);
+                        w.interface.writeAll(json_str) catch {};
+                        w.interface.flush() catch {};
+                        migrated_count += 1;
+                        file_exists = true;
+                    } else |err| {
+                        std.debug.print("Failed to write migrated person details for {s} ({d}): {}\n", .{ p.name, p.id, err });
+                    }
+                } else |_| {}
             }
         }
+        if (dest_path) |dp| self.allocator.free(dp);
+
+        const is_fetched = p.details_fetched or has_legacy_details or file_exists;
+        const updated_at = if (p.details_updated_at != 0)
+            p.details_updated_at
+        else if (is_fetched)
+            self.now()
+        else
+            0;
 
         const person_hot = schema.Person{
             .id = p.id,
             .name = try self.allocator.dupe(u8, p.name),
             .profile_path = if (p.profile_path) |pr| try self.allocator.dupe(u8, pr) else null,
             .known_for_department = if (p.known_for_department) |d| try self.allocator.dupe(u8, d) else null,
-            .details_fetched = p.details_fetched,
-            .details_updated_at = p.details_updated_at,
+            .details_fetched = is_fetched,
+            .details_updated_at = updated_at,
         };
         try self.people.put(person_hot.id, person_hot);
+    }
+    if (migrated_count > 0) {
+        std.debug.print("Migrated {d} legacy person details to cold storage in {s}\n", .{ migrated_count, self.persons_dir });
     }
     for (val.movie_credits) |cr| {
         const cloned = try cr.clone(self.allocator);

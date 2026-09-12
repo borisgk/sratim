@@ -110,9 +110,9 @@ pub fn markPersonDetailsFetched(self: *SratimStorage, person_id: i64) void {
 }
 
 fn personRefreshLessThan(_: void, a: schema.Person, b: schema.Person) bool {
-    // Unfetched items (details_updated_at == 0) have highest priority
-    if (a.details_updated_at == 0 and b.details_updated_at != 0) return true;
-    if (a.details_updated_at != 0 and b.details_updated_at == 0) return false;
+    // Truly unfetched items (!details_fetched) have highest priority
+    if (!a.details_fetched and b.details_fetched) return true;
+    if (a.details_fetched and !b.details_fetched) return false;
     // For items with timestamps, oldest timestamp first
     return a.details_updated_at < b.details_updated_at;
 }
@@ -138,7 +138,13 @@ pub fn getPeopleNeedingRefresh(self: *SratimStorage, allocator: std.mem.Allocato
         const jitter_days = @mod(p.id, 21) - 10;
         const effective_ttl = base_ttl_seconds + (jitter_days * 86400);
 
-        const needs_refresh = (!p.details_fetched or p.details_updated_at == 0 or (now - p.details_updated_at) > effective_ttl);
+        const needs_refresh = if (!p.details_fetched)
+            true
+        else if (p.details_updated_at == 0)
+            false // Already marked fetched
+        else
+            (now - p.details_updated_at) > effective_ttl;
+
         if (needs_refresh) {
             const cloned = try p.clone(allocator);
             try list.append(allocator, cloned);
