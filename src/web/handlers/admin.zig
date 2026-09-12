@@ -6,7 +6,7 @@ const global_css: []const u8 = @embedFile("../style.css");
 
 /// Serves the Admin Dashboard page displaying catalog, storage, user, and unmatched metrics.
 pub fn serveAdminPage(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database) !void {
-    const stats = try admin_db.getAdminStats(database);
+    const stats = try admin_db.getAdminStats(database, allocator);
 
     var movies_buf: [32]u8 = undefined;
     const movies_str = try std.fmt.bufPrint(&movies_buf, "{d}", .{stats.total_movies});
@@ -19,6 +19,12 @@ pub fn serveAdminPage(request: *std.http.Server.Request, allocator: std.mem.Allo
 
     var other_buf: [32]u8 = undefined;
     const other_str = try std.fmt.bufPrint(&other_buf, "{d}", .{stats.total_other_files});
+
+    var directors_buf: [32]u8 = undefined;
+    const directors_str = try std.fmt.bufPrint(&directors_buf, "{d}", .{stats.total_directors});
+
+    var actors_buf: [32]u8 = undefined;
+    const actors_str = try std.fmt.bufPrint(&actors_buf, "{d}", .{stats.total_actors});
 
     var users_buf: [32]u8 = undefined;
     const users_str = try std.fmt.bufPrint(&users_buf, "{d}", .{stats.total_users});
@@ -35,6 +41,8 @@ pub fn serveAdminPage(request: *std.http.Server.Request, allocator: std.mem.Allo
         .TOTAL_SHOWS = shows_str,
         .TOTAL_EPISODES = episodes_str,
         .TOTAL_OTHER_FILES = other_str,
+        .TOTAL_DIRECTORS = directors_str,
+        .TOTAL_ACTORS = actors_str,
         .TOTAL_USERS = users_str,
         .TOTAL_UNMATCHED = unmatched_str,
         .TOTAL_STORAGE = storage_str,
