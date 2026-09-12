@@ -405,6 +405,15 @@ pub fn getPeopleMissingDetails(
     return cat.getPeopleMissingDetails(allocator);
 }
 
+pub fn getPeopleNeedingRefresh(
+    database: *db_mod.Database,
+    allocator: std.mem.Allocator,
+    base_ttl_seconds: i64,
+) ![]db_mod.schema.Person {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    return cat.getPeopleNeedingRefresh(allocator, base_ttl_seconds);
+}
+
 pub fn savePersonDetails(
     database: *db_mod.Database,
     person_id: i64,
@@ -424,4 +433,13 @@ pub fn markPersonDetailsFetched(database: *db_mod.Database, person_id: i64) void
     const cat = database.catalog orelse return;
     cat.markPersonDetailsFetched(person_id);
     cat.snapshot() catch {};
+}
+
+pub fn getPersonDetails(
+    database: *db_mod.Database,
+    allocator: std.mem.Allocator,
+    person_id: i64,
+) !?std.json.Parsed(db_mod.schema.PersonDetails) {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    return cat.getPersonDetails(allocator, person_id);
 }

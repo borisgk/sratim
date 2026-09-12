@@ -24,6 +24,7 @@
                 <div class="person-title-row">
                     <h1 class="person-title">__PERSON_NAME__</h1>
                     <div class="person-badge">__PERSON_ROLE__</div>
+                    __PERSON_REFRESH_BTN__
                 </div>
                 __PERSON_META_HTML__
                 <div class="person-stats">__MOVIES_COUNT__ in your library</div>
@@ -99,6 +100,31 @@
             } else {
                 initBioToggle();
             }
+
+            window.refreshPerson = function(btn, personId) {
+                if (!btn || btn.classList.contains('is-loading')) return;
+                btn.classList.add('is-loading');
+                var originalHtml = btn.innerHTML;
+                btn.innerHTML = '<svg class="refresh-icon spinning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="14" height="14"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg> <span>Refreshing...</span>';
+                btn.disabled = true;
+
+                fetch('/api/metadata/person/refresh?id=' + encodeURIComponent(personId), {
+                    method: 'POST'
+                })
+                .then(function(res) {
+                    if (!res.ok) throw new Error('Refresh failed (HTTP ' + res.status + ')');
+                    return res.json();
+                })
+                .then(function() {
+                    window.location.reload();
+                })
+                .catch(function(err) {
+                    alert('Failed to refresh person data: ' + err.message);
+                    btn.innerHTML = originalHtml;
+                    btn.classList.remove('is-loading');
+                    btn.disabled = false;
+                });
+            };
         })();
     </script>
 </body>

@@ -16,40 +16,15 @@ pub fn addOrUpdatePerson(self: *SratimStorage, person: schema.Person) !void {
         existing.name = try self.allocator.dupe(u8, person.name);
         existing.profile_path = if (person.profile_path) |p| try self.allocator.dupe(u8, p) else null;
         existing.known_for_department = if (person.known_for_department) |d| try self.allocator.dupe(u8, d) else null;
-
-        // Preserve or update extended fields
-        if (person.biography) |b| {
-            if (existing.biography) |old_b| self.allocator.free(old_b);
-            existing.biography = try self.allocator.dupe(u8, b);
-        }
-        if (person.birthday) |b| {
-            if (existing.birthday) |old_b| self.allocator.free(old_b);
-            existing.birthday = try self.allocator.dupe(u8, b);
-        }
-        if (person.deathday) |d| {
-            if (existing.deathday) |old_d| self.allocator.free(old_d);
-            existing.deathday = try self.allocator.dupe(u8, d);
-        }
-        if (person.place_of_birth) |p| {
-            if (existing.place_of_birth) |old_p| self.allocator.free(old_p);
-            existing.place_of_birth = try self.allocator.dupe(u8, p);
-        }
-        if (person.imdb_id) |i| {
-            if (existing.imdb_id) |old_i| self.allocator.free(old_i);
-            existing.imdb_id = try self.allocator.dupe(u8, i);
-        }
-        if (person.filmography_json) |f| {
-            if (existing.filmography_json) |old_f| self.allocator.free(old_f);
-            existing.filmography_json = try self.allocator.dupe(u8, f);
-        }
         existing.details_fetched = person.details_fetched or existing.details_fetched;
+        if (person.details_updated_at != 0) existing.details_updated_at = person.details_updated_at;
     } else {
         const cloned = try person.clone(self.allocator);
         try self.people.put(cloned.id, cloned);
     }
 }
 
-/// Saves full details (bio, birth/death, place of birth, IMDb, and filmography) for a person.
+/// Saves full details (bio, birth/death, place of birth, IMDb, and filmography) to cold disk storage.
 pub fn savePersonDetails(
     self: *SratimStorage,
     person_id: i64,
@@ -60,25 +35,67 @@ pub fn savePersonDetails(
     imdb_id: ?[]const u8,
     filmography_json: ?[]const u8,
 ) !void {
+    // 1. Write cold details to disk under {persons_dir}/{person_id}.json
+    std.Io.Dir.cwd().createDirPath(self.io, self.persons_dir) catch {};
+
+    const details = schema.PersonDetails{
+        .biography = biography,
+        .birthday = birthday,
+        .deathday = deathday,
+        .place_of_birth = place_of_birth,
+        .imdb_id = imdb_id,
+        .filmography_json = filmography_json,
+    };
+
+    const json_str = try std.json.Stringify.valueAlloc(self.allocator, details, .{});
+    defer self.allocator.free(json_str);
+
+    const dest_path = try std.fmt.allocPrint(self.allocator, "{s}/{d}.json", .{ self.persons_dir, person_id });
+    defer self.allocator.free(dest_path);
+
+    const tmp_path = try std.fmt.allocPrint(self.allocator, "{s}/{d}.json.tmp", .{ self.persons_dir, person_id });
+    defer self.allocator.free(tmp_path);
+
+    const file = try std.Io.Dir.cwd().createFile(self.io, tmp_path, .{});
+    defer file.close(self.io);
+    var buf: [4096]u8 = undefined;
+    var writer = file.writer(self.io, &buf);
+    try writer.interface.writeAll(json_str);
+    try writer.interface.flush();
+
+    try std.Io.Dir.cwd().rename(tmp_path, std.Io.Dir.cwd(), dest_path, self.io);
+
+    // 2. Update hot in-memory Person flags
     self.writeLock();
     defer self.writeUnlock();
 
     if (self.people.getPtr(person_id)) |existing| {
-        if (existing.biography) |b| self.allocator.free(b);
-        if (existing.birthday) |b| self.allocator.free(b);
-        if (existing.deathday) |d| self.allocator.free(d);
-        if (existing.place_of_birth) |p| self.allocator.free(p);
-        if (existing.imdb_id) |i| self.allocator.free(i);
-        if (existing.filmography_json) |f| self.allocator.free(f);
-
-        existing.biography = if (biography) |b| try self.allocator.dupe(u8, b) else null;
-        existing.birthday = if (birthday) |b| try self.allocator.dupe(u8, b) else null;
-        existing.deathday = if (deathday) |d| try self.allocator.dupe(u8, d) else null;
-        existing.place_of_birth = if (place_of_birth) |p| try self.allocator.dupe(u8, p) else null;
-        existing.imdb_id = if (imdb_id) |i| try self.allocator.dupe(u8, i) else null;
-        existing.filmography_json = if (filmography_json) |f| try self.allocator.dupe(u8, f) else null;
         existing.details_fetched = true;
+        existing.details_updated_at = self.now();
     }
+}
+
+/// Reads person details from disk on-demand (cold storage tier).
+/// Returns a parsed PersonDetails JSON structure whose memory is freed via parsed.deinit().
+pub fn getPersonDetails(
+    self: *SratimStorage,
+    allocator: std.mem.Allocator,
+    person_id: i64,
+) !?std.json.Parsed(schema.PersonDetails) {
+    const file_path = try std.fmt.allocPrint(allocator, "{s}/{d}.json", .{ self.persons_dir, person_id });
+    defer allocator.free(file_path);
+
+    const content = std.Io.Dir.cwd().readFileAlloc(self.io, file_path, allocator, std.Io.Limit.limited(10 * 1024 * 1024)) catch |err| {
+        if (err == error.FileNotFound) return null;
+        return err;
+    };
+    defer allocator.free(content);
+
+    const parsed = try std.json.parseFromSlice(schema.PersonDetails, allocator, content, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    });
+    return parsed;
 }
 
 /// Marks person details as fetched even if no bio or additional data exists on TMDB.
@@ -88,7 +105,49 @@ pub fn markPersonDetailsFetched(self: *SratimStorage, person_id: i64) void {
 
     if (self.people.getPtr(person_id)) |existing| {
         existing.details_fetched = true;
+        existing.details_updated_at = self.now();
     }
+}
+
+fn personRefreshLessThan(_: void, a: schema.Person, b: schema.Person) bool {
+    // Unfetched items (details_updated_at == 0) have highest priority
+    if (a.details_updated_at == 0 and b.details_updated_at != 0) return true;
+    if (a.details_updated_at != 0 and b.details_updated_at == 0) return false;
+    // For items with timestamps, oldest timestamp first
+    return a.details_updated_at < b.details_updated_at;
+}
+
+/// Returns a cloned slice of all persons who need their details fetched or refreshed.
+/// Applies an anti-stampede jitter: base_ttl_seconds +/- 10 days based on TMDB person ID.
+/// Results are sorted so unfetched records appear first, followed by the oldest fetched records.
+pub fn getPeopleNeedingRefresh(self: *SratimStorage, allocator: std.mem.Allocator, base_ttl_seconds: i64) ![]schema.Person {
+    self.readLock();
+    defer self.readUnlock();
+
+    const now = self.now();
+    var list = std.ArrayList(schema.Person).empty;
+    errdefer {
+        for (list.items) |*p| p.deinit(allocator);
+        list.deinit(allocator);
+    }
+
+    var it = self.people.iterator();
+    while (it.next()) |e| {
+        const p = e.value_ptr;
+        // Jitter: map ID mod 21 to [-10, +10] days in seconds
+        const jitter_days = @mod(p.id, 21) - 10;
+        const effective_ttl = base_ttl_seconds + (jitter_days * 86400);
+
+        const needs_refresh = (!p.details_fetched or p.details_updated_at == 0 or (now - p.details_updated_at) > effective_ttl);
+        if (needs_refresh) {
+            const cloned = try p.clone(allocator);
+            try list.append(allocator, cloned);
+        }
+    }
+
+    std.mem.sort(schema.Person, list.items, {}, personRefreshLessThan);
+
+    return list.toOwnedSlice(allocator);
 }
 
 /// Returns a cloned slice of all persons who have not had their details fetched yet.
@@ -97,11 +156,14 @@ pub fn getPeopleMissingDetails(self: *SratimStorage, allocator: std.mem.Allocato
     defer self.readUnlock();
 
     var list = std.ArrayList(schema.Person).empty;
-    defer list.deinit(allocator);
+    errdefer {
+        for (list.items) |*p| p.deinit(allocator);
+        list.deinit(allocator);
+    }
 
     var it = self.people.iterator();
     while (it.next()) |e| {
-        if (!e.value_ptr.details_fetched) {
+        if (!e.value_ptr.details_fetched or e.value_ptr.details_updated_at == 0) {
             const cloned = try e.value_ptr.clone(allocator);
             try list.append(allocator, cloned);
         }

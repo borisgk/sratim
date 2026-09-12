@@ -454,7 +454,7 @@ test "analytics: empty logs report" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    var cat = engine.SratimStorage.init(allocator, io, "tmp/test_analytics_cat.json", "tmp/test_analytics_cat.wal");
+    var cat = engine.SratimStorage.init(allocator, io, "tmp/test_analytics_cat.json", "tmp/test_analytics_cat.wal", "tmp/test_analytics_cat_persons");
     defer cat.deinit();
 
     var logs = logs_engine.LogsStorage.init(allocator, io, "tmp/test_analytics_logs.json", "tmp/test_analytics_logs.wal");
@@ -476,7 +476,7 @@ test "analytics: watch time aggregation and leaderboard sorting" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    var cat = engine.SratimStorage.init(allocator, io, "tmp/test_analytics_cat2.json", "tmp/test_analytics_cat2.wal");
+    var cat = engine.SratimStorage.init(allocator, io, "tmp/test_analytics_cat2.json", "tmp/test_analytics_cat2.wal", "tmp/test_analytics_cat2_persons");
     defer cat.deinit();
 
     // Seed movies

@@ -286,25 +286,35 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
             }
         }
 
-        // Backfill person details & filmography
-        const missing_people = metadata_mod.getPeopleMissingDetails(database, allocator) catch |err| {
-            std.debug.print("TMDB fetcher error querying missing person details: {}\n", .{err});
+        // Backfill / Refresh person details & filmography (30-day base TTL with jitter)
+        const refresh_people = metadata_mod.getPeopleNeedingRefresh(database, allocator, 30 * 24 * 3600) catch |err| {
+            std.debug.print("TMDB fetcher error querying person refresh candidates: {}\n", .{err});
             io.sleep(std.Io.Duration.fromSeconds(30), .awake) catch {};
             continue;
         };
         defer {
-            for (missing_people) |*p| {
+            for (refresh_people) |*p| {
                 var mut_p = p.*;
                 mut_p.deinit(allocator);
             }
-            allocator.free(missing_people);
+            allocator.free(refresh_people);
         }
 
-        if (missing_people.len > 0) {
-            std.debug.print("TMDB fetcher found {d} persons needing details backfill.\n", .{missing_people.len});
-            for (missing_people, 0..) |person, idx| {
-                std.debug.print("TMDB backfilling person details [{d}/{d}]: {s} (ID {d})\n", .{
-                    idx + 1, missing_people.len, person.name, person.id,
+        if (refresh_people.len > 0) {
+            std.debug.print("TMDB fetcher found {d} persons needing details backfill or refresh.\n", .{refresh_people.len});
+            var stale_count: usize = 0;
+            const max_stale_per_pass: usize = 10;
+
+            for (refresh_people, 0..) |person, idx| {
+                const is_stale = person.details_updated_at != 0;
+                if (is_stale) {
+                    if (stale_count >= max_stale_per_pass) continue;
+                    stale_count += 1;
+                }
+
+                std.debug.print("TMDB {s} person details [{d}/{d}]: {s} (ID {d})\n", .{
+                    if (is_stale) "refreshing" else "backfilling",
+                    idx + 1, refresh_people.len, person.name, person.id,
                 });
 
                 if (tmdb.fetchPersonDetails(allocator, io, person.id, token, proxy_url)) |details_parsed| {

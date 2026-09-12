@@ -2168,6 +2168,45 @@ p.subtitle {
     letter-spacing: 0.05em;
 }
 
+.person-refresh-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    background: rgba(255, 255, 255, 0.05);
+    color: #9ca3af;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.person-refresh-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    border-color: rgba(255, 255, 255, 0.25);
+    transform: translateY(-1px);
+}
+
+.person-refresh-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.person-refresh-btn .refresh-icon {
+    transition: transform 0.2s ease;
+}
+
+.person-refresh-btn:hover:not(:disabled) .refresh-icon:not(.spinning) {
+    transform: rotate(45deg);
+}
+
+.refresh-icon.spinning {
+    animation: spin 1s linear infinite;
+}
+
 .person-meta {
     display: flex;
     align-items: center;

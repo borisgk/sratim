@@ -3,7 +3,41 @@ const schema = @import("schema.zig");
 const engine = @import("engine.zig");
 const SratimStorage = engine.SratimStorage;
 
+pub const SnapshotPerson = struct {
+    id: i64,
+    name: []const u8,
+    profile_path: ?[]const u8 = null,
+    known_for_department: ?[]const u8 = null,
+    details_fetched: bool = false,
+    details_updated_at: i64 = 0,
+    // Legacy snapshot fields for migration:
+    biography: ?[]const u8 = null,
+    birthday: ?[]const u8 = null,
+    deathday: ?[]const u8 = null,
+    place_of_birth: ?[]const u8 = null,
+    imdb_id: ?[]const u8 = null,
+    filmography_json: ?[]const u8 = null,
+};
+
 pub const SnapshotData = struct {
+    version: u32 = 1,
+    next_user_id: i64 = 1,
+    next_library_id: i64 = 1,
+    next_movie_id: i64 = 1,
+    next_show_id: i64 = 1,
+    next_episode_id: i64 = 1,
+    next_credit_id: i64 = 1,
+    users: []const schema.User = &.{},
+    sessions: []const schema.Session = &.{},
+    libraries: []const schema.Library = &.{},
+    movies: []const schema.Movie = &.{},
+    shows: []const schema.Show = &.{},
+    episodes: []const schema.Episode = &.{},
+    people: []const SnapshotPerson = &.{},
+    movie_credits: []const schema.MovieCredit = &.{},
+};
+
+pub const SnapshotWriteData = struct {
     version: u32 = 1,
     next_user_id: i64 = 1,
     next_library_id: i64 = 1,
@@ -65,7 +99,7 @@ pub fn snapshot(self: *SratimStorage) !void {
     var cr_it = self.movie_credits.iterator();
     while (cr_it.next()) |e| try cr_list.append(self.allocator, e.value_ptr.*);
 
-    const snap = SnapshotData{
+    const snap = SnapshotWriteData{
         .version = 1,
         .next_user_id = self.next_user_id,
         .next_library_id = self.next_library_id,
@@ -158,8 +192,45 @@ pub fn load(self: *SratimStorage) !bool {
         try self.episodes.put(cloned.id, cloned);
     }
     for (val.people) |p| {
-        const cloned = try p.clone(self.allocator);
-        try self.people.put(cloned.id, cloned);
+        // Automatic migration of legacy details to cold disk storage
+        if (p.biography != null or p.filmography_json != null) {
+            std.Io.Dir.cwd().createDirPath(self.io, self.persons_dir) catch {};
+            const dest_path = std.fmt.allocPrint(self.allocator, "{s}/{d}.json", .{ self.persons_dir, p.id }) catch null;
+            if (dest_path) |dp| {
+                defer self.allocator.free(dp);
+                const file_exists = if (std.Io.Dir.cwd().statFile(self.io, dp, .{})) |_| true else |_| false;
+                if (!file_exists) {
+                    const details = schema.PersonDetails{
+                        .biography = p.biography,
+                        .birthday = p.birthday,
+                        .deathday = p.deathday,
+                        .place_of_birth = p.place_of_birth,
+                        .imdb_id = p.imdb_id,
+                        .filmography_json = p.filmography_json,
+                    };
+                    if (std.json.Stringify.valueAlloc(self.allocator, details, .{})) |json_str| {
+                        defer self.allocator.free(json_str);
+                        if (std.Io.Dir.cwd().createFile(self.io, dp, .{})) |f| {
+                            defer f.close(self.io);
+                            var buf: [4096]u8 = undefined;
+                            var w = f.writer(self.io, &buf);
+                            w.interface.writeAll(json_str) catch {};
+                            w.interface.flush() catch {};
+                        } else |_| {}
+                    } else |_| {}
+                }
+            }
+        }
+
+        const person_hot = schema.Person{
+            .id = p.id,
+            .name = try self.allocator.dupe(u8, p.name),
+            .profile_path = if (p.profile_path) |pr| try self.allocator.dupe(u8, pr) else null,
+            .known_for_department = if (p.known_for_department) |d| try self.allocator.dupe(u8, d) else null,
+            .details_fetched = p.details_fetched,
+            .details_updated_at = p.details_updated_at,
+        };
+        try self.people.put(person_hot.id, person_hot);
     }
     for (val.movie_credits) |cr| {
         const cloned = try cr.clone(self.allocator);

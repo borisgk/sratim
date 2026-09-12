@@ -1,5 +1,6 @@
 const std = @import("std");
 const db_mod = @import("../../db/db.zig");
+const schema = @import("../../storage/schema.zig");
 const metadata_mod = @import("../../db/metadata.zig");
 const logging_mod = @import("../../db/logging.zig");
 const cards = @import("cards.zig");
@@ -25,8 +26,12 @@ pub fn generatePersonHtml(
     var person = person_opt.?;
     defer person.deinit(allocator);
 
-    // On-demand fallback fetch if details have not been fetched yet
-    if (!person.details_fetched) {
+    // Load cold person details from disk on-demand
+    var details_parsed_opt = metadata_mod.getPersonDetails(database, allocator, person_id) catch null;
+    defer if (details_parsed_opt) |*dp| dp.deinit();
+
+    // On-demand fallback fetch if details have not been fetched yet or missing from disk
+    if (!person.details_fetched or person.details_updated_at == 0 or details_parsed_opt == null) {
         const token = config.getTmdbToken();
         if (token.len > 0) {
             if (tmdb.fetchPersonDetails(allocator, io, person.id, token, config.tmdb_proxy)) |parsed| {
@@ -55,11 +60,17 @@ pub fn generatePersonHtml(
                     person.deinit(allocator);
                     person = updated;
                 }
+
+                // Re-read cold details from disk
+                if (details_parsed_opt) |*dp| dp.deinit();
+                details_parsed_opt = metadata_mod.getPersonDetails(database, allocator, person_id) catch null;
             } else |_| {
                 metadata_mod.markPersonDetailsFetched(database, person.id);
             }
         }
     }
+
+    const details_opt: ?schema.PersonDetails = if (details_parsed_opt) |dp| dp.value else null;
 
     const credits = try metadata_mod.getCreditsByPerson(database, allocator, person_id);
     defer {
@@ -148,47 +159,49 @@ pub fn generatePersonHtml(
     var meta_items_buf = std.ArrayList(u8).empty;
     defer meta_items_buf.deinit(allocator);
 
-    if (person.birthday) |b| {
-        if (b.len > 0) {
-            try meta_items_buf.appendSlice(allocator, "        <div class=\"person-meta-item\"><span class=\"person-meta-label\">Born:</span> <span class=\"person-meta-val\">");
-            try utils.escapeHtml(&meta_items_buf, allocator, b);
-            try meta_items_buf.appendSlice(allocator, "</span></div>\n");
+    if (details_opt) |det| {
+        if (det.birthday) |b| {
+            if (b.len > 0) {
+                try meta_items_buf.appendSlice(allocator, "        <div class=\"person-meta-item\"><span class=\"person-meta-label\">Born:</span> <span class=\"person-meta-val\">");
+                try utils.escapeHtml(&meta_items_buf, allocator, b);
+                try meta_items_buf.appendSlice(allocator, "</span></div>\n");
+            }
         }
-    }
 
-    if (person.deathday) |d| {
-        if (d.len > 0) {
-            try meta_items_buf.appendSlice(allocator, "        <div class=\"person-meta-item\"><span class=\"person-meta-label\">Died:</span> <span class=\"person-meta-val\">");
-            try utils.escapeHtml(&meta_items_buf, allocator, d);
-            try meta_items_buf.appendSlice(allocator, "</span></div>\n");
+        if (det.deathday) |d| {
+            if (d.len > 0) {
+                try meta_items_buf.appendSlice(allocator, "        <div class=\"person-meta-item\"><span class=\"person-meta-label\">Died:</span> <span class=\"person-meta-val\">");
+                try utils.escapeHtml(&meta_items_buf, allocator, d);
+                try meta_items_buf.appendSlice(allocator, "</span></div>\n");
+            }
         }
-    }
 
-    if (person.place_of_birth) |pob| {
-        if (pob.len > 0) {
-            try meta_items_buf.appendSlice(allocator, "        <div class=\"person-meta-item\"><span class=\"person-meta-label\">Birthplace:</span> <span class=\"person-meta-val\">");
-            try utils.escapeHtml(&meta_items_buf, allocator, pob);
-            try meta_items_buf.appendSlice(allocator, "</span></div>\n");
+        if (det.place_of_birth) |pob| {
+            if (pob.len > 0) {
+                try meta_items_buf.appendSlice(allocator, "        <div class=\"person-meta-item\"><span class=\"person-meta-label\">Birthplace:</span> <span class=\"person-meta-val\">");
+                try utils.escapeHtml(&meta_items_buf, allocator, pob);
+                try meta_items_buf.appendSlice(allocator, "</span></div>\n");
+            }
         }
-    }
 
-    if (person.imdb_id) |imdb| {
-        if (imdb.len > 0) {
-            const imdb_html = try std.fmt.allocPrint(allocator,
-                \\        <div class="person-meta-item">
-                \\            <a href="https://www.imdb.com/name/{s}" target="_blank" rel="noopener noreferrer" class="person-imdb-link" title="View on IMDb">
-                \\                IMDb
-                \\                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="11" height="11">
-                \\                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                \\                    <polyline points="15 3 21 3 21 9"></polyline>
-                \\                    <line x1="10" y1="14" x2="21" y2="3"></line>
-                \\                </svg>
-                \\            </a>
-                \\        </div>
-                \\
-            , .{imdb});
-            defer allocator.free(imdb_html);
-            try meta_items_buf.appendSlice(allocator, imdb_html);
+        if (det.imdb_id) |imdb| {
+            if (imdb.len > 0) {
+                const imdb_html = try std.fmt.allocPrint(allocator,
+                    \\        <div class="person-meta-item">
+                    \\            <a href="https://www.imdb.com/name/{s}" target="_blank" rel="noopener noreferrer" class="person-imdb-link" title="View on IMDb">
+                    \\                IMDb
+                    \\                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="11" height="11">
+                    \\                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                    \\                    <polyline points="15 3 21 3 21 9"></polyline>
+                    \\                    <line x1="10" y1="14" x2="21" y2="3"></line>
+                    \\                </svg>
+                    \\            </a>
+                    \\        </div>
+                    \\
+                , .{imdb});
+                defer allocator.free(imdb_html);
+                try meta_items_buf.appendSlice(allocator, imdb_html);
+            }
         }
     }
 
@@ -220,27 +233,29 @@ pub fn generatePersonHtml(
     var bio_buf = std.ArrayList(u8).empty;
     defer bio_buf.deinit(allocator);
 
-    if (person.biography) |bio| {
-        if (bio.len > 0) {
-            try bio_buf.appendSlice(allocator,
-                \\    <div class="person-bio-wrapper">
-                \\        <div class="person-bio-heading">Biography</div>
-                \\        <div class="person-bio-text is-clamped" id="person-bio-text">
-            );
-            try utils.escapeHtml(&bio_buf, allocator, bio);
-            try bio_buf.appendSlice(allocator,
-                \\</div>
-                \\        <div class="bio-toggle-wrapper">
-                \\            <button type="button" class="bio-toggle-btn" id="bio-toggle-btn" aria-expanded="false">
-                \\                Read More
-                \\                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14">
-                \\                    <polyline points="6 9 12 15 18 9"></polyline>
-                \\                </svg>
-                \\            </button>
-                \\        </div>
-                \\    </div>
-                \\
-            );
+    if (details_opt) |det| {
+        if (det.biography) |bio| {
+            if (bio.len > 0) {
+                try bio_buf.appendSlice(allocator,
+                    \\    <div class="person-bio-wrapper">
+                    \\        <div class="person-bio-heading">Biography</div>
+                    \\        <div class="person-bio-text is-clamped" id="person-bio-text">
+                );
+                try utils.escapeHtml(&bio_buf, allocator, bio);
+                try bio_buf.appendSlice(allocator,
+                    \\</div>
+                    \\        <div class="bio-toggle-wrapper">
+                    \\            <button type="button" class="bio-toggle-btn" id="bio-toggle-btn" aria-expanded="false">
+                    \\                Read More
+                    \\                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14">
+                    \\                    <polyline points="6 9 12 15 18 9"></polyline>
+                    \\                </svg>
+                    \\            </button>
+                    \\        </div>
+                    \\    </div>
+                    \\
+                );
+            }
         }
     }
 
@@ -339,7 +354,8 @@ pub fn generatePersonHtml(
     var filmography_section_buf = std.ArrayList(u8).empty;
     defer filmography_section_buf.deinit(allocator);
 
-    if (person.filmography_json) |fj| {
+    const filmo_json_opt: ?[]const u8 = if (details_opt) |det| det.filmography_json else null;
+    if (filmo_json_opt) |fj| {
         if (fj.len > 0) {
             const parsed_filmo = std.json.parseFromSlice([]tmdb.FilmographyItem, allocator, fj, .{
                 .allocate = .alloc_always,
@@ -470,6 +486,19 @@ pub fn generatePersonHtml(
     });
     defer allocator.free(count_str);
 
+    var refresh_btn_html: []const u8 = "";
+    if (is_admin) {
+        refresh_btn_html = try std.fmt.allocPrint(allocator,
+            \\<button type="button" class="btn btn-secondary person-refresh-btn" onclick="refreshPerson(this, {d})" title="Refresh metadata and filmography from TMDB">
+            \\    <svg class="refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="14" height="14">
+            \\        <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+            \\    </svg>
+            \\    <span>Refresh</span>
+            \\</button>
+        , .{person.id});
+    }
+    defer if (is_admin and refresh_btn_html.len > 0) allocator.free(refresh_btn_html);
+
     var html = std.ArrayList(u8).empty;
     defer html.deinit(allocator);
     try html.appendSlice(allocator, template);
@@ -483,6 +512,7 @@ pub fn generatePersonHtml(
         .{ "__MOVIES_COUNT__", count_str },
         .{ "__PERSON_META_HTML__", meta_buf.items },
         .{ "__PERSON_BIO_HTML__", bio_buf.items },
+        .{ "__PERSON_REFRESH_BTN__", refresh_btn_html },
         .{ "__PERSON_DIRECTED_SECTION__", directed_section_buf.items },
         .{ "__PERSON_STARRING_SECTION__", starring_section_buf.items },
         .{ "__PERSON_FILMOGRAPHY_SECTION__", filmography_section_buf.items },

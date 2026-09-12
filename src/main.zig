@@ -42,10 +42,11 @@ pub fn main() !void {
     // Pure-Zig Storage paths
     const sratim_json_path = if (std.mem.eql(u8, config_path, "config.json")) "sratim.json" else "/var/lib/sratim/sratim.json";
     const sratim_wal_path = if (std.mem.eql(u8, config_path, "config.json")) "sratim.wal" else "/var/lib/sratim/sratim.wal";
+    const persons_dir = if (std.mem.eql(u8, config_path, "config.json")) ".sratim/persons" else "/var/lib/sratim/persons";
     const logs_json_path = if (std.mem.eql(u8, config_path, "config.json")) "logs.json" else "/var/lib/sratim/logs.json";
     const logs_wal_path = if (std.mem.eql(u8, config_path, "config.json")) "logs.wal" else "/var/lib/sratim/logs.wal";
 
-    var sratim_storage = db_mod.engine.SratimStorage.init(std.heap.c_allocator, io, sratim_json_path, sratim_wal_path);
+    var sratim_storage = db_mod.engine.SratimStorage.init(std.heap.c_allocator, io, sratim_json_path, sratim_wal_path, persons_dir);
     defer sratim_storage.deinit();
 
     var logs_storage = db_mod.logs_engine.LogsStorage.init(std.heap.c_allocator, io, logs_json_path, logs_wal_path);

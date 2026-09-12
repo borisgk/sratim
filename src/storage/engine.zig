@@ -10,6 +10,7 @@ pub const SratimStorage = struct {
     io: std.Io,
     file_path: []const u8,
     wal_path: []const u8,
+    persons_dir: []const u8,
     rwlock: std.Io.RwLock = .init,
 
     users: std.StringHashMap(schema.User),
@@ -45,12 +46,13 @@ pub const SratimStorage = struct {
         return std.Io.Timestamp.now(self.io, .real).toSeconds();
     }
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, file_path: []const u8, wal_path: []const u8) SratimStorage {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, file_path: []const u8, wal_path: []const u8, persons_dir: []const u8) SratimStorage {
         return .{
             .allocator = allocator,
             .io = io,
             .file_path = file_path,
             .wal_path = wal_path,
+            .persons_dir = persons_dir,
             .users = std.StringHashMap(schema.User).init(allocator),
             .sessions = std.StringHashMap(schema.Session).init(allocator),
             .libraries = std.AutoHashMap(i64, schema.Library).init(allocator),
@@ -192,4 +194,6 @@ pub const SratimStorage = struct {
     pub const savePersonDetails = credits_mod.savePersonDetails;
     pub const markPersonDetailsFetched = credits_mod.markPersonDetailsFetched;
     pub const getPeopleMissingDetails = credits_mod.getPeopleMissingDetails;
+    pub const getPeopleNeedingRefresh = credits_mod.getPeopleNeedingRefresh;
+    pub const getPersonDetails = credits_mod.getPersonDetails;
 };

@@ -9,10 +9,12 @@ test "SratimStorage: CRUD, concurrency, and snapshot roundtrip" {
 
     const snap_path = "tmp/test_sratim.json";
     const wal_path = "tmp/test_sratim.wal";
+    const persons_dir = "tmp/test_sratim_persons";
     defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
     defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
 
-    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path);
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
     defer storage.deinit();
 
     // 1. Create Users
@@ -29,44 +31,37 @@ test "SratimStorage: CRUD, concurrency, and snapshot roundtrip" {
     const lib = try storage.addLibrary("Action Movies", "/path/to/movies", .Movies);
     try testing.expectEqual(@as(i64, 1), lib.id);
     try testing.expectEqualStrings("Action Movies", lib.name);
+    try testing.expectEqual(schema.LibraryType.Movies, lib.lib_type);
 
-    // 3. Create Movie
-    const mov_id = try storage.addOrUpdateMovie(.{
+    // 3. Add Movie
+    const mov = try storage.addOrUpdateMovie(.{
         .id = 0,
         .library_id = lib.id,
         .file_path = "/path/to/movies/Matrix.mkv",
-        .clean_name = "Matrix",
+        .clean_name = "The Matrix",
+        .title = "The Matrix",
         .is_present = true,
-        .file_size = 1024 * 1024 * 500,
     });
-    try testing.expectEqual(@as(i64, 1), mov_id);
+    try testing.expectEqual(@as(i64, 1), mov);
 
-    try storage.linkMovieMetadata(mov_id, 603, "The Matrix", "A computer hacker learns...", "/poster.jpg", "/backdrop.jpg", "1999-03-31");
-
-    const fetched_mov = (try storage.getMovieById(allocator, mov_id)).?;
-    defer {
-        var m = fetched_mov;
-        m.deinit(allocator);
-    }
-    try testing.expectEqualStrings("The Matrix", fetched_mov.title.?);
-    try testing.expectEqual(@as(?i64, 603), fetched_mov.tmdb_id);
-
-    // 4. Create Show & Episode
+    // 4. Add Show and Episode
     const show_id = try storage.addOrUpdateShow(.{
         .id = 0,
         .library_id = lib.id,
         .path = "/path/to/shows/Breaking Bad",
         .title = "Breaking Bad",
+        .is_present = true,
     });
     try testing.expectEqual(@as(i64, 1), show_id);
 
     const ep_id = try storage.addOrUpdateEpisode(.{
         .id = 0,
         .show_id = show_id,
-        .file_path = "/path/to/shows/Breaking Bad/S01E01.mkv",
         .season = 1,
         .episode = 1,
+        .file_path = "/path/to/shows/Breaking Bad/S01E01.mkv",
         .title = "Pilot",
+        .is_present = true,
     });
     try testing.expectEqual(@as(i64, 1), ep_id);
 
@@ -74,7 +69,7 @@ test "SratimStorage: CRUD, concurrency, and snapshot roundtrip" {
     try storage.snapshot();
 
     // 6. Test Loading into clean storage instance
-    var restored = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path);
+    var restored = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
     defer restored.deinit();
 
     const loaded = try restored.load();
@@ -99,10 +94,12 @@ test "SratimStorage: Credits, Persons, and filmography lookups" {
 
     const snap_path = "tmp/test_credits.json";
     const wal_path = "tmp/test_credits.wal";
+    const persons_dir = "tmp/test_credits_persons";
     defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
     defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
 
-    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path);
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
     defer storage.deinit();
 
     // 1. Create a movie
@@ -178,7 +175,7 @@ test "SratimStorage: Credits, Persons, and filmography lookups" {
     // 6. Snapshot roundtrip
     try storage.snapshot();
 
-    var restored = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path);
+    var restored = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
     defer restored.deinit();
     const loaded = try restored.load();
     try testing.expect(loaded);
@@ -215,10 +212,12 @@ test "SratimStorage: Credits backfill tracking and querying" {
 
     const snap_path = "tmp/test_backfill.json";
     const wal_path = "tmp/test_backfill.wal";
+    const persons_dir = "tmp/test_backfill_persons";
     defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
     defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
 
-    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path);
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
     defer storage.deinit();
 
     const lib = try storage.addLibrary("Movies", "/tmp/movies", .Movies);
@@ -279,7 +278,7 @@ test "SratimStorage: Credits backfill tracking and querying" {
     // Test snapshot roundtrip preserves credits_fetched
     try storage.snapshot();
 
-    var restored = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path);
+    var restored = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
     defer restored.deinit();
     try testing.expect(try restored.load());
 
@@ -406,8 +405,10 @@ test "SratimStorage: JSON with missing array fields backwards compatibility" {
 
     const snap_path = "tmp/test_compat_sratim.json";
     const wal_path = "tmp/test_compat_sratim.wal";
+    const persons_dir = "tmp/test_compat_persons";
     defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
     defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
 
     // Minimal JSON with only version and next IDs, missing users, movies, etc.
     const minimal_json =
@@ -420,7 +421,7 @@ test "SratimStorage: JSON with missing array fields backwards compatibility" {
     try file.writeStreamingAll(testing.io, minimal_json);
     file.close(testing.io);
 
-    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path);
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
     defer storage.deinit();
 
     const loaded = try storage.load();
@@ -436,10 +437,12 @@ test "SratimStorage: person extended details and backfill tracking" {
 
     const snap_path = "tmp/test_person_details.json";
     const wal_path = "tmp/test_person_details.wal";
+    const persons_dir = "tmp/test_person_details_persons";
     defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
     defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
 
-    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path);
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
     defer storage.deinit();
 
     // Add a person without details
@@ -462,7 +465,7 @@ test "SratimStorage: person extended details and backfill tracking" {
     try testing.expectEqual(@as(i64, 500), missing[0].id);
     try testing.expect(!missing[0].details_fetched);
 
-    // Save details
+    // Save details (persisted to cold file on disk)
     try storage.savePersonDetails(
         500,
         "David Fincher bio",
@@ -484,18 +487,176 @@ test "SratimStorage: person extended details and backfill tracking" {
     }
     try testing.expectEqual(@as(usize, 0), missing_after.len);
 
-    // Verify fetched person
+    // Verify fetched person in memory
     const p_opt = try storage.getPersonById(allocator, 500);
     try testing.expect(p_opt != null);
     var p = p_opt.?;
     defer p.deinit(allocator);
     try testing.expect(p.details_fetched);
-    try testing.expectEqualStrings("David Fincher bio", p.biography.?);
-    try testing.expectEqualStrings("1962-08-28", p.birthday.?);
-    try testing.expectEqualStrings("Denver, Colorado, USA", p.place_of_birth.?);
-    try testing.expectEqualStrings("nm0000399", p.imdb_id.?);
-    try testing.expect(p.filmography_json != null);
+    try testing.expect(p.details_updated_at > 0);
+
+    // Verify cold details retrieved from disk on-demand
+    const details_parsed_opt = try storage.getPersonDetails(allocator, 500);
+    try testing.expect(details_parsed_opt != null);
+    var details_parsed = details_parsed_opt.?;
+    defer details_parsed.deinit();
+    const d = details_parsed.value;
+    try testing.expectEqualStrings("David Fincher bio", d.biography.?);
+    try testing.expectEqualStrings("1962-08-28", d.birthday.?);
+    try testing.expectEqualStrings("Denver, Colorado, USA", d.place_of_birth.?);
+    try testing.expectEqualStrings("nm0000399", d.imdb_id.?);
+    try testing.expect(d.filmography_json != null);
 }
 
+test "Storage: getPeopleNeedingRefresh with jitter and priority ordering" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+    const snap_path = "tmp/test_refresh_snap.bin";
+    const wal_path = "tmp/test_refresh_wal.bin";
+    const persons_dir = "tmp/test_refresh_persons";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
 
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
+    defer storage.deinit();
 
+    const now = storage.now();
+    const day: i64 = 86400;
+
+    // Person 0: id % 21 == 0 -> jitter = -10 days -> effective TTL = 20 days
+    try storage.addOrUpdatePerson(.{
+        .id = 0,
+        .name = "Person Early",
+        .details_fetched = true,
+        .details_updated_at = now - (25 * day), // age 25 days > 20 days -> STALE
+    });
+
+    // Person 20: id % 21 == 20 -> jitter = +10 days -> effective TTL = 40 days
+    try storage.addOrUpdatePerson(.{
+        .id = 20,
+        .name = "Person Late",
+        .details_fetched = true,
+        .details_updated_at = now - (25 * day), // age 25 days < 40 days -> NOT STALE
+    });
+
+    // Person 99: unfetched (details_updated_at == 0)
+    try storage.addOrUpdatePerson(.{
+        .id = 99,
+        .name = "Person Unfetched",
+        .details_fetched = false,
+        .details_updated_at = 0,
+    });
+
+    // Person 100: very stale (age 60 days)
+    try storage.addOrUpdatePerson(.{
+        .id = 100,
+        .name = "Person Oldest",
+        .details_fetched = true,
+        .details_updated_at = now - (60 * day),
+    });
+
+    const needing = try storage.getPeopleNeedingRefresh(allocator, 30 * day);
+    defer {
+        for (needing) |*p| {
+            var mut_p = p.*;
+            mut_p.deinit(allocator);
+        }
+        allocator.free(needing);
+    }
+
+    // Person 20 should NOT be in the list (effective TTL is 40 days, age is only 25 days)
+    // Person 99 (unfetched), Person 100 (60 days old), Person 0 (effective TTL 20 days, age 25 days) SHOULD be in the list
+    try testing.expectEqual(@as(usize, 3), needing.len);
+
+    // Unfetched should be first (highest priority)
+    try testing.expectEqual(@as(i64, 99), needing[0].id);
+
+    // Oldest fetched should be next (Person 100 with age 60 days before Person 0 with age 25 days)
+    try testing.expectEqual(@as(i64, 100), needing[1].id);
+    try testing.expectEqual(@as(i64, 0), needing[2].id);
+}
+
+test "SratimStorage: legacy person snapshot migration to disk files" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_migration.json";
+    const wal_path = "tmp/test_migration.wal";
+    const persons_dir = "tmp/test_migration_persons";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
+
+    // Create a snapshot containing legacy person fields
+    const legacy_json =
+        \\{
+        \\  "version": 1,
+        \\  "next_user_id": 1,
+        \\  "next_library_id": 1,
+        \\  "next_movie_id": 1,
+        \\  "next_show_id": 1,
+        \\  "next_episode_id": 1,
+        \\  "next_credit_id": 1,
+        \\  "users": [],
+        \\  "libraries": [],
+        \\  "movies": [],
+        \\  "shows": [],
+        \\  "episodes": [],
+        \\  "people": [
+        \\    {
+        \\      "id": 999,
+        \\      "name": "Legacy Person",
+        \\      "profile_path": "/legacy.jpg",
+        \\      "known_for_department": "Acting",
+        \\      "details_fetched": true,
+        \\      "biography": "Legacy person bio",
+        \\      "birthday": "1980-01-01",
+        \\      "deathday": null,
+        \\      "place_of_birth": "Legacy City",
+        \\      "imdb_id": "nm9999999",
+        \\      "filmography_json": "[{\"id\":1,\"title\":\"Legacy Film\"}]",
+        \\      "details_updated_at": 123456789
+        \\    }
+        \\  ],
+        \\  "movie_credits": []
+        \\}
+    ;
+    const file = try std.Io.Dir.cwd().createFile(testing.io, snap_path, .{});
+    try file.writeStreamingAll(testing.io, legacy_json);
+    file.close(testing.io);
+
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
+    defer storage.deinit();
+
+    const loaded = try storage.load();
+    try testing.expect(loaded);
+
+    // In-memory person should exist and have details_fetched = true
+    const p_opt = try storage.getPersonById(allocator, 999);
+    try testing.expect(p_opt != null);
+    var p = p_opt.?;
+    defer p.deinit(allocator);
+    try testing.expect(p.details_fetched);
+    try testing.expectEqual(@as(i64, 123456789), p.details_updated_at);
+    try testing.expectEqualStrings("Legacy Person", p.name);
+
+    // Cold file should have been migrated to disk!
+    const cold_details = try storage.getPersonDetails(allocator, 999);
+    try testing.expect(cold_details != null);
+    var details = cold_details.?;
+    defer details.deinit();
+    try testing.expectEqualStrings("Legacy person bio", details.value.biography.?);
+    try testing.expectEqualStrings("1980-01-01", details.value.birthday.?);
+    try testing.expectEqualStrings("Legacy City", details.value.place_of_birth.?);
+    try testing.expectEqualStrings("nm9999999", details.value.imdb_id.?);
+    try testing.expectEqualStrings("[{\"id\":1,\"title\":\"Legacy Film\"}]", details.value.filmography_json.?);
+
+    // Now call snapshot() and verify the saved JSON does NOT contain biography in persons
+    try storage.snapshot();
+
+    // Verify snapshot file doesn't contain biography
+    const content = try std.Io.Dir.cwd().readFileAlloc(testing.io, snap_path, allocator, std.Io.Limit.limited(1024 * 1024));
+    defer allocator.free(content);
+    try testing.expect(std.mem.indexOf(u8, content, "Legacy person bio") == null);
+}

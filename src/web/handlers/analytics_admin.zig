@@ -223,7 +223,7 @@ test "serializeReportToJson: formats correctly without buffer overflow" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    var cat = engine.SratimStorage.init(allocator, io, "tmp/test_ser_cat.json", "tmp/test_ser_cat.wal");
+    var cat = engine.SratimStorage.init(allocator, io, "tmp/test_ser_cat.json", "tmp/test_ser_cat.wal", "tmp/test_ser_cat_persons");
     defer cat.deinit();
 
     var logs = logs_engine.LogsStorage.init(allocator, io, "tmp/test_ser_logs.json", "tmp/test_ser_logs.wal");

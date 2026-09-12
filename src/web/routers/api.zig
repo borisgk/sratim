@@ -151,5 +151,17 @@ pub fn route(
         return true;
     }
 
+    if (std.mem.startsWith(u8, target, "/api/metadata/person/refresh") and method == .POST) {
+        if (!session_info.is_admin) {
+            try request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden });
+            return true;
+        }
+        metadata_handler.handleApiPersonRefresh(request, allocator, io, database, config, resp_buf) catch |err| {
+            std.debug.print("API Metadata Person Refresh error: {}\n", .{err});
+            try request.respond("Internal Server Error", .{ .status = .internal_server_error });
+        };
+        return true;
+    }
+
     return false;
 }
