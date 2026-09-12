@@ -430,5 +430,72 @@ test "SratimStorage: JSON with missing array fields backwards compatibility" {
     try testing.expectEqual(@as(usize, 0), storage.countMovies());
 }
 
+test "SratimStorage: person extended details and backfill tracking" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_person_details.json";
+    const wal_path = "tmp/test_person_details.wal";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path);
+    defer storage.deinit();
+
+    // Add a person without details
+    try storage.addOrUpdatePerson(.{
+        .id = 500,
+        .name = "David Fincher",
+        .known_for_department = "Directing",
+    });
+
+    // Should be reported in missing details
+    const missing = try storage.getPeopleMissingDetails(allocator);
+    defer {
+        for (missing) |*p| {
+            var mut_p = p.*;
+            mut_p.deinit(allocator);
+        }
+        allocator.free(missing);
+    }
+    try testing.expectEqual(@as(usize, 1), missing.len);
+    try testing.expectEqual(@as(i64, 500), missing[0].id);
+    try testing.expect(!missing[0].details_fetched);
+
+    // Save details
+    try storage.savePersonDetails(
+        500,
+        "David Fincher bio",
+        "1962-08-28",
+        null,
+        "Denver, Colorado, USA",
+        "nm0000399",
+        "[{\"id\":100,\"title\":\"Fight Club\"}]",
+    );
+
+    // Should no longer be missing
+    const missing_after = try storage.getPeopleMissingDetails(allocator);
+    defer {
+        for (missing_after) |*p| {
+            var mut_p = p.*;
+            mut_p.deinit(allocator);
+        }
+        allocator.free(missing_after);
+    }
+    try testing.expectEqual(@as(usize, 0), missing_after.len);
+
+    // Verify fetched person
+    const p_opt = try storage.getPersonById(allocator, 500);
+    try testing.expect(p_opt != null);
+    var p = p_opt.?;
+    defer p.deinit(allocator);
+    try testing.expect(p.details_fetched);
+    try testing.expectEqualStrings("David Fincher bio", p.biography.?);
+    try testing.expectEqualStrings("1962-08-28", p.birthday.?);
+    try testing.expectEqualStrings("Denver, Colorado, USA", p.place_of_birth.?);
+    try testing.expectEqualStrings("nm0000399", p.imdb_id.?);
+    try testing.expect(p.filmography_json != null);
+}
+
 
 

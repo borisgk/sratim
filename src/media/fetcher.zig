@@ -75,14 +75,14 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
                 if (tmdb.fetchMovieCredits(allocator, io, first.id, token, proxy_url)) |credits_parsed| {
                     defer credits_parsed.deinit();
                     const credits = credits_parsed.value;
-                    const cast_limit = @min(credits.cast.len, 10);
+                    const cast_limit = @min(credits.cast.len, 20);
                     for (credits.cast[0..cast_limit]) |c| {
                         if (c.profile_path) |p| {
                             tmdb.downloadProfileImage(allocator, io, p, proxy_url) catch {};
                         }
                     }
                     for (credits.crew) |cr| {
-                        if (std.mem.eql(u8, cr.job, "Director") or std.mem.eql(u8, cr.department, "Directing")) {
+                        if (std.mem.eql(u8, cr.job, "Director")) {
                             if (cr.profile_path) |p| {
                                 tmdb.downloadProfileImage(allocator, io, p, proxy_url) catch {};
                             }
@@ -258,7 +258,7 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
                     const credits = credits_parsed.value;
 
                     // Download profile pictures for top cast
-                    const cast_limit = @min(credits.cast.len, 10);
+                    const cast_limit = @min(credits.cast.len, 20);
                     for (credits.cast[0..cast_limit]) |c| {
                         if (c.profile_path) |p| {
                             tmdb.downloadProfileImage(allocator, io, p, proxy_url) catch {};
@@ -266,7 +266,7 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
                     }
                     // Download profile pictures for directors
                     for (credits.crew) |cr| {
-                        if (std.mem.eql(u8, cr.job, "Director") or std.mem.eql(u8, cr.department, "Directing")) {
+                        if (std.mem.eql(u8, cr.job, "Director")) {
                             if (cr.profile_path) |p| {
                                 tmdb.downloadProfileImage(allocator, io, p, proxy_url) catch {};
                             }
@@ -279,6 +279,60 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
                 } else |err| {
                     std.debug.print("TMDB fetcher error fetching credits for {s}: {}\n", .{ movie.clean_name, err });
                     metadata_mod.markMovieCreditsFetched(database, movie.id);
+                }
+
+                // 1-second interval between TMDB requests
+                io.sleep(std.Io.Duration.fromSeconds(1), .awake) catch {};
+            }
+        }
+
+        // Backfill person details & filmography
+        const missing_people = metadata_mod.getPeopleMissingDetails(database, allocator) catch |err| {
+            std.debug.print("TMDB fetcher error querying missing person details: {}\n", .{err});
+            io.sleep(std.Io.Duration.fromSeconds(30), .awake) catch {};
+            continue;
+        };
+        defer {
+            for (missing_people) |*p| {
+                var mut_p = p.*;
+                mut_p.deinit(allocator);
+            }
+            allocator.free(missing_people);
+        }
+
+        if (missing_people.len > 0) {
+            std.debug.print("TMDB fetcher found {d} persons needing details backfill.\n", .{missing_people.len});
+            for (missing_people, 0..) |person, idx| {
+                std.debug.print("TMDB backfilling person details [{d}/{d}]: {s} (ID {d})\n", .{
+                    idx + 1, missing_people.len, person.name, person.id,
+                });
+
+                if (tmdb.fetchPersonDetails(allocator, io, person.id, token, proxy_url)) |details_parsed| {
+                    defer details_parsed.deinit();
+                    const d = details_parsed.value;
+
+                    var filmography_json: ?[]const u8 = null;
+                    defer if (filmography_json) |fj| allocator.free(fj);
+
+                    if (d.movie_credits) |credits| {
+                        filmography_json = tmdb.buildFilmographyJson(allocator, credits) catch null;
+                    }
+
+                    metadata_mod.savePersonDetails(
+                        database,
+                        person.id,
+                        d.biography,
+                        d.birthday,
+                        d.deathday,
+                        d.place_of_birth,
+                        d.imdb_id,
+                        filmography_json,
+                    ) catch |err| {
+                        std.debug.print("TMDB fetcher error saving person details for {s}: {}\n", .{ person.name, err });
+                    };
+                } else |err| {
+                    std.debug.print("TMDB fetcher error fetching details for {s}: {}\n", .{ person.name, err });
+                    metadata_mod.markPersonDetailsFetched(database, person.id);
                 }
 
                 // 1-second interval between TMDB requests

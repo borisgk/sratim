@@ -314,7 +314,7 @@ pub fn saveMovieCredits(
 
     // Save directors from crew
     for (crew) |cr| {
-        if (std.mem.eql(u8, cr.job, "Director") or std.mem.eql(u8, cr.department, "Directing")) {
+        if (std.mem.eql(u8, cr.job, "Director")) {
             try cat.addOrUpdatePerson(.{
                 .id = cr.id,
                 .name = cr.name,
@@ -395,4 +395,33 @@ pub fn getMoviePeopleNamesMap(
 ) !std.AutoHashMap(i64, []const u8) {
     const cat = database.catalog orelse return error.CatalogNotConfigured;
     return cat.getMoviePeopleNamesMap(allocator);
+}
+
+pub fn getPeopleMissingDetails(
+    database: *db_mod.Database,
+    allocator: std.mem.Allocator,
+) ![]db_mod.schema.Person {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    return cat.getPeopleMissingDetails(allocator);
+}
+
+pub fn savePersonDetails(
+    database: *db_mod.Database,
+    person_id: i64,
+    biography: ?[]const u8,
+    birthday: ?[]const u8,
+    deathday: ?[]const u8,
+    place_of_birth: ?[]const u8,
+    imdb_id: ?[]const u8,
+    filmography_json: ?[]const u8,
+) !void {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    try cat.savePersonDetails(person_id, biography, birthday, deathday, place_of_birth, imdb_id, filmography_json);
+    cat.snapshot() catch {};
+}
+
+pub fn markPersonDetailsFetched(database: *db_mod.Database, person_id: i64) void {
+    const cat = database.catalog orelse return;
+    cat.markPersonDetailsFetched(person_id);
+    cat.snapshot() catch {};
 }

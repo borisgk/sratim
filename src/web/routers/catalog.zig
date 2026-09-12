@@ -1,6 +1,7 @@
 const std = @import("std");
 const db_mod = @import("../../db/db.zig");
 const session_mod = @import("../../db/session.zig");
+const config_mod = @import("../../config.zig");
 const utils = @import("../utils.zig");
 
 const catalog_index = @import("../catalog/index.zig");
@@ -13,6 +14,7 @@ pub fn route(
     request: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     io: std.Io,
+    config: *const config_mod.Config,
     database: *db_mod.Database,
     logs_database: *db_mod.Database,
     session_info_opt: ?session_mod.SessionInfo,
@@ -120,7 +122,7 @@ pub fn route(
             return true;
         };
 
-        const html_content = catalog_person.generatePersonHtml(allocator, database, logs_database, person_id, session_info.username, session_info.is_admin) catch |err| {
+        const html_content = catalog_person.generatePersonHtml(allocator, io, config, database, logs_database, person_id, session_info.username, session_info.is_admin) catch |err| {
             std.debug.print("Person view error: {}\n", .{err});
             if (err == error.PersonNotFound) {
                 try request.respond("Person not found", .{ .status = .not_found });

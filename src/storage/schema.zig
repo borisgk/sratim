@@ -347,6 +347,13 @@ pub const Person = struct {
     name: []const u8,
     profile_path: ?[]const u8 = null,
     known_for_department: ?[]const u8 = null,
+    biography: ?[]const u8 = null,
+    birthday: ?[]const u8 = null,
+    deathday: ?[]const u8 = null,
+    place_of_birth: ?[]const u8 = null,
+    imdb_id: ?[]const u8 = null,
+    details_fetched: bool = false,
+    filmography_json: ?[]const u8 = null,
 
     pub fn clone(self: Person, allocator: std.mem.Allocator) !Person {
         return .{
@@ -354,6 +361,13 @@ pub const Person = struct {
             .name = try allocator.dupe(u8, self.name),
             .profile_path = if (self.profile_path) |p| try allocator.dupe(u8, p) else null,
             .known_for_department = if (self.known_for_department) |d| try allocator.dupe(u8, d) else null,
+            .biography = if (self.biography) |b| try allocator.dupe(u8, b) else null,
+            .birthday = if (self.birthday) |b| try allocator.dupe(u8, b) else null,
+            .deathday = if (self.deathday) |d| try allocator.dupe(u8, d) else null,
+            .place_of_birth = if (self.place_of_birth) |p| try allocator.dupe(u8, p) else null,
+            .imdb_id = if (self.imdb_id) |i| try allocator.dupe(u8, i) else null,
+            .details_fetched = self.details_fetched,
+            .filmography_json = if (self.filmography_json) |f| try allocator.dupe(u8, f) else null,
         };
     }
 
@@ -361,6 +375,12 @@ pub const Person = struct {
         allocator.free(self.name);
         if (self.profile_path) |p| allocator.free(p);
         if (self.known_for_department) |d| allocator.free(d);
+        if (self.biography) |b| allocator.free(b);
+        if (self.birthday) |b| allocator.free(b);
+        if (self.deathday) |d| allocator.free(d);
+        if (self.place_of_birth) |p| allocator.free(p);
+        if (self.imdb_id) |i| allocator.free(i);
+        if (self.filmography_json) |f| allocator.free(f);
     }
 };
 

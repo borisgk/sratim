@@ -16,10 +16,97 @@ pub fn addOrUpdatePerson(self: *SratimStorage, person: schema.Person) !void {
         existing.name = try self.allocator.dupe(u8, person.name);
         existing.profile_path = if (person.profile_path) |p| try self.allocator.dupe(u8, p) else null;
         existing.known_for_department = if (person.known_for_department) |d| try self.allocator.dupe(u8, d) else null;
+
+        // Preserve or update extended fields
+        if (person.biography) |b| {
+            if (existing.biography) |old_b| self.allocator.free(old_b);
+            existing.biography = try self.allocator.dupe(u8, b);
+        }
+        if (person.birthday) |b| {
+            if (existing.birthday) |old_b| self.allocator.free(old_b);
+            existing.birthday = try self.allocator.dupe(u8, b);
+        }
+        if (person.deathday) |d| {
+            if (existing.deathday) |old_d| self.allocator.free(old_d);
+            existing.deathday = try self.allocator.dupe(u8, d);
+        }
+        if (person.place_of_birth) |p| {
+            if (existing.place_of_birth) |old_p| self.allocator.free(old_p);
+            existing.place_of_birth = try self.allocator.dupe(u8, p);
+        }
+        if (person.imdb_id) |i| {
+            if (existing.imdb_id) |old_i| self.allocator.free(old_i);
+            existing.imdb_id = try self.allocator.dupe(u8, i);
+        }
+        if (person.filmography_json) |f| {
+            if (existing.filmography_json) |old_f| self.allocator.free(old_f);
+            existing.filmography_json = try self.allocator.dupe(u8, f);
+        }
+        existing.details_fetched = person.details_fetched or existing.details_fetched;
     } else {
         const cloned = try person.clone(self.allocator);
         try self.people.put(cloned.id, cloned);
     }
+}
+
+/// Saves full details (bio, birth/death, place of birth, IMDb, and filmography) for a person.
+pub fn savePersonDetails(
+    self: *SratimStorage,
+    person_id: i64,
+    biography: ?[]const u8,
+    birthday: ?[]const u8,
+    deathday: ?[]const u8,
+    place_of_birth: ?[]const u8,
+    imdb_id: ?[]const u8,
+    filmography_json: ?[]const u8,
+) !void {
+    self.writeLock();
+    defer self.writeUnlock();
+
+    if (self.people.getPtr(person_id)) |existing| {
+        if (existing.biography) |b| self.allocator.free(b);
+        if (existing.birthday) |b| self.allocator.free(b);
+        if (existing.deathday) |d| self.allocator.free(d);
+        if (existing.place_of_birth) |p| self.allocator.free(p);
+        if (existing.imdb_id) |i| self.allocator.free(i);
+        if (existing.filmography_json) |f| self.allocator.free(f);
+
+        existing.biography = if (biography) |b| try self.allocator.dupe(u8, b) else null;
+        existing.birthday = if (birthday) |b| try self.allocator.dupe(u8, b) else null;
+        existing.deathday = if (deathday) |d| try self.allocator.dupe(u8, d) else null;
+        existing.place_of_birth = if (place_of_birth) |p| try self.allocator.dupe(u8, p) else null;
+        existing.imdb_id = if (imdb_id) |i| try self.allocator.dupe(u8, i) else null;
+        existing.filmography_json = if (filmography_json) |f| try self.allocator.dupe(u8, f) else null;
+        existing.details_fetched = true;
+    }
+}
+
+/// Marks person details as fetched even if no bio or additional data exists on TMDB.
+pub fn markPersonDetailsFetched(self: *SratimStorage, person_id: i64) void {
+    self.writeLock();
+    defer self.writeUnlock();
+
+    if (self.people.getPtr(person_id)) |existing| {
+        existing.details_fetched = true;
+    }
+}
+
+/// Returns a cloned slice of all persons who have not had their details fetched yet.
+pub fn getPeopleMissingDetails(self: *SratimStorage, allocator: std.mem.Allocator) ![]schema.Person {
+    self.readLock();
+    defer self.readUnlock();
+
+    var list = std.ArrayList(schema.Person).empty;
+    defer list.deinit(allocator);
+
+    var it = self.people.iterator();
+    while (it.next()) |e| {
+        if (!e.value_ptr.details_fetched) {
+            const cloned = try e.value_ptr.clone(allocator);
+            try list.append(allocator, cloned);
+        }
+    }
+    return list.toOwnedSlice(allocator);
 }
 
 /// Retrieves a cloned person record by TMDB Person ID.

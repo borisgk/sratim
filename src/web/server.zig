@@ -132,7 +132,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             continue;
         }
 
-        if (catalog_router.route(&request, allocator, io, database, logs_database, session_info) catch return) {
+        if (catalog_router.route(&request, allocator, io, config, database, logs_database, session_info) catch return) {
             continue;
         }
 

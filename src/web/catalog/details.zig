@@ -102,7 +102,7 @@ pub fn generateDetailsHtml(
 
     var has_directors = false;
     for (credits) |c| {
-        if (!c.is_cast and (std.mem.eql(u8, c.department, "Directing") or (c.job != null and std.mem.eql(u8, c.job.?, "Director")))) {
+        if (!c.is_cast and (c.job != null and std.mem.eql(u8, c.job.?, "Director"))) {
             if (!has_directors) {
                 try directors_buf.appendSlice(allocator, "<span class=\"details-separator\">•</span><span class=\"details-director-label\">Directed by</span> ");
                 has_directors = true;
@@ -124,7 +124,7 @@ pub fn generateDetailsHtml(
         try cast_section_buf.appendSlice(allocator,
             \\<div class="details-cast-section">
             \\    <h2 class="details-section-title">Cast</h2>
-            \\    <div class="cast-carousel">
+            \\    <div class="cast-grid">
         );
 
         for (credits) |c| {
@@ -137,7 +137,7 @@ pub fn generateDetailsHtml(
                     \\            <div class="cast-avatar-wrapper">
                     \\                <img class="cast-avatar" src="/images/profiles/w185{s}" alt="{s}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
                     \\                <div class="cast-avatar-placeholder" style="display:none;">
-                    \\                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="28" height="28">
+                    \\                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40">
                     \\                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                     \\                        <circle cx="12" cy="7" r="4"></circle>
                     \\                    </svg>
@@ -154,7 +154,7 @@ pub fn generateDetailsHtml(
                     \\        <a href="/person?id={d}" class="cast-card">
                     \\            <div class="cast-avatar-wrapper">
                     \\                <div class="cast-avatar-placeholder">
-                    \\                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="28" height="28">
+                    \\                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40">
                     \\                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                     \\                        <circle cx="12" cy="7" r="4"></circle>
                     \\                    </svg>

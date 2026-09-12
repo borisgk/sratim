@@ -9,16 +9,24 @@ pub const TmdbEpisode = types.TmdbEpisode;
 pub const TmdbCastMember = types.TmdbCastMember;
 pub const TmdbCrewMember = types.TmdbCrewMember;
 pub const TmdbCreditsResponse = types.TmdbCreditsResponse;
+pub const TmdbPersonDetails = types.TmdbPersonDetails;
+pub const TmdbPersonMovieCast = types.TmdbPersonMovieCast;
+pub const TmdbPersonMovieCrew = types.TmdbPersonMovieCrew;
+pub const TmdbPersonMovieCredits = types.TmdbPersonMovieCredits;
 
 pub const client = @import("tmdb/client.zig");
 pub const movies = @import("tmdb/movies.zig");
 pub const shows = @import("tmdb/shows.zig");
 pub const episodes = @import("tmdb/episodes.zig");
+pub const person = @import("tmdb/person.zig");
 pub const images = @import("tmdb/images.zig");
 
 pub const searchMovie = movies.searchMovie;
 pub const fetchMovieDetails = movies.fetchMovieDetails;
 pub const fetchMovieCredits = movies.fetchMovieCredits;
+pub const fetchPersonDetails = person.fetchPersonDetails;
+pub const buildFilmographyJson = person.buildFilmographyJson;
+pub const FilmographyItem = person.FilmographyItem;
 pub const searchShow = shows.searchShow;
 pub const fetchShowDetails = shows.fetchShowDetails;
 pub const fetchEpisode = episodes.fetchEpisode;
