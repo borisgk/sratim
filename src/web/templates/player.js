@@ -399,6 +399,21 @@
                     let hasInitializedPlayback = false;
                     let isQuotaExceeded = false;
 
+                    let isEvicting = false;
+                    function evictOldBuffer(aggressive = false) {
+                        if (isEvicting || !sourceBuffer || sourceBuffer.updating || isAppending || sourceBuffer.buffered.length === 0) return;
+                        const retainPast = aggressive ? 10 : 30;
+                        const evictUpTo = video.currentTime - retainPast;
+                        if (evictUpTo > 5 && sourceBuffer.buffered.start(0) < evictUpTo - 5) {
+                            isEvicting = true;
+                            try {
+                                sourceBuffer.remove(0, evictUpTo);
+                            } catch (e) {
+                                isEvicting = false;
+                            }
+                        }
+                    }
+
                     function processQueue() {
                         if (isAppending || queue.length === 0 || signal.aborted || sourceBuffer.updating) return;
                         isAppending = true;
@@ -421,7 +436,14 @@
                                 queue.unshift(combined);
                                 isAppending = false;
                                 isQuotaExceeded = true;
-                                setTimeout(processQueue, 1000);
+                                evictOldBuffer(true);
+                                if (sourceBuffer.buffered.length > 0) {
+                                    const currentAhead = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1) - video.currentTime;
+                                    if (currentAhead > 30) {
+                                        maxBufferAhead = Math.max(45, Math.floor(currentAhead * 0.9));
+                                    }
+                                }
+                                setTimeout(processQueue, 500);
                             } else {
                                 isAppending = false;
                                 console.error('Append error:', e);
@@ -431,6 +453,11 @@
 
                     onUpdateEnd = () => {
                         isAppending = false;
+                        if (isEvicting) {
+                            isEvicting = false;
+                            processQueue();
+                            return;
+                        }
                         if (!hasInitializedPlayback && sourceBuffer.buffered.length > 0) {
                             hasInitializedPlayback = true;
                             video.currentTime = 0;
@@ -442,37 +469,48 @@
                                 playpause.innerHTML = svgPlay;
                             }
                         }
+                        evictOldBuffer(false);
                         processQueue();
                     };
                     sourceBuffer.addEventListener('updateend', onUpdateEnd);
 
+                    let maxBufferAhead = 180; // Buffer ahead up to 180s (3 minutes)
+                    let lastRefillTime = Date.now();
                     let isBufferPaused = false;
-                    const MAX_BUFFER_AHEAD = 45; // Buffer up to 45 seconds ahead
-                    const MIN_BUFFER_RESUME = 30; // Resume reading when buffer drops below 30s (max TCP idle gap <= 15s)
 
                     while (!signal.aborted) {
-                        if (isQuotaExceeded || queue.length > 50) {
-                            await new Promise(r => setTimeout(r, 100));
+                        // Double-buffering: throttle pre-reading to max 2 chunks while MSE is appending
+                        if (isQuotaExceeded || queue.length >= 2) {
+                            await new Promise(r => setTimeout(r, 20));
                             continue;
                         }
 
                         if (sourceBuffer.buffered.length > 0) {
                             const end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
                             const bufferAhead = end - video.currentTime;
-                            if (!isBufferPaused && bufferAhead > MAX_BUFFER_AHEAD) {
+                            const timeSinceRefill = Date.now() - lastRefillTime;
+
+                            // Enter paused state once buffer reaches deep capacity
+                            if (!isBufferPaused && bufferAhead >= maxBufferAhead) {
                                 isBufferPaused = true;
-                            } else if (isBufferPaused && bufferAhead < MIN_BUFFER_RESUME) {
-                                isBufferPaused = false;
+                            } else if (isBufferPaused) {
+                                // Refill based on buffer amount AND interval from last refill:
+                                // 1. Safety floor: buffer dropped to <= 30s -> refill immediately
+                                // 2. Interval refill: at least 15s elapsed AND at least 12s of media consumed -> refill burst
+                                if (bufferAhead <= 30 || (timeSinceRefill >= 15000 && bufferAhead <= (maxBufferAhead - 12))) {
+                                    isBufferPaused = false;
+                                }
                             }
 
                             if (isBufferPaused) {
-                                if (window.__onStreamState) window.__onStreamState('Buffer Full (Paced)');
-                                await new Promise(r => setTimeout(r, 500));
+                                if (window.__onStreamState) window.__onStreamState('Buffered ' + Math.round(bufferAhead) + 's (Paced)');
+                                await new Promise(r => setTimeout(r, 250));
                                 continue;
                             }
                         }
 
                         const { done, value } = await reader.read();
+                        lastRefillTime = Date.now();
                         if (done) {
                             const currentPos = currentSeekTime + (video.currentTime || 0);
                             const isPremature = !signal.aborted && (DURATION <= 0 || (currentPos < DURATION - 5));
