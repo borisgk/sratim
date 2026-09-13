@@ -135,18 +135,16 @@ __CAST_SECTION_HTML__
                 document.body.removeChild(ta);
             }
 
-            if (navigator.share) {
+            // Always copy clean URL to clipboard
+            copyFallback();
+
+            // On mobile/touch devices, also offer native share sheet with clean URL
+            const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints && navigator.maxTouchPoints > 1);
+            if (isMobile && navigator.share) {
                 navigator.share({
                     title: title + ' — Sratim',
-                    text: 'Watch ' + title + ' on Sratim',
                     url: url
-                }).catch((err) => {
-                    if (err.name !== 'AbortError') {
-                        copyFallback();
-                    }
-                });
-            } else {
-                copyFallback();
+                }).catch(() => {});
             }
         }
     </script>

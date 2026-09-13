@@ -2,12 +2,22 @@ const std = @import("std");
 const c = @import("../core/c.zig").c;
 
 /// Parse an integer query parameter by name from a URL target string.
+/// Robust against trailing whitespace, encoded characters, or fragment identifiers.
 pub fn parseQueryInt(comptime T: type, target: []const u8, name: []const u8) ?T {
     const q_idx = std.mem.indexOf(u8, target, "?") orelse return null;
     var it = std.mem.splitScalar(u8, target[q_idx + 1 ..], '&');
     while (it.next()) |param| {
         if (std.mem.startsWith(u8, param, name) and param.len > name.len and param[name.len] == '=') {
-            return std.fmt.parseInt(T, param[name.len + 1 ..], 10) catch null;
+            const raw = param[name.len + 1 ..];
+            var end_idx: usize = 0;
+            if (raw.len > 0 and (raw[0] == '+' or raw[0] == '-')) {
+                end_idx = 1;
+            }
+            while (end_idx < raw.len and std.ascii.isDigit(raw[end_idx])) {
+                end_idx += 1;
+            }
+            if (end_idx == 0 or (end_idx == 1 and (raw[0] == '+' or raw[0] == '-'))) return null;
+            return std.fmt.parseInt(T, raw[0..end_idx], 10) catch null;
         }
     }
     return null;
@@ -19,7 +29,25 @@ pub fn parseQueryFloat(target: []const u8, name: []const u8) ?f64 {
     var it = std.mem.splitScalar(u8, target[q_idx + 1 ..], '&');
     while (it.next()) |param| {
         if (std.mem.startsWith(u8, param, name) and param.len > name.len and param[name.len] == '=') {
-            return std.fmt.parseFloat(f64, param[name.len + 1 ..]) catch null;
+            const raw = param[name.len + 1 ..];
+            var end_idx: usize = 0;
+            if (raw.len > 0 and (raw[0] == '+' or raw[0] == '-')) {
+                end_idx = 1;
+            }
+            var has_dot = false;
+            while (end_idx < raw.len) {
+                const ch = raw[end_idx];
+                if (std.ascii.isDigit(ch)) {
+                    end_idx += 1;
+                } else if (ch == '.' and !has_dot) {
+                    has_dot = true;
+                    end_idx += 1;
+                } else {
+                    break;
+                }
+            }
+            if (end_idx == 0 or (end_idx == 1 and (raw[0] == '+' or raw[0] == '-'))) return null;
+            return std.fmt.parseFloat(f64, raw[0..end_idx]) catch null;
         }
     }
     return null;
@@ -157,4 +185,16 @@ test "parseQueryString and isValidRedirect" {
     try testing.expect(!isValidRedirect(""));
     try testing.expect(isValidRedirect("/"));
     try testing.expect(isValidRedirect("/details?id=26"));
+}
+
+test "parseQueryInt robust parsing" {
+    const testing = std.testing;
+    try testing.expectEqual(@as(?i64, 2183), parseQueryInt(i64, "/details?id=2183%20Watch%20Fiddler%20on%20the%20Roof%20on%20Sratim", "id"));
+    try testing.expectEqual(@as(?i64, 2183), parseQueryInt(i64, "/details?id=2183", "id"));
+    try testing.expectEqual(@as(?i64, 2183), parseQueryInt(i64, "/details?id=2183&start=0", "id"));
+    try testing.expectEqual(@as(?i64, 2183), parseQueryInt(i64, "/details?id=2183#header", "id"));
+    try testing.expectEqual(@as(?i64, 2183), parseQueryInt(i64, "/details?id=+2183", "id"));
+    try testing.expectEqual(@as(?i64, -2183), parseQueryInt(i64, "/details?id=-2183", "id"));
+    try testing.expectEqual(@as(?i64, null), parseQueryInt(i64, "/details?id=abc", "id"));
+    try testing.expectEqual(@as(?f64, 42.5), parseQueryFloat("/watch?pos=42.5s", "pos"));
 }
