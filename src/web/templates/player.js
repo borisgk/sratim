@@ -402,7 +402,6 @@
                     let isRefilling = true;
                     let lastRefillEndTime = Date.now();
                     let bufferAtRefillEnd = 0;
-                    let bufferAtRefillStart = 0;
                     window.__bufferTarget = maxCapacity;
 
                     let isEvicting = false;
@@ -446,12 +445,12 @@
                                 if (sourceBuffer.buffered.length > 0) {
                                     const currentAhead = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1) - video.currentTime;
                                     // Adapt capacity to actual device quota limit
-                                    maxCapacity = Math.max(25, Math.floor(currentAhead * 0.9));
+                                    maxCapacity = Math.max(25, Math.floor(currentAhead - 2));
                                     window.__bufferTarget = maxCapacity;
                                     bufferAtRefillEnd = currentAhead;
-                                    bufferAtRefillStart = 0;
                                     isRefilling = false;
                                     lastRefillEndTime = Date.now();
+                                    if (window.__onStreamState) window.__onStreamState('Paced');
                                 }
                                 setTimeout(processQueue, 500);
                             } else {
@@ -481,6 +480,16 @@
                         }
                         evictOldBuffer(false);
                         processQueue();
+
+                        // When reading is paused and all queued chunks are appended into MSE, top-up is complete
+                        if (!isRefilling && queue.length === 0 && !isAppending && sourceBuffer.buffered.length > 0) {
+                            const end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
+                            bufferAtRefillEnd = end - video.currentTime;
+                            lastRefillEndTime = Date.now();
+                            if (window.__onStreamState) {
+                                window.__onStreamState('Paced');
+                            }
+                        }
                     };
                     sourceBuffer.addEventListener('updateend', onUpdateEnd);
 
@@ -496,28 +505,28 @@
                             const bufferAhead = end - video.currentTime;
 
                             if (isRefilling) {
-                                // Actively refilling: finish once capacity reached or 1 full fragment replenished (~8s+)
-                                const hasReplenishedFragment = (bufferAtRefillStart > 0 && bufferAhead >= bufferAtRefillStart + 8);
-                                if (bufferAhead >= maxCapacity || hasReplenishedFragment) {
+                                // Stop fetching once buffer reaches capacity
+                                if (bufferAhead >= maxCapacity) {
                                     isRefilling = false;
-                                    lastRefillEndTime = Date.now();
-                                    bufferAtRefillEnd = bufferAhead;
-                                    bufferAtRefillStart = 0;
-                                    if (window.__onStreamState) {
-                                        window.__onStreamState('Buffered ' + Math.round(bufferAhead) + 's (Paced)');
+                                    if (queue.length === 0 && !isAppending && (!sourceBuffer || !sourceBuffer.updating)) {
+                                        bufferAtRefillEnd = bufferAhead;
+                                        lastRefillEndTime = Date.now();
+                                        if (window.__onStreamState) {
+                                            window.__onStreamState('Paced');
+                                        }
                                     }
                                 }
                             } else {
                                 const timeSinceRefill = Date.now() - lastRefillEndTime;
                                 const bufferConsumed = bufferAtRefillEnd - bufferAhead;
+                                const isBufferFullAndPaused = video.paused && bufferAhead >= (maxCapacity - 3);
 
-                                // Refill triggers:
+                                // Refill trigger (when not paused with full buffer):
                                 // 1. Exactly 15s elapsed since last refill
                                 // 2. Rapid consumption: buffer consumed >= 15s (e.g. 2x playback speed)
                                 // 3. Safety floor: buffer dropped to <= 15s
-                                if (timeSinceRefill >= 15000 || bufferConsumed >= 15 || bufferAhead <= 15) {
+                                if (!isBufferFullAndPaused && (timeSinceRefill >= 15000 || bufferConsumed >= 15 || bufferAhead <= 15)) {
                                     isRefilling = true;
-                                    bufferAtRefillStart = bufferAhead;
                                     if (window.__onStreamState) {
                                         window.__onStreamState('Streaming');
                                     }
@@ -531,7 +540,6 @@
                         }
 
                         const { done, value } = await reader.read();
-                        lastRefillEndTime = Date.now();
                         if (done) {
                             const currentPos = currentSeekTime + (video.currentTime || 0);
                             const isPremature = !signal.aborted && (DURATION <= 0 || (currentPos < DURATION - 5));

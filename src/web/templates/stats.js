@@ -113,6 +113,9 @@
 
     window.__onStreamState = function (state) {
         statsState.networkActivity = state;
+        if (state === 'Streaming') {
+            statsState.lastChunkTime = performance.now();
+        }
     };
 
     function calculateSpeedKbps() {
@@ -547,19 +550,17 @@
         fields.bufferFill.style.width = `${fillPct}%`;
 
         // 13. Network Activity
+        let currentActivity = statsState.networkActivity || 'Idle';
         const timeSinceLastChunk = performance.now() - (statsState.lastChunkTime || 0);
-        let currentActivity = statsState.networkActivity;
-        if (currentActivity === 'Streaming' && timeSinceLastChunk >= 1500) {
-            currentActivity = (forwardBuffer > 0)
-                ? `Buffered ${Math.round(forwardBuffer)}s (Paced)`
-                : 'Idle';
+        if (currentActivity === 'Streaming' && timeSinceLastChunk >= 4000) {
+            currentActivity = (forwardBuffer > 0) ? 'Paced' : 'Idle';
             statsState.networkActivity = currentActivity;
         }
 
         fields.networkActivity.innerText = currentActivity;
         if (currentActivity === 'Streaming') {
             fields.networkActivity.className = 'stats-value highlight-cyan';
-        } else if (currentActivity.toLowerCase().includes('buffer')) {
+        } else if (currentActivity === 'Paced') {
             fields.networkActivity.className = 'stats-value highlight-green';
         } else {
             fields.networkActivity.className = 'stats-value';
