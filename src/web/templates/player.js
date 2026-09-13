@@ -496,8 +496,9 @@
                             const bufferAhead = end - video.currentTime;
 
                             if (isRefilling) {
-                                // Actively refilling buffer up to capacity or replenishing the consumed fragment
-                                if (bufferAhead >= maxCapacity || (bufferAtRefillStart > 0 && bufferAhead >= bufferAtRefillStart + 10)) {
+                                // Actively refilling: finish once capacity reached or 1 full fragment replenished (~8s+)
+                                const hasReplenishedFragment = (bufferAtRefillStart > 0 && bufferAhead >= bufferAtRefillStart + 8);
+                                if (bufferAhead >= maxCapacity || hasReplenishedFragment) {
                                     isRefilling = false;
                                     lastRefillEndTime = Date.now();
                                     bufferAtRefillEnd = bufferAhead;
@@ -507,21 +508,18 @@
                                     }
                                 }
                             } else {
-                                // Only trigger refill if buffer has room below capacity
-                                if (bufferAhead < maxCapacity) {
-                                    const timeSinceRefill = Date.now() - lastRefillEndTime;
-                                    const bufferConsumed = bufferAtRefillEnd - bufferAhead;
+                                const timeSinceRefill = Date.now() - lastRefillEndTime;
+                                const bufferConsumed = bufferAtRefillEnd - bufferAhead;
 
-                                    // Refill triggers:
-                                    // 1. 15s elapsed since last refill
-                                    // 2. Rapid consumption: buffer consumed >= 15s (e.g. 2x playback speed)
-                                    // 3. Safety floor: buffer dropped to <= 15s
-                                    if (timeSinceRefill >= 15000 || bufferConsumed >= 15 || bufferAhead <= 15) {
-                                        isRefilling = true;
-                                        bufferAtRefillStart = bufferAhead;
-                                        if (window.__onStreamState) {
-                                            window.__onStreamState('Streaming');
-                                        }
+                                // Refill triggers:
+                                // 1. Exactly 15s elapsed since last refill
+                                // 2. Rapid consumption: buffer consumed >= 15s (e.g. 2x playback speed)
+                                // 3. Safety floor: buffer dropped to <= 15s
+                                if (timeSinceRefill >= 15000 || bufferConsumed >= 15 || bufferAhead <= 15) {
+                                    isRefilling = true;
+                                    bufferAtRefillStart = bufferAhead;
+                                    if (window.__onStreamState) {
+                                        window.__onStreamState('Streaming');
                                     }
                                 }
                             }

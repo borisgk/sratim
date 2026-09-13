@@ -112,26 +112,27 @@
     };
 
     window.__onStreamState = function (state) {
-        const now = performance.now();
-        // Do not immediately overwrite active Streaming status if chunks arrived within the last 1000ms
-        if (state !== 'Streaming' && (now - (statsState.lastChunkTime || 0)) < 1000) {
-            return;
-        }
         statsState.networkActivity = state;
     };
 
     function calculateSpeedKbps() {
         const now = performance.now();
-        const cutoff = now - 3000;
+        const timeSinceLastChunk = now - (statsState.lastChunkTime || 0);
+
+        // If no chunks received in the last 1.5s, connection is completely idle
+        if (timeSinceLastChunk >= 1500) {
+            statsState.recentChunks = [];
+            statsState.lastSpeedKbps = 0;
+            return 0;
+        }
+
+        const cutoff = now - 2500;
         while (statsState.recentChunks.length > 0 && statsState.recentChunks[0].time < cutoff) {
             statsState.recentChunks.shift();
         }
 
         if (statsState.recentChunks.length < 2) {
-            if (statsState.networkActivity === 'Streaming' || (now - (statsState.lastChunkTime || 0)) < 1500) {
-                return statsState.lastSpeedKbps;
-            }
-            return 0;
+            return statsState.lastSpeedKbps;
         }
 
         let totalBytes = 0;
@@ -231,7 +232,6 @@
                         <span class="stats-chart-title">Realtime Buffer Timeline (Last 90s)</span>
                     </div>
                     <div class="stats-chart-legend">
-                        <span><i class="legend-dot legend-stream"></i>Refill Burst</span>
                         <span><i class="legend-dot legend-buffer"></i>Buffer Level</span>
                     </div>
                 </div>
@@ -351,20 +351,7 @@
             return;
         }
 
-        // 3. Draw streaming burst activity background bars
-        for (let i = 0; i < history.length; i++) {
-            const pt = history[i];
-            if (pt.isStreaming) {
-                const x0 = leftMargin + Math.max(0, ((pt.time - startTime) / windowMs)) * chartW;
-                const nextTime = (i < history.length - 1) ? history[i + 1].time : (pt.time + 350);
-                const x1 = leftMargin + Math.min(chartW, ((nextTime - startTime) / windowMs)) * chartW;
-                const bandW = Math.max(2, x1 - x0);
-                ctx.fillStyle = 'rgba(56, 189, 248, 0.12)';
-                ctx.fillRect(x0, topMargin, bandW, chartH);
-            }
-        }
-
-        // 4. Build path points
+        // 3. Build path points
         const points = [];
         for (const pt of history) {
             if (pt.time < startTime) continue;
@@ -379,10 +366,10 @@
             return;
         }
 
-        // 5. Draw Area Gradient
+        // 4. Draw Area Gradient
         const gradient = ctx.createLinearGradient(0, topMargin, 0, topMargin + chartH);
         gradient.addColorStop(0, 'rgba(52, 211, 153, 0.35)'); // emerald
-        gradient.addColorStop(0.6, 'rgba(56, 189, 248, 0.12)'); // cyan
+        gradient.addColorStop(0.7, 'rgba(16, 185, 129, 0.08)');
         gradient.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
 
         ctx.beginPath();
@@ -551,23 +538,32 @@
             fields.connSpeed.innerText = '0 Kbps (Idle)';
         }
 
-        // 12. Network Activity
-        fields.networkActivity.innerText = statsState.networkActivity;
-        if (statsState.networkActivity === 'Streaming') {
-            fields.networkActivity.className = 'stats-value highlight-cyan';
-        } else if (statsState.networkActivity.toLowerCase().includes('buffer')) {
-            fields.networkActivity.className = 'stats-value highlight-green';
-        } else {
-            fields.networkActivity.className = 'stats-value';
-        }
-
-        // 13. Buffer Health & Meter
+        // 12. Buffer Health & Meter
         const forwardBuffer = recordBufferSample();
 
         fields.bufferSec.innerText = `${forwardBuffer.toFixed(2)} s`;
         const bufferTarget = (typeof window !== 'undefined' && typeof window.__bufferTarget === 'number') ? window.__bufferTarget : 180.0;
         const fillPct = Math.min(100, Math.max(0, (forwardBuffer / bufferTarget) * 100));
         fields.bufferFill.style.width = `${fillPct}%`;
+
+        // 13. Network Activity
+        const timeSinceLastChunk = performance.now() - (statsState.lastChunkTime || 0);
+        let currentActivity = statsState.networkActivity;
+        if (currentActivity === 'Streaming' && timeSinceLastChunk >= 1500) {
+            currentActivity = (forwardBuffer > 0)
+                ? `Buffered ${Math.round(forwardBuffer)}s (Paced)`
+                : 'Idle';
+            statsState.networkActivity = currentActivity;
+        }
+
+        fields.networkActivity.innerText = currentActivity;
+        if (currentActivity === 'Streaming') {
+            fields.networkActivity.className = 'stats-value highlight-cyan';
+        } else if (currentActivity.toLowerCase().includes('buffer')) {
+            fields.networkActivity.className = 'stats-value highlight-green';
+        } else {
+            fields.networkActivity.className = 'stats-value';
+        }
 
         if (forwardBuffer >= Math.min(30, bufferTarget * 0.6)) {
             fields.bufferFill.style.background = 'linear-gradient(90deg, #10b981, #34d399)';
