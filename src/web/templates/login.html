@@ -22,6 +22,7 @@
             <div class="error-message">__ERROR_MESSAGE__</div>
 
             <form method="POST" action="/login">
+                <input type="hidden" name="redirect" value="__REDIRECT__">
                 <div class="form-group">
                     <label for="username">Username</label>
                     <input type="text" id="username" name="username" required autocomplete="username" autofocus>

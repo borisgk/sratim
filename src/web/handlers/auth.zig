@@ -4,16 +4,39 @@ const users_mod = @import("../../db/users.zig");
 const logging_mod = @import("../../db/logging.zig");
 const session_mod = @import("../../db/session.zig");
 const template_engine = @import("../../core/template.zig");
+const utils = @import("../utils.zig");
 const global_css: []const u8 = @embedFile("../style.css");
 
 pub fn serveLoginPage(request: *std.http.Server.Request, allocator: std.mem.Allocator, error_message: []const u8) !void {
+    try serveLoginPageWithRedirect(request, allocator, error_message, null);
+}
+
+pub fn serveLoginPageWithRedirect(request: *std.http.Server.Request, allocator: std.mem.Allocator, error_message: []const u8, redirect_override: ?[]const u8) !void {
     const show_error = if (error_message.len > 0) "block" else "none";
     const msg = if (error_message.len > 0) error_message else "";
+
+    var redirect_val: []const u8 = "";
+    var redirect_alloc: ?[]const u8 = null;
+    defer if (redirect_alloc) |r| allocator.free(r);
+
+    if (redirect_override) |ro| {
+        if (utils.isValidRedirect(ro)) {
+            redirect_val = ro;
+        }
+    } else {
+        if (utils.parseQueryString(allocator, request.head.target, "redirect")) |r| {
+            redirect_alloc = r;
+            if (utils.isValidRedirect(r)) {
+                redirect_val = r;
+            }
+        }
+    }
 
     const html_content = try template_engine.render(allocator, @embedFile("../templates/login.html"), .{
         .INLINE_CSS = global_css,
         .ERROR_DISPLAY = show_error,
         .ERROR_MESSAGE = msg,
+        .REDIRECT = redirect_val,
     });
 
     request.respond(html_content, .{
@@ -50,6 +73,8 @@ pub fn handleLoginPost(request: *std.http.Server.Request, allocator: std.mem.All
     // Parse form data (application/x-www-form-urlencoded)
     var username: ?[]const u8 = null;
     var password: ?[]const u8 = null;
+    var redirect: ?[]const u8 = null;
+    defer if (redirect) |r| allocator.free(r);
 
     var pairs = std.mem.splitScalar(u8, body_data.items, '&');
     while (pairs.next()) |pair| {
@@ -61,11 +86,21 @@ pub fn handleLoginPost(request: *std.http.Server.Request, allocator: std.mem.All
             const raw = pair[9..];
             const decoded = allocator.dupe(u8, raw) catch continue;
             password = std.Uri.percentDecodeInPlace(decoded);
+        } else if (std.mem.startsWith(u8, pair, "redirect=")) {
+            const raw = pair[9..];
+            if (raw.len > 0) {
+                const decoded = allocator.dupe(u8, raw) catch continue;
+                redirect = std.Uri.percentDecodeInPlace(decoded);
+            }
         }
     }
 
+    if (redirect == null or redirect.?.len == 0) {
+        redirect = utils.parseQueryString(allocator, request.head.target, "redirect");
+    }
+
     if (username == null or password == null) {
-        try serveLoginPage(request, allocator, "Please enter both username and password.");
+        try serveLoginPageWithRedirect(request, allocator, "Please enter both username and password.", redirect);
         return;
     }
 
@@ -77,7 +112,7 @@ pub fn handleLoginPost(request: *std.http.Server.Request, allocator: std.mem.All
                 std.debug.print("Failed to log failed auth attempt: {}\n", .{err});
             };
         }
-        try serveLoginPage(request, allocator, "Invalid username or password.");
+        try serveLoginPageWithRedirect(request, allocator, "Invalid username or password.", redirect);
         return;
     }
 
@@ -93,10 +128,17 @@ pub fn handleLoginPost(request: *std.http.Server.Request, allocator: std.mem.All
     const token = try session_mod.createSession(database, allocator, io, username.?, is_admin);
     const cookie_value = try std.fmt.allocPrint(allocator, "session={s}; Path=/; HttpOnly; SameSite=Strict", .{token});
 
+    var target_location: []const u8 = "/";
+    if (redirect) |r| {
+        if (utils.isValidRedirect(r)) {
+            target_location = r;
+        }
+    }
+
     request.respond("", .{
         .status = .found,
         .extra_headers = &.{
-            .{ .name = "location", .value = "/" },
+            .{ .name = "location", .value = target_location },
             .{ .name = "set-cookie", .value = cookie_value },
         },
     }) catch return;

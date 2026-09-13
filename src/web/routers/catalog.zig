@@ -22,10 +22,19 @@ pub fn route(
     const target = request.head.target;
 
     if (session_info_opt == null) {
+        var loc_buf = std.ArrayList(u8).empty;
+        defer loc_buf.deinit(allocator);
+        try loc_buf.appendSlice(allocator, "/login");
+
+        if (target.len > 1 and !std.mem.startsWith(u8, target, "/api/") and !std.mem.startsWith(u8, target, "/login")) {
+            try loc_buf.appendSlice(allocator, "?redirect=");
+            try utils.writePercentEncodedQueryParam(&loc_buf, allocator, target);
+        }
+
         try request.respond("", .{
             .status = .found,
             .extra_headers = &.{
-                .{ .name = "location", .value = "/login" },
+                .{ .name = "location", .value = loc_buf.items },
             },
         });
         return true;

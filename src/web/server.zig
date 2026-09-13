@@ -17,6 +17,7 @@ const admin_router = @import("routers/admin.zig");
 const api_router = @import("routers/api.zig");
 const catalog_router = @import("routers/catalog.zig");
 const api_v1_router = @import("routers/api_v1.zig");
+const utils = @import("utils.zig");
 
 /// Handles an incoming HTTP connection from a client.
 /// This function runs inside an isolated OS thread spawned specifically for this connection.
@@ -107,10 +108,20 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             null;
 
         if (session_info == null) {
+            var loc_buf = std.ArrayList(u8).empty;
+            defer loc_buf.deinit(allocator);
+            loc_buf.appendSlice(allocator, "/login") catch return;
+
+            // Only append redirect if target is not root "/" or an API call or another login attempt
+            if (target.len > 1 and !std.mem.startsWith(u8, target, "/api/") and !std.mem.startsWith(u8, target, "/login")) {
+                loc_buf.appendSlice(allocator, "?redirect=") catch return;
+                utils.writePercentEncodedQueryParam(&loc_buf, allocator, target) catch return;
+            }
+
             request.respond("", .{
                 .status = .found,
                 .extra_headers = &.{
-                    .{ .name = "location", .value = "/login" },
+                    .{ .name = "location", .value = loc_buf.items },
                 },
             }) catch return;
             continue;

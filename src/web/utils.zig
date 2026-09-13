@@ -93,3 +93,68 @@ pub fn escapeHtml(list: *std.ArrayList(u8), allocator: std.mem.Allocator, input:
         }
     }
 }
+
+/// Percent-encodes a string for safe embedding as a URL query parameter value.
+pub fn writePercentEncodedQueryParam(list: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
+    for (input) |ch| {
+        switch (ch) {
+            ' ' => try list.appendSlice(allocator, "%20"),
+            '/' => try list.appendSlice(allocator, "%2F"),
+            '?' => try list.appendSlice(allocator, "%3F"),
+            '=' => try list.appendSlice(allocator, "%3D"),
+            '&' => try list.appendSlice(allocator, "%26"),
+            '#' => try list.appendSlice(allocator, "%23"),
+            '%' => try list.appendSlice(allocator, "%25"),
+            '"' => try list.appendSlice(allocator, "%22"),
+            '<' => try list.appendSlice(allocator, "%3C"),
+            '>' => try list.appendSlice(allocator, "%3E"),
+            '\''=> try list.appendSlice(allocator, "%27"),
+            else => try list.append(allocator, ch),
+        }
+    }
+}
+
+/// Parse and percent-decode a string query parameter by name from a URL target string.
+/// Caller owns the returned allocated slice if non-null.
+pub fn parseQueryString(allocator: std.mem.Allocator, target: []const u8, name: []const u8) ?[]const u8 {
+    const q_idx = std.mem.indexOf(u8, target, "?") orelse return null;
+    var it = std.mem.splitScalar(u8, target[q_idx + 1 ..], '&');
+    while (it.next()) |param| {
+        if (std.mem.startsWith(u8, param, name) and param.len > name.len and param[name.len] == '=') {
+            const raw = param[name.len + 1 ..];
+            const decoded = allocator.dupe(u8, raw) catch return null;
+            return std.Uri.percentDecodeInPlace(decoded);
+        }
+    }
+    return null;
+}
+
+/// Validates that a redirect target is a safe relative path on the same origin.
+pub fn isValidRedirect(target: []const u8) bool {
+    if (target.len == 0) return false;
+    if (target[0] != '/') return false;
+    if (target.len > 1 and target[1] == '/') return false;
+    if (std.mem.indexOfScalar(u8, target, '\\') != null) return false;
+    if (std.mem.indexOfScalar(u8, target, '\r') != null) return false;
+    if (std.mem.indexOfScalar(u8, target, '\n') != null) return false;
+    return true;
+}
+
+test "parseQueryString and isValidRedirect" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    const query_target = "/login?redirect=%2Fdetails%3Fid%3D26";
+    const res = parseQueryString(alloc, query_target, "redirect");
+    try testing.expect(res != null);
+    defer alloc.free(res.?);
+    try testing.expectEqualStrings("/details?id=26", res.?);
+    try testing.expect(isValidRedirect(res.?));
+
+    try testing.expect(!isValidRedirect("https://evil.com"));
+    try testing.expect(!isValidRedirect("//evil.com"));
+    try testing.expect(!isValidRedirect("/\\evil.com"));
+    try testing.expect(!isValidRedirect(""));
+    try testing.expect(isValidRedirect("/"));
+    try testing.expect(isValidRedirect("/details?id=26"));
+}

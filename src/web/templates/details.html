@@ -42,6 +42,16 @@ __DIRECTORS_HTML__
                         Play
                     </a>
 __RESUME_BTN__
+                    <button type="button" class="share-btn" id="share-btn" onclick="shareMovie()" title="Share movie">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="22" height="22">
+                            <circle cx="18" cy="5" r="3"></circle>
+                            <circle cx="6" cy="12" r="3"></circle>
+                            <circle cx="18" cy="19" r="3"></circle>
+                            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+                            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+                        </svg>
+                        <span id="share-btn-text">Share</span>
+                    </button>
                 </div>
 
 __CAST_SECTION_HTML__
@@ -68,5 +78,77 @@ __CAST_SECTION_HTML__
             </div>
         </footer>
     </div>
+
+    <div id="share-toast" class="share-toast" role="status" aria-live="polite">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+            <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+        <span>Movie link copied to clipboard!</span>
+    </div>
+
+    <script>
+        function shareMovie() {
+            const url = window.location.href;
+            const rawTitle = document.title || 'Movie';
+            const title = rawTitle.replace(/^Sratim\s*[—–-]\s*/, '').trim();
+            const btn = document.getElementById('share-btn');
+            const btnText = document.getElementById('share-btn-text');
+
+            function showToast() {
+                const toast = document.getElementById('share-toast');
+                if (toast) {
+                    toast.classList.add('show');
+                    setTimeout(() => toast.classList.remove('show'), 2500);
+                }
+                if (btnText) {
+                    const original = btnText.innerText;
+                    btnText.innerText = 'Copied!';
+                    if (btn) btn.classList.add('copied');
+                    setTimeout(() => {
+                        btnText.innerText = original;
+                        if (btn) btn.classList.remove('copied');
+                    }, 2000);
+                }
+            }
+
+            function copyFallback() {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(url).then(showToast).catch(() => execCopyFallback());
+                } else {
+                    execCopyFallback();
+                }
+            }
+
+            function execCopyFallback() {
+                const ta = document.createElement('textarea');
+                ta.value = url;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                try {
+                    document.execCommand('copy');
+                    showToast();
+                } catch (e) {
+                    prompt('Copy movie link:', url);
+                }
+                document.body.removeChild(ta);
+            }
+
+            if (navigator.share) {
+                navigator.share({
+                    title: title + ' — Sratim',
+                    text: 'Watch ' + title + ' on Sratim',
+                    url: url
+                }).catch((err) => {
+                    if (err.name !== 'AbortError') {
+                        copyFallback();
+                    }
+                });
+            } else {
+                copyFallback();
+            }
+        }
+    </script>
 </body>
 </html>
