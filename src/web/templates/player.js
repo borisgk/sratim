@@ -398,6 +398,10 @@
                     let isAppending = false;
                     let hasInitializedPlayback = false;
                     let isQuotaExceeded = false;
+                    let maxBufferAhead = 180; // Target ~180s (3 minutes) of forward buffer
+                    let peakBufferAhead = 180; // High-water mark reached during filling (e.g. ~205-215s due to GOP sizing)
+                    let lastRefillTime = Date.now();
+                    let isBufferPaused = false;
 
                     let isEvicting = false;
                     function evictOldBuffer(aggressive = false) {
@@ -441,6 +445,7 @@
                                     const currentAhead = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1) - video.currentTime;
                                     if (currentAhead > 30) {
                                         maxBufferAhead = Math.max(45, Math.floor(currentAhead * 0.9));
+                                        peakBufferAhead = maxBufferAhead;
                                     }
                                 }
                                 setTimeout(processQueue, 500);
@@ -474,11 +479,6 @@
                     };
                     sourceBuffer.addEventListener('updateend', onUpdateEnd);
 
-                    let maxBufferAhead = 180; // Target ~180s (3 minutes) of forward buffer
-                    let lastRefillTime = Date.now();
-                    let bufferAtPause = 0;
-                    let isBufferPaused = false;
-
                     while (!signal.aborted) {
                         // Double-buffering: throttle pre-reading to max 2 chunks while MSE is appending
                         if (isQuotaExceeded || queue.length >= 2) {
@@ -491,16 +491,19 @@
                             const bufferAhead = end - video.currentTime;
                             const timeSinceRefill = Date.now() - lastRefillTime;
 
-                            // Enter paused state once buffer reaches deep capacity
-                            if (!isBufferPaused && bufferAhead >= maxBufferAhead) {
-                                isBufferPaused = true;
-                                bufferAtPause = bufferAhead;
-                                lastRefillTime = Date.now();
-                            } else if (isBufferPaused) {
-                                const bufferConsumed = bufferAtPause - bufferAhead;
-                                // Resume reading based on actual buffer consumed AND elapsed interval:
+                            if (!isBufferPaused) {
+                                // While actively streaming: pause once we reach our target capacity (or restore back to peak capacity)
+                                const refillTarget = Math.min(240, Math.max(maxBufferAhead, peakBufferAhead));
+                                if (bufferAhead >= refillTarget || bufferAhead >= (peakBufferAhead - 1)) {
+                                    isBufferPaused = true;
+                                    peakBufferAhead = Math.min(240, Math.max(maxBufferAhead, bufferAhead));
+                                    lastRefillTime = Date.now();
+                                }
+                            } else {
+                                // In paused state: check if we should trigger a refill burst
+                                const bufferConsumed = peakBufferAhead - bufferAhead;
                                 // 1. Safety floor: buffer dropped to <= 30s -> refill immediately
-                                // 2. Interval refill: 15s elapsed AND at least 10s of media played since pausing -> refill burst
+                                // 2. Interval refill: at least 15s elapsed AND at least 10s of media played since peak -> refill burst
                                 if (bufferAhead <= 30 || (timeSinceRefill >= 15000 && bufferConsumed >= 10)) {
                                     isBufferPaused = false;
                                     lastRefillTime = Date.now();

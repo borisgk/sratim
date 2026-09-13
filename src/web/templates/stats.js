@@ -47,7 +47,7 @@
     function recordBufferSample() {
         const now = performance.now();
         const forwardBuffer = getForwardBuffer();
-        const isStreaming = (statsState.networkActivity === 'Streaming') && (now - (statsState.lastChunkTime || 0) < 1500);
+        const isStreaming = (now - (statsState.lastChunkTime || 0)) < 1500;
 
         // Avoid pushing redundant samples when polled closely within 400ms
         if (now - lastBufferSampleTime < 400 && statsState.bufferHistory.length > 0) {
@@ -112,6 +112,11 @@
     };
 
     window.__onStreamState = function (state) {
+        const now = performance.now();
+        // Do not immediately overwrite active Streaming status if chunks arrived within the last 1000ms
+        if (state !== 'Streaming' && (now - (statsState.lastChunkTime || 0)) < 1000) {
+            return;
+        }
         statsState.networkActivity = state;
     };
 
@@ -123,7 +128,7 @@
         }
 
         if (statsState.recentChunks.length < 2) {
-            if (statsState.networkActivity === 'Streaming') {
+            if (statsState.networkActivity === 'Streaming' || (now - (statsState.lastChunkTime || 0)) < 1500) {
                 return statsState.lastSpeedKbps;
             }
             return 0;
