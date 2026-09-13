@@ -474,8 +474,9 @@
                     };
                     sourceBuffer.addEventListener('updateend', onUpdateEnd);
 
-                    let maxBufferAhead = 180; // Buffer ahead up to 180s (3 minutes)
+                    let maxBufferAhead = 180; // Target ~180s (3 minutes) of forward buffer
                     let lastRefillTime = Date.now();
+                    let bufferAtPause = 0;
                     let isBufferPaused = false;
 
                     while (!signal.aborted) {
@@ -493,12 +494,16 @@
                             // Enter paused state once buffer reaches deep capacity
                             if (!isBufferPaused && bufferAhead >= maxBufferAhead) {
                                 isBufferPaused = true;
+                                bufferAtPause = bufferAhead;
+                                lastRefillTime = Date.now();
                             } else if (isBufferPaused) {
-                                // Refill based on buffer amount AND interval from last refill:
+                                const bufferConsumed = bufferAtPause - bufferAhead;
+                                // Resume reading based on actual buffer consumed AND elapsed interval:
                                 // 1. Safety floor: buffer dropped to <= 30s -> refill immediately
-                                // 2. Interval refill: at least 15s elapsed AND at least 12s of media consumed -> refill burst
-                                if (bufferAhead <= 30 || (timeSinceRefill >= 15000 && bufferAhead <= (maxBufferAhead - 12))) {
+                                // 2. Interval refill: 15s elapsed AND at least 10s of media played since pausing -> refill burst
+                                if (bufferAhead <= 30 || (timeSinceRefill >= 15000 && bufferConsumed >= 10)) {
                                     isBufferPaused = false;
+                                    lastRefillTime = Date.now();
                                 }
                             }
 
