@@ -565,11 +565,11 @@
         const forwardBuffer = recordBufferSample();
 
         fields.bufferSec.innerText = `${forwardBuffer.toFixed(2)} s`;
-        const bufferTarget = 180.0; // 180 seconds target forward buffer
+        const bufferTarget = (typeof window !== 'undefined' && typeof window.__bufferTarget === 'number') ? window.__bufferTarget : 180.0;
         const fillPct = Math.min(100, Math.max(0, (forwardBuffer / bufferTarget) * 100));
         fields.bufferFill.style.width = `${fillPct}%`;
 
-        if (forwardBuffer >= 30) {
+        if (forwardBuffer >= Math.min(30, bufferTarget * 0.6)) {
             fields.bufferFill.style.background = 'linear-gradient(90deg, #10b981, #34d399)';
             fields.bufferSec.className = 'highlight-green';
         } else if (forwardBuffer >= 10) {

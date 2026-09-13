@@ -398,10 +398,11 @@
                     let isAppending = false;
                     let hasInitializedPlayback = false;
                     let isQuotaExceeded = false;
-                    let maxBufferAhead = 180; // Target ~180s (3 minutes) of forward buffer
-                    let peakBufferAhead = 180; // High-water mark reached during filling (e.g. ~205-215s due to GOP sizing)
-                    let lastRefillTime = Date.now();
-                    let isBufferPaused = false;
+                    let maxCapacity = 210; // Upper capacity ceiling in seconds
+                    let isRefilling = true;
+                    let lastRefillEndTime = Date.now();
+                    let bufferAtRefillEnd = 0;
+                    window.__bufferTarget = maxCapacity;
 
                     let isEvicting = false;
                     function evictOldBuffer(aggressive = false) {
@@ -443,10 +444,12 @@
                                 evictOldBuffer(true);
                                 if (sourceBuffer.buffered.length > 0) {
                                     const currentAhead = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1) - video.currentTime;
-                                    if (currentAhead > 30) {
-                                        maxBufferAhead = Math.max(45, Math.floor(currentAhead * 0.9));
-                                        peakBufferAhead = maxBufferAhead;
-                                    }
+                                    // Adapt capacity to actual device quota limit
+                                    maxCapacity = Math.max(25, Math.floor(currentAhead * 0.9));
+                                    window.__bufferTarget = maxCapacity;
+                                    bufferAtRefillEnd = currentAhead;
+                                    isRefilling = false;
+                                    lastRefillEndTime = Date.now();
                                 }
                                 setTimeout(processQueue, 500);
                             } else {
@@ -489,36 +492,42 @@
                         if (sourceBuffer.buffered.length > 0) {
                             const end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
                             const bufferAhead = end - video.currentTime;
-                            const timeSinceRefill = Date.now() - lastRefillTime;
 
-                            if (!isBufferPaused) {
-                                // While actively streaming: pause once we reach our target capacity (or restore back to peak capacity)
-                                const refillTarget = Math.min(240, Math.max(maxBufferAhead, peakBufferAhead));
-                                if (bufferAhead >= refillTarget || bufferAhead >= (peakBufferAhead - 1)) {
-                                    isBufferPaused = true;
-                                    peakBufferAhead = Math.min(240, Math.max(maxBufferAhead, bufferAhead));
-                                    lastRefillTime = Date.now();
+                            if (isRefilling) {
+                                // Actively refilling buffer up to capacity
+                                if (bufferAhead >= maxCapacity) {
+                                    isRefilling = false;
+                                    lastRefillEndTime = Date.now();
+                                    bufferAtRefillEnd = bufferAhead;
+                                    if (window.__onStreamState) {
+                                        window.__onStreamState('Buffered ' + Math.round(bufferAhead) + 's (Paced)');
+                                    }
                                 }
                             } else {
-                                // In paused state: check if we should trigger a refill burst
-                                const bufferConsumed = peakBufferAhead - bufferAhead;
-                                // 1. Safety floor: buffer dropped to <= 30s -> refill immediately
-                                // 2. Interval refill: at least 15s elapsed AND at least 10s of media played since peak -> refill burst
-                                if (bufferAhead <= 30 || (timeSinceRefill >= 15000 && bufferConsumed >= 10)) {
-                                    isBufferPaused = false;
-                                    lastRefillTime = Date.now();
+                                // In waiting interval between refills: check triggers
+                                const timeSinceRefill = Date.now() - lastRefillEndTime;
+                                const bufferConsumed = bufferAtRefillEnd - bufferAhead;
+
+                                // Refill triggers:
+                                // 1. 15s elapsed since last refill
+                                // 2. Rapid consumption: buffer consumed >= 15s (e.g. 2x playback speed)
+                                // 3. Safety floor: buffer dropped to <= 15s
+                                if (timeSinceRefill >= 15000 || bufferConsumed >= 15 || bufferAhead <= 15) {
+                                    isRefilling = true;
+                                    if (window.__onStreamState) {
+                                        window.__onStreamState('Streaming');
+                                    }
                                 }
                             }
 
-                            if (isBufferPaused) {
-                                if (window.__onStreamState) window.__onStreamState('Buffered ' + Math.round(bufferAhead) + 's (Paced)');
-                                await new Promise(r => setTimeout(r, 250));
+                            if (!isRefilling) {
+                                await new Promise(r => setTimeout(r, 200));
                                 continue;
                             }
                         }
 
                         const { done, value } = await reader.read();
-                        lastRefillTime = Date.now();
+                        lastRefillEndTime = Date.now();
                         if (done) {
                             const currentPos = currentSeekTime + (video.currentTime || 0);
                             const isPremature = !signal.aborted && (DURATION <= 0 || (currentPos < DURATION - 5));
