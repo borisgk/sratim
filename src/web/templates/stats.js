@@ -19,7 +19,62 @@
         networkActivity: 'Idle',
         recentChunks: [], // { time: ms, bytes: number }
         lastSpeedKbps: 0,
+        bufferHistory: [], // { time: ms, buffer: number, isStreaming: boolean }
     };
+
+    let lastBufferSampleTime = 0;
+
+    function getForwardBuffer() {
+        let forwardBuffer = 0;
+        try {
+            const buf = (typeof currentSourceBuffer !== 'undefined' && currentSourceBuffer && currentSourceBuffer.buffered)
+                ? currentSourceBuffer.buffered
+                : (typeof video !== 'undefined' && video ? video.buffered : null);
+
+            if (buf && typeof video !== 'undefined' && video && typeof video.currentTime === 'number') {
+                const curTime = video.currentTime;
+                for (let i = 0; i < buf.length; i++) {
+                    if (curTime >= buf.start(i) && curTime <= buf.end(i)) {
+                        forwardBuffer = Math.max(0, buf.end(i) - curTime);
+                        break;
+                    }
+                }
+            }
+        } catch (e) {}
+        return forwardBuffer;
+    }
+
+    function recordBufferSample() {
+        const now = performance.now();
+        const forwardBuffer = getForwardBuffer();
+        const isStreaming = (statsState.networkActivity === 'Streaming') && (now - (statsState.lastChunkTime || 0) < 1500);
+
+        // Avoid pushing redundant samples when polled closely within 400ms
+        if (now - lastBufferSampleTime < 400 && statsState.bufferHistory.length > 0) {
+            const last = statsState.bufferHistory[statsState.bufferHistory.length - 1];
+            last.buffer = forwardBuffer;
+            last.isStreaming = last.isStreaming || isStreaming;
+            return forwardBuffer;
+        }
+
+        lastBufferSampleTime = now;
+        statsState.bufferHistory.push({
+            time: now,
+            buffer: forwardBuffer,
+            isStreaming: isStreaming,
+        });
+
+        // Retain rolling window of 90 seconds (90,000 ms)
+        const cutoff = now - 90000;
+        while (statsState.bufferHistory.length > 0 && statsState.bufferHistory[0].time < cutoff) {
+            statsState.bufferHistory.shift();
+        }
+
+        return forwardBuffer;
+    }
+
+    // Keep background buffer history alive so opening the panel immediately shows past timeline
+    setInterval(recordBufferSample, 500);
 
     // Public hooks for StreamEngine telemetry
     window.__onStreamResponse = function (response) {
@@ -37,6 +92,7 @@
             if (ast) statsState.actualStartTime = parseFloat(ast);
 
             statsState.networkActivity = 'Streaming';
+            statsState.lastChunkTime = performance.now();
         } catch (e) {}
     };
 
@@ -45,6 +101,7 @@
         const now = performance.now();
         statsState.totalBytesDownloaded += byteLength;
         statsState.networkActivity = 'Streaming';
+        statsState.lastChunkTime = now;
         statsState.recentChunks.push({ time: now, bytes: byteLength });
 
         // Retain rolling window of last 3 seconds for speed calculation
@@ -163,6 +220,20 @@
                 <div class="stats-label">Total Transferred</div>
                 <div class="stats-value" id="sf-transferred">0.00 MB</div>
             </div>
+            <div class="stats-chart-section">
+                <div class="stats-chart-header">
+                    <div class="stats-chart-title-wrap">
+                        <span class="stats-chart-title">Realtime Buffer Timeline (Last 90s)</span>
+                    </div>
+                    <div class="stats-chart-legend">
+                        <span><i class="legend-dot legend-stream"></i>Refill Burst</span>
+                        <span><i class="legend-dot legend-buffer"></i>Buffer Level</span>
+                    </div>
+                </div>
+                <div class="stats-chart-canvas-wrap">
+                    <canvas id="sf-buffer-canvas"></canvas>
+                </div>
+            </div>
         `;
 
         wrapper.appendChild(panelEl);
@@ -195,6 +266,159 @@
         }
 
         return panelEl;
+    }
+
+    // --- Realtime Buffer Timeline Chart (Canvas) ---
+    function renderBufferChart() {
+        const canvas = document.getElementById('sf-buffer-canvas');
+        if (!canvas) return;
+
+        const dpr = window.devicePixelRatio || 1;
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+
+        const targetW = Math.round(rect.width * dpr);
+        const targetH = Math.round(rect.height * dpr);
+        if (canvas.width !== targetW || canvas.height !== targetH) {
+            canvas.width = targetW;
+            canvas.height = targetH;
+        }
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        ctx.save();
+        ctx.scale(dpr, dpr);
+        const w = rect.width;
+        const h = rect.height;
+
+        ctx.clearRect(0, 0, w, h);
+
+        const history = statsState.bufferHistory;
+        const now = performance.now();
+        const windowMs = 90000; // 90 seconds timeline window
+        const startTime = now - windowMs;
+
+        // Calculate Y-axis max
+        let maxVal = 60;
+        for (const pt of history) {
+            if (pt.buffer > maxVal) maxVal = pt.buffer;
+        }
+        const yMax = Math.max(90, Math.ceil((maxVal * 1.15) / 30) * 30);
+
+        const leftMargin = 32;
+        const rightMargin = 10;
+        const topMargin = 8;
+        const bottomMargin = 16;
+        const chartW = w - leftMargin - rightMargin;
+        const chartH = h - topMargin - bottomMargin;
+
+        // 1. Draw horizontal grid lines & Y labels
+        const gridStep = (yMax > 150) ? 60 : 30;
+        ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
+        ctx.lineWidth = 1;
+
+        for (let val = 0; val <= yMax; val += gridStep) {
+            const y = topMargin + chartH - (val / yMax) * chartH;
+            ctx.strokeStyle = (val === 0) ? 'rgba(255, 255, 255, 0.18)' : 'rgba(255, 255, 255, 0.07)';
+            ctx.beginPath();
+            ctx.moveTo(leftMargin, y);
+            ctx.lineTo(w - rightMargin, y);
+            ctx.stroke();
+
+            ctx.fillStyle = 'rgba(148, 163, 184, 0.6)';
+            ctx.textAlign = 'right';
+            ctx.fillText(`${val}s`, leftMargin - 4, y + 3);
+        }
+
+        // 2. Draw time ticks on bottom (0s, -30s, -60s, -90s)
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.45)';
+        ctx.textAlign = 'center';
+        const timeTicks = [0, 30, 60, 90];
+        for (const t of timeTicks) {
+            const x = leftMargin + chartW - (t / 90) * chartW;
+            const label = (t === 0) ? 'Now' : `-${t}s`;
+            ctx.fillText(label, x, h - 3);
+        }
+
+        if (history.length < 2) {
+            ctx.restore();
+            return;
+        }
+
+        // 3. Draw streaming burst activity background bars
+        for (let i = 0; i < history.length; i++) {
+            const pt = history[i];
+            if (pt.isStreaming) {
+                const x0 = leftMargin + Math.max(0, ((pt.time - startTime) / windowMs)) * chartW;
+                const nextTime = (i < history.length - 1) ? history[i + 1].time : (pt.time + 350);
+                const x1 = leftMargin + Math.min(chartW, ((nextTime - startTime) / windowMs)) * chartW;
+                const bandW = Math.max(2, x1 - x0);
+                ctx.fillStyle = 'rgba(56, 189, 248, 0.12)';
+                ctx.fillRect(x0, topMargin, bandW, chartH);
+            }
+        }
+
+        // 4. Build path points
+        const points = [];
+        for (const pt of history) {
+            if (pt.time < startTime) continue;
+            const x = leftMargin + Math.max(0, Math.min(1, (pt.time - startTime) / windowMs)) * chartW;
+            const clampedBuf = Math.max(0, Math.min(yMax, pt.buffer));
+            const y = topMargin + chartH - (clampedBuf / yMax) * chartH;
+            points.push({ x, y, buffer: pt.buffer });
+        }
+
+        if (points.length < 2) {
+            ctx.restore();
+            return;
+        }
+
+        // 5. Draw Area Gradient
+        const gradient = ctx.createLinearGradient(0, topMargin, 0, topMargin + chartH);
+        gradient.addColorStop(0, 'rgba(52, 211, 153, 0.35)'); // emerald
+        gradient.addColorStop(0.6, 'rgba(56, 189, 248, 0.12)'); // cyan
+        gradient.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
+
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, topMargin + chartH);
+        for (const p of points) {
+            ctx.lineTo(p.x, p.y);
+        }
+        ctx.lineTo(points[points.length - 1].x, topMargin + chartH);
+        ctx.closePath();
+        ctx.fillStyle = gradient;
+        ctx.fill();
+
+        // 6. Draw Stroke Line
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) {
+            ctx.lineTo(points[i].x, points[i].y);
+        }
+        ctx.strokeStyle = '#34d399';
+        ctx.lineWidth = 1.8;
+        ctx.shadowColor = 'rgba(52, 211, 153, 0.5)';
+        ctx.shadowBlur = 4;
+        ctx.stroke();
+
+        // Reset shadow
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = 'transparent';
+
+        // 7. Draw Pulse Dot at Current Head (Rightmost point)
+        const lastP = points[points.length - 1];
+        ctx.beginPath();
+        ctx.arc(lastP.x, lastP.y, 5, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(52, 211, 153, 0.3)';
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(lastP.x, lastP.y, 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+
+        ctx.restore();
     }
 
     // --- Metric Formatter & Telemetry Poll ---
@@ -333,23 +557,10 @@
         }
 
         // 13. Buffer Health & Meter
-        let forwardBuffer = 0;
-        try {
-            const buf = (typeof currentSourceBuffer !== 'undefined' && currentSourceBuffer && currentSourceBuffer.buffered)
-                ? currentSourceBuffer.buffered
-                : video.buffered;
-
-            const curTime = (typeof video.currentTime === 'number') ? video.currentTime : 0;
-            for (let i = 0; i < buf.length; i++) {
-                if (curTime >= buf.start(i) && curTime <= buf.end(i)) {
-                    forwardBuffer = Math.max(0, buf.end(i) - curTime);
-                    break;
-                }
-            }
-        } catch (e) {}
+        const forwardBuffer = recordBufferSample();
 
         fields.bufferSec.innerText = `${forwardBuffer.toFixed(2)} s`;
-        const bufferTarget = 60.0; // 60 seconds target buffer
+        const bufferTarget = 180.0; // 180 seconds target forward buffer
         const fillPct = Math.min(100, Math.max(0, (forwardBuffer / bufferTarget) * 100));
         fields.bufferFill.style.width = `${fillPct}%`;
 
@@ -370,6 +581,9 @@
         // 14. Total Transferred
         const transferredMb = (statsState.totalBytesDownloaded / (1024 * 1024)).toFixed(2);
         fields.transferred.innerText = `${transferredMb} MB`;
+
+        // 15. Realtime Buffer Timeline Chart
+        renderBufferChart();
     }
 
     // --- SysadminStats Controller ---
