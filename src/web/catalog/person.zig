@@ -311,20 +311,21 @@ pub fn generatePersonHtml(
         try directed_section_buf.appendSlice(allocator, sec_header);
     }
 
-    // Build starring movies section
-    var starring_section_buf = std.ArrayList(u8).empty;
-    defer starring_section_buf.deinit(allocator);
+    // Build unified "In your library" section with both movies and shows
+    var library_section_buf = std.ArrayList(u8).empty;
+    defer library_section_buf.deinit(allocator);
 
-    var starring_movie_ids = std.AutoHashMap(i64, void).init(allocator);
-    defer starring_movie_ids.deinit();
+    var library_movie_ids = std.AutoHashMap(i64, void).init(allocator);
+    defer library_movie_ids.deinit();
 
-    var starring_cards_buf = std.ArrayList(u8).empty;
-    defer starring_cards_buf.deinit(allocator);
+    var library_cards_buf = std.ArrayList(u8).empty;
+    defer library_cards_buf.deinit(allocator);
 
+    // 1. Movies (cast roles, avoiding duplicates if already shown in directed section)
     for (credits) |c| {
         if (c.is_cast) {
-            if (!starring_movie_ids.contains(c.movie_id)) {
-                try starring_movie_ids.put(c.movie_id, {});
+            if (!library_movie_ids.contains(c.movie_id) and !directed_movie_ids.contains(c.movie_id)) {
+                try library_movie_ids.put(c.movie_id, {});
                 if (cat.getMovieById(allocator, c.movie_id) catch null) |m| {
                     defer {
                         var mut_m = m;
@@ -337,30 +338,13 @@ pub fn generatePersonHtml(
                             break;
                         }
                     }
-                    try cards.appendMovieCard(&starring_cards_buf, allocator, m.id, m.file_path, m.clean_name, m.title, m.poster_path, m.tmdb_id, progress_pct, is_admin, null);
+                    try cards.appendMovieCard(&library_cards_buf, allocator, m.id, m.file_path, m.clean_name, m.title, m.poster_path, m.tmdb_id, progress_pct, is_admin, null);
                 }
             }
         }
     }
 
-    if (starring_movie_ids.count() > 0) {
-        const sec_title: []const u8 = if (directed_movie_ids.count() > 0) "Starring Roles" else "Movies in your library";
-        const sec_header = try std.fmt.allocPrint(allocator,
-            \\<div class="media-section">
-            \\    <h2 class="section-title">{s}</h2>
-            \\    <div class="grid movie-grid">
-            \\{s}
-            \\    </div>
-            \\</div>
-        , .{ sec_title, starring_cards_buf.items });
-        defer allocator.free(sec_header);
-        try starring_section_buf.appendSlice(allocator, sec_header);
-    }
-
-    // Build TV shows section
-    var shows_section_buf = std.ArrayList(u8).empty;
-    defer shows_section_buf.deinit(allocator);
-
+    // 2. TV Shows
     const person_shows = cat.getShowsByPerson(allocator, person_id) catch &.{};
     defer {
         for (person_shows) |*s| {
@@ -374,26 +358,21 @@ pub fn generatePersonHtml(
         if (s.tmdb_id) |tid| {
             library_tmdb_ids.put(tid, {}) catch {};
         }
+        try cards.appendShowCard(&library_cards_buf, allocator, s.id, s.title, s.poster_path, s.tmdb_id, is_admin);
     }
 
-    if (person_shows.len > 0) {
-        var show_cards_buf = std.ArrayList(u8).empty;
-        defer show_cards_buf.deinit(allocator);
-
-        for (person_shows) |s| {
-            try cards.appendShowCard(&show_cards_buf, allocator, s.id, s.title, s.poster_path, s.tmdb_id, is_admin);
-        }
-
+    const total_library_items = library_movie_ids.count() + person_shows.len;
+    if (total_library_items > 0) {
         const sec_header = try std.fmt.allocPrint(allocator,
             \\<div class="media-section">
-            \\    <h2 class="section-title">TV Shows in your library</h2>
+            \\    <h2 class="section-title">In your library</h2>
             \\    <div class="grid movie-grid">
             \\{s}
             \\    </div>
             \\</div>
-        , .{ show_cards_buf.items });
+        , .{ library_cards_buf.items });
         defer allocator.free(sec_header);
-        try shows_section_buf.appendSlice(allocator, sec_header);
+        try library_section_buf.appendSlice(allocator, sec_header);
     }
 
     // Build complete TMDB filmography shelf
@@ -522,7 +501,7 @@ pub fn generatePersonHtml(
     defer total_unique_movies.deinit();
     var d_it = directed_movie_ids.keyIterator();
     while (d_it.next()) |k| try total_unique_movies.put(k.*, {});
-    var s_it = starring_movie_ids.keyIterator();
+    var s_it = library_movie_ids.keyIterator();
     while (s_it.next()) |k| try total_unique_movies.put(k.*, {});
 
     const movie_count = total_unique_movies.count();
@@ -574,8 +553,9 @@ pub fn generatePersonHtml(
         .{ "__PERSON_BIO_HTML__", bio_buf.items },
         .{ "__PERSON_REFRESH_BTN__", refresh_btn_html },
         .{ "__PERSON_DIRECTED_SECTION__", directed_section_buf.items },
-        .{ "__PERSON_STARRING_SECTION__", starring_section_buf.items },
-        .{ "__PERSON_SHOWS_SECTION__", shows_section_buf.items },
+        .{ "__PERSON_LIBRARY_SECTION__", library_section_buf.items },
+        .{ "__PERSON_STARRING_SECTION__", library_section_buf.items },
+        .{ "__PERSON_SHOWS_SECTION__", "" },
         .{ "__PERSON_FILMOGRAPHY_SECTION__", filmography_section_buf.items },
     };
 
