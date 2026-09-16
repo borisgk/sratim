@@ -116,7 +116,149 @@ pub fn serializeReportToJson(allocator: std.mem.Allocator, report: *const analyt
 
         try appendFormatted(&json, allocator, ",\"seconds\":{d},\"episodes_played\":{d},\"plays\":{d}}}", .{ s.seconds_watched, s.episodes_played, s.play_count });
     }
-    try json.appendSlice(allocator, "],\"user_activity\":[");
+    try json.appendSlice(allocator, "],\"top_actors\":[");
+    for (report.top_actors, 0..) |act, i| {
+        if (i > 0) try json.appendSlice(allocator, ",");
+        try appendFormatted(&json, allocator, "{{\"person_id\":{d},\"name\":\"", .{act.person_id});
+        try escapeJsonString(&json, allocator, act.name);
+        try json.appendSlice(allocator, "\"");
+
+        if (act.profile_path) |p| {
+            try json.appendSlice(allocator, ",\"profile_path\":\"");
+            try escapeJsonString(&json, allocator, p);
+            try json.appendSlice(allocator, "\"");
+        } else {
+            try json.appendSlice(allocator, ",\"profile_path\":null");
+        }
+
+        if (act.known_for_department) |d| {
+            try json.appendSlice(allocator, ",\"department\":\"");
+            try escapeJsonString(&json, allocator, d);
+            try json.appendSlice(allocator, "\"");
+        } else {
+            try json.appendSlice(allocator, ",\"department\":null");
+        }
+
+        if (act.top_role) |r| {
+            try json.appendSlice(allocator, ",\"top_role\":\"");
+            try escapeJsonString(&json, allocator, r);
+            try json.appendSlice(allocator, "\"");
+        } else {
+            try json.appendSlice(allocator, ",\"top_role\":null");
+        }
+
+        try appendFormatted(&json, allocator, ",\"seconds\":{d},\"plays\":{d},\"titles_count\":{d}}}", .{ act.seconds_watched, act.play_count, act.titles_count });
+    }
+
+    try json.appendSlice(allocator, "],\"top_directors\":[");
+    for (report.top_directors, 0..) |dir, i| {
+        if (i > 0) try json.appendSlice(allocator, ",");
+        try appendFormatted(&json, allocator, "{{\"person_id\":{d},\"name\":\"", .{dir.person_id});
+        try escapeJsonString(&json, allocator, dir.name);
+        try json.appendSlice(allocator, "\"");
+
+        if (dir.profile_path) |p| {
+            try json.appendSlice(allocator, ",\"profile_path\":\"");
+            try escapeJsonString(&json, allocator, p);
+            try json.appendSlice(allocator, "\"");
+        } else {
+            try json.appendSlice(allocator, ",\"profile_path\":null");
+        }
+
+        if (dir.top_role) |r| {
+            try json.appendSlice(allocator, ",\"top_role\":\"");
+            try escapeJsonString(&json, allocator, r);
+            try json.appendSlice(allocator, "\"");
+        } else {
+            try json.appendSlice(allocator, ",\"top_role\":null");
+        }
+
+        try appendFormatted(&json, allocator, ",\"seconds\":{d},\"plays\":{d},\"titles_count\":{d}}}", .{ dir.seconds_watched, dir.play_count, dir.titles_count });
+    }
+
+    try json.appendSlice(allocator, "],\"trivia\":{");
+
+    // 1. Ubiquitous actor
+    if (report.trivia.ubiquitous_actor) |u| {
+        try appendFormatted(&json, allocator, "\"ubiquitous_actor\":{{\"person_id\":{d},\"name\":\"", .{u.person_id});
+        try escapeJsonString(&json, allocator, u.name);
+        try json.appendSlice(allocator, "\"");
+
+        if (u.profile_path) |p| {
+            try json.appendSlice(allocator, ",\"profile_path\":\"");
+            try escapeJsonString(&json, allocator, p);
+            try json.appendSlice(allocator, "\"");
+        } else {
+            try json.appendSlice(allocator, ",\"profile_path\":null");
+        }
+
+        try appendFormatted(&json, allocator, ",\"title_count\":{d},\"sample_titles\":[", .{u.title_count});
+        for (u.sample_titles, 0..) |t, idx| {
+            if (idx > 0) try json.appendSlice(allocator, ",");
+            try json.appendSlice(allocator, "\"");
+            try escapeJsonString(&json, allocator, t);
+            try json.appendSlice(allocator, "\"");
+        }
+        try json.appendSlice(allocator, "]}");
+    } else {
+        try json.appendSlice(allocator, "\"ubiquitous_actor\":null");
+    }
+
+    // 2. Collaborators
+    if (report.trivia.collaborators) |c| {
+        try appendFormatted(&json, allocator, ",\"collaborators\":{{\"person_a_id\":{d},\"person_a_name\":\"", .{c.person_a_id});
+        try escapeJsonString(&json, allocator, c.person_a_name);
+        try json.appendSlice(allocator, "\",\"person_a_role\":\"");
+        try escapeJsonString(&json, allocator, c.person_a_role);
+        try appendFormatted(&json, allocator, "\",\"person_b_id\":{d},\"person_b_name\":\"", .{c.person_b_id});
+        try escapeJsonString(&json, allocator, c.person_b_name);
+        try json.appendSlice(allocator, "\",\"person_b_role\":\"");
+        try escapeJsonString(&json, allocator, c.person_b_role);
+        try appendFormatted(&json, allocator, "\",\"shared_title_count\":{d},\"shared_titles\":[", .{c.shared_title_count});
+        for (c.shared_titles, 0..) |t, idx| {
+            if (idx > 0) try json.appendSlice(allocator, ",");
+            try json.appendSlice(allocator, "\"");
+            try escapeJsonString(&json, allocator, t);
+            try json.appendSlice(allocator, "\"");
+        }
+        try json.appendSlice(allocator, "]}");
+    } else {
+        try json.appendSlice(allocator, ",\"collaborators\":null");
+    }
+
+    // 3. Title Crossover
+    if (report.trivia.crossover) |x| {
+        try appendFormatted(&json, allocator, ",\"crossover\":{{\"title_a_id\":{d},\"title_a_name\":\"", .{x.title_a_id});
+        try escapeJsonString(&json, allocator, x.title_a_name);
+        try json.appendSlice(allocator, if (x.title_a_is_show) "\",\"title_a_is_show\":true" else "\",\"title_a_is_show\":false");
+
+        try appendFormatted(&json, allocator, ",\"title_b_id\":{d},\"title_b_name\":\"", .{x.title_b_id});
+        try escapeJsonString(&json, allocator, x.title_b_name);
+        try json.appendSlice(allocator, if (x.title_b_is_show) "\",\"title_b_is_show\":true" else "\",\"title_b_is_show\":false");
+
+        try appendFormatted(&json, allocator, ",\"shared_actor_count\":{d},\"shared_actors\":[", .{x.shared_actor_count});
+        for (x.shared_actors, 0..) |a, idx| {
+            if (idx > 0) try json.appendSlice(allocator, ",");
+            try json.appendSlice(allocator, "\"");
+            try escapeJsonString(&json, allocator, a);
+            try json.appendSlice(allocator, "\"");
+        }
+        try json.appendSlice(allocator, "]}");
+    } else {
+        try json.appendSlice(allocator, ",\"crossover\":null");
+    }
+
+    // 4. Eras
+    try json.appendSlice(allocator, ",\"eras\":[");
+    for (report.trivia.eras, 0..) |e, idx| {
+        if (idx > 0) try json.appendSlice(allocator, ",");
+        try appendFormatted(&json, allocator, "{{\"decade\":{d},\"label\":\"", .{e.decade});
+        try escapeJsonString(&json, allocator, e.label);
+        try appendFormatted(&json, allocator, "\",\"seconds\":{d},\"title_count\":{d},\"percent\":{d}}}", .{ e.seconds_watched, e.title_count, e.percent });
+    }
+    try json.appendSlice(allocator, "]}");
+
+    try json.appendSlice(allocator, ",\"user_activity\":[");
 
     for (report.user_activity, 0..) |u, i| {
         if (i > 0) try json.appendSlice(allocator, ",");
@@ -243,4 +385,8 @@ test "serializeReportToJson: formats correctly without buffer overflow" {
 
     try std.testing.expect(json.len > 0);
     try std.testing.expect(std.mem.indexOf(u8, json, "999999999") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"top_actors\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"top_directors\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"trivia\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"eras\":") != null);
 }
