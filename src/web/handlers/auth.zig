@@ -58,6 +58,10 @@ pub fn handleLoginPost(request: *std.http.Server.Request, allocator: std.mem.All
         }
     }
 
+    // Extract query redirect before reading body, because readerExpectNone invalidates request.head string memory
+    const query_redirect = utils.parseQueryString(allocator, request.head.target, "redirect");
+    defer if (query_redirect) |r| allocator.free(r);
+
     // Read request body
     var reader = request.readerExpectNone(body_buf);
     var body_data = std.ArrayList(u8).empty;
@@ -72,7 +76,9 @@ pub fn handleLoginPost(request: *std.http.Server.Request, allocator: std.mem.All
 
     // Parse form data (application/x-www-form-urlencoded)
     var username: ?[]const u8 = null;
+    defer if (username) |u| allocator.free(u);
     var password: ?[]const u8 = null;
+    defer if (password) |p| allocator.free(p);
     var redirect: ?[]const u8 = null;
     defer if (redirect) |r| allocator.free(r);
 
@@ -96,7 +102,9 @@ pub fn handleLoginPost(request: *std.http.Server.Request, allocator: std.mem.All
     }
 
     if (redirect == null or redirect.?.len == 0) {
-        redirect = utils.parseQueryString(allocator, request.head.target, "redirect");
+        if (query_redirect) |qr| {
+            redirect = try allocator.dupe(u8, qr);
+        }
     }
 
     if (username == null or password == null) {

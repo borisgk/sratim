@@ -57,14 +57,16 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
 
         // Route: API v1 Login
         if (std.mem.eql(u8, target, "/api/v1/login")) {
-            api_v1_router.handleLogin(&request, allocator, database, logs_database, &resp_buf, io) catch return;
+            var body_buf: [8192]u8 = undefined;
+            api_v1_router.handleLogin(&request, allocator, database, logs_database, &body_buf, io) catch return;
             continue;
         }
 
         // Route: Login Page
         if (std.mem.startsWith(u8, target, "/login")) {
             if (method == .POST) {
-                auth_handler.handleLoginPost(&request, allocator, database, logs_database, &resp_buf, io) catch return;
+                var body_buf: [8192]u8 = undefined;
+                auth_handler.handleLoginPost(&request, allocator, database, logs_database, &body_buf, io) catch return;
             } else {
                 auth_handler.serveLoginPage(&request, allocator, "") catch return;
             }
