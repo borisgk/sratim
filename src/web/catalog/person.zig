@@ -357,6 +357,45 @@ pub fn generatePersonHtml(
         try starring_section_buf.appendSlice(allocator, sec_header);
     }
 
+    // Build TV shows section
+    var shows_section_buf = std.ArrayList(u8).empty;
+    defer shows_section_buf.deinit(allocator);
+
+    const person_shows = cat.getShowsByPerson(allocator, person_id) catch &.{};
+    defer {
+        for (person_shows) |*s| {
+            var mut = s.*;
+            mut.deinit(allocator);
+        }
+        allocator.free(person_shows);
+    }
+
+    for (person_shows) |s| {
+        if (s.tmdb_id) |tid| {
+            library_tmdb_ids.put(tid, {}) catch {};
+        }
+    }
+
+    if (person_shows.len > 0) {
+        var show_cards_buf = std.ArrayList(u8).empty;
+        defer show_cards_buf.deinit(allocator);
+
+        for (person_shows) |s| {
+            try cards.appendShowCard(&show_cards_buf, allocator, s.id, s.title, s.poster_path, s.tmdb_id, is_admin);
+        }
+
+        const sec_header = try std.fmt.allocPrint(allocator,
+            \\<div class="media-section">
+            \\    <h2 class="section-title">TV Shows in your library</h2>
+            \\    <div class="grid movie-grid">
+            \\{s}
+            \\    </div>
+            \\</div>
+        , .{ show_cards_buf.items });
+        defer allocator.free(sec_header);
+        try shows_section_buf.appendSlice(allocator, sec_header);
+    }
+
     // Build complete TMDB filmography shelf
     var filmography_section_buf = std.ArrayList(u8).empty;
     defer filmography_section_buf.deinit(allocator);
@@ -486,11 +525,25 @@ pub fn generatePersonHtml(
     var s_it = starring_movie_ids.keyIterator();
     while (s_it.next()) |k| try total_unique_movies.put(k.*, {});
 
-    const total_count = total_unique_movies.count();
-    const count_str = try std.fmt.allocPrint(allocator, "{d} {s}", .{
-        total_count,
-        if (total_count == 1) "movie" else "movies",
-    });
+    const movie_count = total_unique_movies.count();
+    const show_count = person_shows.len;
+    const count_str = if (movie_count > 0 and show_count > 0)
+        try std.fmt.allocPrint(allocator, "{d} {s} and {d} {s}", .{
+            movie_count,
+            if (movie_count == 1) "movie" else "movies",
+            show_count,
+            if (show_count == 1) "show" else "shows",
+        })
+    else if (show_count > 0)
+        try std.fmt.allocPrint(allocator, "{d} {s}", .{
+            show_count,
+            if (show_count == 1) "show" else "shows",
+        })
+    else
+        try std.fmt.allocPrint(allocator, "{d} {s}", .{
+            movie_count,
+            if (movie_count == 1) "movie" else "movies",
+        });
     defer allocator.free(count_str);
 
     var refresh_btn_html: []const u8 = "";
@@ -522,6 +575,7 @@ pub fn generatePersonHtml(
         .{ "__PERSON_REFRESH_BTN__", refresh_btn_html },
         .{ "__PERSON_DIRECTED_SECTION__", directed_section_buf.items },
         .{ "__PERSON_STARRING_SECTION__", starring_section_buf.items },
+        .{ "__PERSON_SHOWS_SECTION__", shows_section_buf.items },
         .{ "__PERSON_FILMOGRAPHY_SECTION__", filmography_section_buf.items },
     };
 

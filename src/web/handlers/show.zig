@@ -1,6 +1,9 @@
 const std = @import("std");
 const db_mod = @import("../../db/db.zig");
 const logging_mod = @import("../../db/logging.zig");
+const config_mod = @import("../../config.zig");
+const metadata_mod = @import("../../db/metadata.zig");
+const tmdb = @import("../../media/tmdb.zig");
 const template_engine = @import("../../core/template.zig");
 const global_css: []const u8 = @embedFile("../style.css");
 
@@ -17,8 +20,62 @@ fn escapeHtml(writer: *std.ArrayList(u8), allocator: std.mem.Allocator, input: [
     }
 }
 
+fn renderCastCard(
+    writer: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    person_id: i64,
+    name: []const u8,
+    character: ?[]const u8,
+    profile_path: ?[]const u8,
+) !void {
+    try writer.appendSlice(allocator, "        <a href=\"/person?id=");
+    var id_buf: [24]u8 = undefined;
+    const id_str = try std.fmt.bufPrint(&id_buf, "{d}", .{person_id});
+    try writer.appendSlice(allocator, id_str);
+    try writer.appendSlice(allocator, "\" class=\"cast-card\" data-name=\"");
+    try escapeHtml(writer, allocator, name);
+    try writer.appendSlice(allocator, "\" data-character=\"");
+    if (character) |ch| {
+        try escapeHtml(writer, allocator, ch);
+    }
+    try writer.appendSlice(allocator, "\">\n            <div class=\"cast-avatar-wrapper\">\n");
+
+    if (profile_path) |p| {
+        try writer.appendSlice(allocator, "                <img class=\"cast-avatar\" src=\"/images/profiles/w185");
+        try writer.appendSlice(allocator, p);
+        try writer.appendSlice(allocator, "\" alt=\"");
+        try escapeHtml(writer, allocator, name);
+        try writer.appendSlice(allocator, "\" loading=\"lazy\" onerror=\"if(!this.dataset.triedTmdb){this.dataset.triedTmdb='1';this.src='https://image.tmdb.org/t/p/w185");
+        try writer.appendSlice(allocator, p);
+        try writer.appendSlice(allocator, "';fetch('/api/images/cache?path='+encodeURIComponent('");
+        try writer.appendSlice(allocator, p);
+        try writer.appendSlice(allocator, "')).catch(()=>{});}else{this.style.display='none';this.nextElementSibling.style.display='flex';}\">\n");
+        try writer.appendSlice(allocator, "                <div class=\"cast-avatar-placeholder\" style=\"display:none;\">\n");
+        try writer.appendSlice(allocator, "                    <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" width=\"40\" height=\"40\">\n");
+        try writer.appendSlice(allocator, "                        <path d=\"M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2\"></path>\n");
+        try writer.appendSlice(allocator, "                        <circle cx=\"12\" cy=\"7\" r=\"4\"></circle>\n");
+        try writer.appendSlice(allocator, "                    </svg>\n                </div>\n");
+    } else {
+        try writer.appendSlice(allocator, "                <div class=\"cast-avatar-placeholder\">\n");
+        try writer.appendSlice(allocator, "                    <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" width=\"40\" height=\"40\">\n");
+        try writer.appendSlice(allocator, "                        <path d=\"M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2\"></path>\n");
+        try writer.appendSlice(allocator, "                        <circle cx=\"12\" cy=\"7\" r=\"4\"></circle>\n");
+        try writer.appendSlice(allocator, "                    </svg>\n                </div>\n");
+    }
+
+    try writer.appendSlice(allocator, "            </div>\n            <div class=\"cast-name\">");
+    try escapeHtml(writer, allocator, name);
+    try writer.appendSlice(allocator, "</div>\n            <div class=\"cast-character\">");
+    if (character) |ch| {
+        try escapeHtml(writer, allocator, ch);
+    }
+    try writer.appendSlice(allocator, "</div>\n        </a>\n");
+}
+
 pub fn handleShow(
     allocator: std.mem.Allocator,
+    io: std.Io,
+    config: *const config_mod.Config,
     request: *std.http.Server.Request,
     database: *db_mod.Database,
     logs_database: *db_mod.Database,
@@ -47,6 +104,56 @@ pub fn handleShow(
     const title = show.title;
     const backdrop_path = show.backdrop_path;
     const library_id = show.library_id;
+
+    // Fetch credits for this show
+    var credits = cat.getCreditsByShow(allocator, show_id) catch &.{};
+    defer {
+        for (credits) |*c| {
+            var mut = c.*;
+            mut.deinit(allocator);
+        }
+        allocator.free(credits);
+    }
+
+    // On-demand fetch from TMDB if missing and show has a TMDB ID
+    if (credits.len == 0 and show.tmdb_id != null and show.tmdb_id.? > 0 and !show.credits_fetched) {
+        const token = config.getTmdbToken();
+        if (token.len > 0) {
+            if (tmdb.fetchShowCredits(allocator, io, show.tmdb_id.?, token, config.tmdb_proxy)) |credits_parsed| {
+                defer credits_parsed.deinit();
+                metadata_mod.saveShowCredits(database, show.id, credits_parsed.value.cast, credits_parsed.value.crew) catch {};
+                for (credits_parsed.value.cast[0..@min(credits_parsed.value.cast.len, 20)]) |c| {
+                    if (c.profile_path) |p| {
+                        tmdb.downloadProfileImage(allocator, io, p, config.tmdb_proxy) catch {};
+                    }
+                }
+                for (credits_parsed.value.crew) |cr| {
+                    if (std.mem.eql(u8, cr.job, "Director") or
+                        std.mem.eql(u8, cr.job, "Creator") or
+                        std.mem.eql(u8, cr.job, "Series Director"))
+                    {
+                        if (cr.profile_path) |p| {
+                            tmdb.downloadProfileImage(allocator, io, p, config.tmdb_proxy) catch {};
+                        }
+                    }
+                }
+                for (credits) |*c| {
+                    var mut = c.*;
+                    mut.deinit(allocator);
+                }
+                allocator.free(credits);
+                credits = cat.getCreditsByShow(allocator, show_id) catch &.{};
+            } else |_| {
+                metadata_mod.markShowCreditsFetched(database, show.id);
+            }
+        }
+    }
+
+    var cast_count: usize = 0;
+    for (credits) |c| {
+        if (c.is_cast) cast_count += 1;
+    }
+    const has_cast = cast_count > 0;
 
     const episodes = try cat.getEpisodesByShow(allocator, show_id);
     defer {
@@ -82,11 +189,13 @@ pub fn handleShow(
         }
     }
 
-    // Generate Season Tabs HTML if multiple seasons
+    // Generate Season Tabs HTML if multiple seasons or single season with cast
+    const should_render_tabs = has_multiple_seasons or (seasons_list.items.len >= 1 and has_cast) or (seasons_list.items.len == 0 and has_cast);
+
     var tabs_buf = std.ArrayList(u8).empty;
     defer tabs_buf.deinit(allocator);
 
-    if (has_multiple_seasons) {
+    if (should_render_tabs) {
         try tabs_buf.appendSlice(allocator, "<div class=\"season-tabs-container\">\n    <nav class=\"season-tabs\" role=\"tablist\" aria-label=\"Seasons\">\n");
         for (seasons_list.items) |s| {
             const is_active = (s == default_season);
@@ -103,6 +212,19 @@ pub fn handleShow(
             defer allocator.free(tab_btn);
             try tabs_buf.appendSlice(allocator, tab_btn);
         }
+
+        if (has_cast) {
+            const cast_is_active = (default_season == -1);
+            const cast_active_class = if (cast_is_active) " active" else "";
+            const cast_aria_selected = if (cast_is_active) "true" else "false";
+            const cast_tab_btn = try std.fmt.allocPrint(allocator,
+                \\        <button type="button" role="tab" class="season-tab{s}" data-season="cast" aria-selected="{s}" aria-controls="season-cast">Cast</button>
+                \\
+            , .{ cast_active_class, cast_aria_selected });
+            defer allocator.free(cast_tab_btn);
+            try tabs_buf.appendSlice(allocator, cast_tab_btn);
+        }
+
         try tabs_buf.appendSlice(allocator, "    </nav>\n</div>\n");
     }
 
@@ -124,7 +246,7 @@ pub fn handleShow(
             }
             current_season = season;
 
-            const is_active = !has_multiple_seasons or (season == default_season);
+            const is_active = (!should_render_tabs and !has_cast) or (season == default_season);
             const active_class = if (is_active) " active" else "";
             const hide_style = if (is_active) "" else " style=\"display: none;\"";
 
@@ -205,6 +327,90 @@ pub fn handleShow(
         try seasons_buf.appendSlice(allocator, "<p class=\"no-episodes-msg\">No episodes found.</p>\n");
     }
 
+    // Generate Cast HTML
+    var cast_buf = std.ArrayList(u8).empty;
+    defer cast_buf.deinit(allocator);
+
+    if (has_cast) {
+        const cast_is_active = (default_season == -1);
+        const cast_active_class = if (cast_is_active) " active" else "";
+        const cast_hide_style = if (cast_is_active) "" else " style=\"display: none;\"";
+
+        const cast_header = try std.fmt.allocPrint(allocator,
+            \\<section class="season-section show-cast-section{s}" id="season-cast" data-season="cast"{s}>
+            \\    <h2 class="season-heading">Cast</h2>
+            \\
+        , .{ cast_active_class, cast_hide_style });
+        defer allocator.free(cast_header);
+        try cast_buf.appendSlice(allocator, cast_header);
+
+        // Check for creators or directors
+        var creator_count: usize = 0;
+        var creators_buf = std.ArrayList(u8).empty;
+        defer creators_buf.deinit(allocator);
+
+        for (credits) |c| {
+            if (!c.is_cast and c.job != null and (std.mem.eql(u8, c.job.?, "Creator") or std.mem.eql(u8, c.job.?, "Created by"))) {
+                if (creator_count > 0) {
+                    try creators_buf.appendSlice(allocator, ", ");
+                }
+                const link = try std.fmt.allocPrint(allocator, "<a href=\"/person?id={d}\" class=\"show-creator-link\">{s}</a>", .{ c.person_id, c.name });
+                defer allocator.free(link);
+                try creators_buf.appendSlice(allocator, link);
+                creator_count += 1;
+            }
+        }
+
+        if (creator_count > 0) {
+            try cast_buf.appendSlice(allocator, "    <p class=\"show-creators\"><span class=\"show-creators-label\">Created by</span> ");
+            try cast_buf.appendSlice(allocator, creators_buf.items);
+            try cast_buf.appendSlice(allocator, "</p>\n");
+        } else {
+            var director_count: usize = 0;
+            var directors_buf = std.ArrayList(u8).empty;
+            defer directors_buf.deinit(allocator);
+
+            for (credits) |c| {
+                if (!c.is_cast and c.job != null and (std.mem.eql(u8, c.job.?, "Director") or std.mem.eql(u8, c.job.?, "Series Director"))) {
+                    if (director_count > 0) {
+                        try directors_buf.appendSlice(allocator, ", ");
+                    }
+                    const link = try std.fmt.allocPrint(allocator, "<a href=\"/person?id={d}\" class=\"show-creator-link\">{s}</a>", .{ c.person_id, c.name });
+                    defer allocator.free(link);
+                    try directors_buf.appendSlice(allocator, link);
+                    director_count += 1;
+                }
+            }
+
+            if (director_count > 0) {
+                try cast_buf.appendSlice(allocator, "    <p class=\"show-creators\"><span class=\"show-creators-label\">Directed by</span> ");
+                try cast_buf.appendSlice(allocator, directors_buf.items);
+                try cast_buf.appendSlice(allocator, "</p>\n");
+            }
+        }
+
+        try cast_buf.appendSlice(allocator, "    <div class=\"cast-grid\">\n");
+
+        for (credits) |c| {
+            if (!c.is_cast) continue;
+
+            var person_opt: ?db_mod.schema.Person = null;
+            defer if (person_opt) |*p| p.deinit(allocator);
+
+            var profile_path = c.profile_path;
+            if (profile_path == null) {
+                if (cat.getPersonById(allocator, c.person_id) catch null) |p| {
+                    person_opt = p;
+                    profile_path = person_opt.?.profile_path;
+                }
+            }
+
+            try renderCastCard(&cast_buf, allocator, c.person_id, c.name, c.character, profile_path);
+        }
+
+        try cast_buf.appendSlice(allocator, "    </div>\n</section>\n");
+    }
+
     var lib_id_buf: [32]u8 = undefined;
     const lib_id_str = try std.fmt.bufPrint(&lib_id_buf, "{d}", .{library_id});
 
@@ -231,6 +437,7 @@ pub fn handleShow(
         .LIBRARY_NAME = lib_name,
         .SEASON_TABS_HTML = tabs_buf.items,
         .SEASONS_HTML = seasons_buf.items,
+        .CAST_HTML = cast_buf.items,
         .SHOW_BACKDROP_HTML = backdrop_html.items,
     });
     defer allocator.free(html);
@@ -243,17 +450,18 @@ pub fn handleShow(
     });
 }
 
-test "show template renders season tabs when provided" {
+test "show template renders season tabs and cast when provided" {
     const allocator = std.testing.allocator;
     const template_str = @embedFile("../templates/show_view.html");
 
-    // Multi-season render
+    // Multi-season render with Cast tab
     {
         const tabs_html =
             \\<div class="season-tabs-container">
             \\    <nav class="season-tabs" role="tablist" aria-label="Seasons">
             \\        <button type="button" role="tab" class="season-tab active" data-season="1" aria-selected="true" aria-controls="season-1">Season 1</button>
             \\        <button type="button" role="tab" class="season-tab" data-season="2" aria-selected="false" aria-controls="season-2">Season 2</button>
+            \\        <button type="button" role="tab" class="season-tab" data-season="cast" aria-selected="false" aria-controls="season-cast">Cast</button>
             \\    </nav>
             \\</div>
         ;
@@ -271,6 +479,19 @@ test "show template renders season tabs when provided" {
             \\    </div>
             \\</section>
         ;
+        const cast_html =
+            \\<section class="season-section show-cast-section" id="season-cast" data-season="cast" style="display: none;">
+            \\    <h2 class="season-heading">Cast</h2>
+            \\    <p class="show-creators"><span class="show-creators-label">Created by</span> <a href="/person?id=1" class="show-creator-link">Vince Gilligan</a></p>
+            \\    <div class="cast-grid">
+            \\        <a href="/person?id=17419" class="cast-card" data-name="Bryan Cranston" data-character="Walter White">
+            \\            <div class="cast-avatar-wrapper"><div class="cast-avatar-placeholder"></div></div>
+            \\            <div class="cast-name">Bryan Cranston</div>
+            \\            <div class="cast-character">Walter White</div>
+            \\        </a>
+            \\    </div>
+            \\</section>
+        ;
 
         const rendered = try template_engine.render(allocator, template_str, .{
             .INLINE_CSS = "/* css */",
@@ -279,6 +500,7 @@ test "show template renders season tabs when provided" {
             .LIBRARY_NAME = "Shows",
             .SEASON_TABS_HTML = tabs_html,
             .SEASONS_HTML = seasons_html,
+            .CAST_HTML = cast_html,
             .SHOW_BACKDROP_HTML = "",
         });
         defer allocator.free(rendered);
@@ -286,17 +508,40 @@ test "show template renders season tabs when provided" {
         try std.testing.expect(std.mem.indexOf(u8, rendered, "class=\"season-tabs-container\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, rendered, "data-season=\"1\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, rendered, "data-season=\"2\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, rendered, "data-season=\"cast\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, rendered, "Bryan Cranston") != null);
+        try std.testing.expect(std.mem.indexOf(u8, rendered, "Walter White") != null);
+        try std.testing.expect(std.mem.indexOf(u8, rendered, "Vince Gilligan") != null);
         try std.testing.expect(std.mem.indexOf(u8, rendered, "switchSeason") != null);
     }
 
-    // Single-season render (tabs empty)
+    // Single-season render with Cast tab
     {
-        const tabs_html = "";
+        const tabs_html =
+            \\<div class="season-tabs-container">
+            \\    <nav class="season-tabs" role="tablist" aria-label="Seasons">
+            \\        <button type="button" role="tab" class="season-tab active" data-season="1" aria-selected="true" aria-controls="season-1">Season 1</button>
+            \\        <button type="button" role="tab" class="season-tab" data-season="cast" aria-selected="false" aria-controls="season-cast">Cast</button>
+            \\    </nav>
+            \\</div>
+        ;
         const seasons_html =
             \\<section class="season-section active" id="season-1" data-season="1">
             \\    <h2 class="season-heading">Season 1</h2>
             \\    <div class="episode-list">
             \\        <div class="episode-row" data-name="Single Ep">Episode 1</div>
+            \\    </div>
+            \\</section>
+        ;
+        const cast_html =
+            \\<section class="season-section show-cast-section" id="season-cast" data-season="cast" style="display: none;">
+            \\    <h2 class="season-heading">Cast</h2>
+            \\    <div class="cast-grid">
+            \\        <a href="/person?id=123" class="cast-card" data-name="Actor Name" data-character="Role">
+            \\            <div class="cast-avatar-wrapper"><div class="cast-avatar-placeholder"></div></div>
+            \\            <div class="cast-name">Actor Name</div>
+            \\            <div class="cast-character">Role</div>
+            \\        </a>
             \\    </div>
             \\</section>
         ;
@@ -308,11 +553,16 @@ test "show template renders season tabs when provided" {
             .LIBRARY_NAME = "Shows",
             .SEASON_TABS_HTML = tabs_html,
             .SEASONS_HTML = seasons_html,
+            .CAST_HTML = cast_html,
             .SHOW_BACKDROP_HTML = "",
         });
         defer allocator.free(rendered);
 
-        try std.testing.expect(std.mem.indexOf(u8, rendered, "class=\"season-tabs-container\"") == null);
+        try std.testing.expect(std.mem.indexOf(u8, rendered, "class=\"season-tabs-container\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, rendered, "data-season=\"1\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, rendered, "data-season=\"cast\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, rendered, "Actor Name") != null);
         try std.testing.expect(std.mem.indexOf(u8, rendered, "Mini Series") != null);
     }
 }
+

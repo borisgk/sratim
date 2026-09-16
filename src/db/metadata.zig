@@ -362,6 +362,99 @@ pub fn getMovieCredits(
     return cat.getCreditsByMovie(allocator, movie_id);
 }
 
+pub fn saveShowCredits(
+    database: *db_mod.Database,
+    show_id: i64,
+    cast: []const tmdb.TmdbCastMember,
+    crew: []const tmdb.TmdbCrewMember,
+) !void {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    cat.clearShowCredits(show_id);
+
+    // Save top cast (up to 20)
+    const cast_limit = @min(cast.len, 20);
+    for (cast[0..cast_limit]) |c| {
+        try cat.addOrUpdatePerson(.{
+            .id = c.id,
+            .name = c.name,
+            .profile_path = c.profile_path,
+            .known_for_department = "Acting",
+        });
+        _ = try cat.addShowCredit(.{
+            .id = 0,
+            .show_id = show_id,
+            .person_id = c.id,
+            .name = c.name,
+            .character = c.character,
+            .department = "Acting",
+            .profile_path = c.profile_path,
+            .order = c.order,
+            .is_cast = true,
+        });
+    }
+
+    // Save creators and directors from crew
+    for (crew) |cr| {
+        if (std.mem.eql(u8, cr.job, "Creator") or
+            std.mem.eql(u8, cr.job, "Director") or
+            std.mem.eql(u8, cr.job, "Series Director"))
+        {
+            try cat.addOrUpdatePerson(.{
+                .id = cr.id,
+                .name = cr.name,
+                .profile_path = cr.profile_path,
+                .known_for_department = if (std.mem.eql(u8, cr.job, "Creator")) "Writing" else "Directing",
+            });
+            _ = try cat.addShowCredit(.{
+                .id = 0,
+                .show_id = show_id,
+                .person_id = cr.id,
+                .name = cr.name,
+                .job = cr.job,
+                .department = cr.department,
+                .profile_path = cr.profile_path,
+                .order = 0,
+                .is_cast = false,
+            });
+        }
+    }
+
+    cat.markShowCreditsFetched(show_id);
+    cat.snapshot() catch {};
+}
+
+pub fn markShowCreditsFetched(database: *db_mod.Database, show_id: i64) void {
+    const cat = database.catalog orelse return;
+    cat.markShowCreditsFetched(show_id);
+    cat.snapshot() catch {};
+}
+
+pub fn getShowsMissingCredits(
+    database: *db_mod.Database,
+    allocator: std.mem.Allocator,
+) ![]db_mod.schema.Show {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    return cat.getShowsMissingCredits(allocator);
+}
+
+pub fn getShowCredits(
+    database: *db_mod.Database,
+    allocator: std.mem.Allocator,
+    show_id: i64,
+) ![]db_mod.schema.ShowCredit {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    return cat.getCreditsByShow(allocator, show_id);
+}
+
+pub fn getShowsByPerson(
+    database: *db_mod.Database,
+    allocator: std.mem.Allocator,
+    person_id: i64,
+) ![]db_mod.schema.Show {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    return cat.getShowsByPerson(allocator, person_id);
+}
+
 pub fn getPersonById(
     database: *db_mod.Database,
     allocator: std.mem.Allocator,

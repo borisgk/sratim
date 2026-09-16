@@ -738,3 +738,150 @@ test "SratimStorage: legacy snapshot without details_updated_at is migrated and 
     }
     try testing.expectEqual(@as(usize, 0), needing.len);
 }
+
+test "ShowCredit: storage CRUD, sorting, snapshot roundtrip, and getShowsByPerson" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_show_credits.json";
+    const wal_path = "tmp/test_show_credits.wal";
+    const persons_dir = "tmp/test_show_credits_persons";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
+
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
+    defer storage.deinit();
+
+    const lib = try storage.addLibrary("TV Shows", "/path/to/shows", .Shows);
+    const show_id = try storage.addOrUpdateShow(.{
+        .id = 0,
+        .library_id = lib.id,
+        .path = "/path/to/shows/Breaking Bad",
+        .title = "Breaking Bad",
+        .tmdb_id = 1396,
+        .is_present = true,
+        .credits_fetched = false,
+    });
+
+    // Verify getShowsMissingCredits finds the show
+    {
+        const missing = try storage.getShowsMissingCredits(allocator);
+        defer {
+            for (missing) |*s| {
+                var mut = s.*;
+                mut.deinit(allocator);
+            }
+            allocator.free(missing);
+        }
+        try testing.expectEqual(@as(usize, 1), missing.len);
+        try testing.expectEqual(show_id, missing[0].id);
+    }
+
+    // Add cast and crew
+    _ = try storage.addShowCredit(.{
+        .id = 0,
+        .show_id = show_id,
+        .person_id = 17419,
+        .name = "Bryan Cranston",
+        .character = "Walter White",
+        .order = 0,
+        .is_cast = true,
+    });
+    _ = try storage.addShowCredit(.{
+        .id = 0,
+        .show_id = show_id,
+        .person_id = 84497,
+        .name = "Aaron Paul",
+        .character = "Jesse Pinkman",
+        .order = 1,
+        .is_cast = true,
+    });
+    _ = try storage.addShowCredit(.{
+        .id = 0,
+        .show_id = show_id,
+        .person_id = 66633,
+        .name = "Vince Gilligan",
+        .job = "Creator",
+        .department = "Writing",
+        .order = 0,
+        .is_cast = false,
+    });
+
+    storage.markShowCreditsFetched(show_id);
+    try testing.expect(storage.hasShowCredits(show_id));
+
+    // Show should no longer be missing credits
+    {
+        const missing = try storage.getShowsMissingCredits(allocator);
+        defer {
+            for (missing) |*s| {
+                var mut = s.*;
+                mut.deinit(allocator);
+            }
+            allocator.free(missing);
+        }
+        try testing.expectEqual(@as(usize, 0), missing.len);
+    }
+
+    // Verify retrieved credits are ordered: cast by order, then crew
+    {
+        const credits = try storage.getCreditsByShow(allocator, show_id);
+        defer {
+            for (credits) |*c| {
+                var mut = c.*;
+                mut.deinit(allocator);
+            }
+            allocator.free(credits);
+        }
+        try testing.expectEqual(@as(usize, 3), credits.len);
+        try testing.expectEqualStrings("Bryan Cranston", credits[0].name);
+        try testing.expectEqualStrings("Walter White", credits[0].character.?);
+        try testing.expect(credits[0].is_cast);
+
+        try testing.expectEqualStrings("Aaron Paul", credits[1].name);
+        try testing.expectEqualStrings("Jesse Pinkman", credits[1].character.?);
+        try testing.expect(credits[1].is_cast);
+
+        try testing.expectEqualStrings("Vince Gilligan", credits[2].name);
+        try testing.expectEqualStrings("Creator", credits[2].job.?);
+        try testing.expect(!credits[2].is_cast);
+    }
+
+    // Verify getShowsByPerson
+    {
+        const cranston_shows = try storage.getShowsByPerson(allocator, 17419);
+        defer {
+            for (cranston_shows) |*s| {
+                var mut = s.*;
+                mut.deinit(allocator);
+            }
+            allocator.free(cranston_shows);
+        }
+        try testing.expectEqual(@as(usize, 1), cranston_shows.len);
+        try testing.expectEqualStrings("Breaking Bad", cranston_shows[0].title);
+    }
+
+    // Snapshot save and restore
+    try storage.snapshot();
+
+    var storage2 = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
+    defer storage2.deinit();
+
+    const loaded = try storage2.load();
+    try testing.expect(loaded);
+
+    const reloaded_credits = try storage2.getCreditsByShow(allocator, show_id);
+    defer {
+        for (reloaded_credits) |*c| {
+            var mut = c.*;
+            mut.deinit(allocator);
+        }
+        allocator.free(reloaded_credits);
+    }
+    try testing.expectEqual(@as(usize, 3), reloaded_credits.len);
+    try testing.expectEqualStrings("Bryan Cranston", reloaded_credits[0].name);
+    try testing.expectEqualStrings("Aaron Paul", reloaded_credits[1].name);
+    try testing.expectEqualStrings("Vince Gilligan", reloaded_credits[2].name);
+}
+

@@ -35,6 +35,7 @@ pub const SnapshotData = struct {
     episodes: []const schema.Episode = &.{},
     people: []const SnapshotPerson = &.{},
     movie_credits: []const schema.MovieCredit = &.{},
+    show_credits: []const schema.ShowCredit = &.{},
 };
 
 pub const SnapshotWriteData = struct {
@@ -53,6 +54,7 @@ pub const SnapshotWriteData = struct {
     episodes: []const schema.Episode = &.{},
     people: []const schema.Person = &.{},
     movie_credits: []const schema.MovieCredit = &.{},
+    show_credits: []const schema.ShowCredit = &.{},
 };
 
 pub fn snapshot(self: *SratimStorage) !void {
@@ -99,6 +101,11 @@ pub fn snapshot(self: *SratimStorage) !void {
     var cr_it = self.movie_credits.iterator();
     while (cr_it.next()) |e| try cr_list.append(self.allocator, e.value_ptr.*);
 
+    var sh_cr_list = std.ArrayList(schema.ShowCredit).empty;
+    defer sh_cr_list.deinit(self.allocator);
+    var sh_cr_it = self.show_credits.iterator();
+    while (sh_cr_it.next()) |e| try sh_cr_list.append(self.allocator, e.value_ptr.*);
+
     const snap = SnapshotWriteData{
         .version = 1,
         .next_user_id = self.next_user_id,
@@ -115,6 +122,7 @@ pub fn snapshot(self: *SratimStorage) !void {
         .episodes = ep_list.items,
         .people = p_list.items,
         .movie_credits = cr_list.items,
+        .show_credits = sh_cr_list.items,
     };
 
     const json_str = try std.json.Stringify.valueAlloc(self.allocator, snap, .{ .whitespace = .indent_2 });
@@ -258,6 +266,10 @@ pub fn load(self: *SratimStorage) !bool {
     for (val.movie_credits) |cr| {
         const cloned = try cr.clone(self.allocator);
         try self.movie_credits.put(cloned.id, cloned);
+    }
+    for (val.show_credits) |cr| {
+        const cloned = try cr.clone(self.allocator);
+        try self.show_credits.put(cloned.id, cloned);
     }
 
     return true;

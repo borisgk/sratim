@@ -428,3 +428,164 @@ pub fn getMoviesMissingCredits(self: *SratimStorage, allocator: std.mem.Allocato
     return list.toOwnedSlice(allocator);
 }
 
+/// Adds a single show credit and assigns an ID if 0.
+pub fn addShowCredit(self: *SratimStorage, credit: schema.ShowCredit) !i64 {
+    self.writeLock();
+    defer self.writeUnlock();
+
+    var c = credit;
+    if (c.id <= 0) {
+        c.id = self.next_credit_id;
+        self.next_credit_id += 1;
+    }
+
+    const cloned = try c.clone(self.allocator);
+    try self.show_credits.put(cloned.id, cloned);
+    return cloned.id;
+}
+
+/// Clears all credits associated with a specific show ID.
+pub fn clearShowCredits(self: *SratimStorage, show_id: i64) void {
+    self.writeLock();
+    defer self.writeUnlock();
+
+    var to_remove = std.ArrayList(i64).empty;
+    defer to_remove.deinit(self.allocator);
+
+    var it = self.show_credits.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.show_id == show_id) {
+            to_remove.append(self.allocator, e.key_ptr.*) catch {};
+        }
+    }
+
+    for (to_remove.items) |cid| {
+        if (self.show_credits.fetchRemove(cid)) |entry| {
+            var mut_val = entry.value;
+            mut_val.deinit(self.allocator);
+        }
+    }
+}
+
+/// Retrieves all credits for a show, sorted by cast order then crew.
+pub fn getCreditsByShow(self: *SratimStorage, allocator: std.mem.Allocator, show_id: i64) ![]schema.ShowCredit {
+    self.readLock();
+    defer self.readUnlock();
+
+    var list = std.ArrayList(schema.ShowCredit).empty;
+    errdefer {
+        for (list.items) |*c| c.deinit(allocator);
+        list.deinit(allocator);
+    }
+
+    var it = self.show_credits.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.show_id == show_id) {
+            const cloned = try e.value_ptr.clone(allocator);
+            try list.append(allocator, cloned);
+        }
+    }
+
+    const sortFn = struct {
+        fn lessThan(_: void, a: schema.ShowCredit, b: schema.ShowCredit) bool {
+            if (a.is_cast != b.is_cast) {
+                // Cast first, then crew
+                return a.is_cast;
+            }
+            return a.order < b.order;
+        }
+    }.lessThan;
+
+    std.mem.sort(schema.ShowCredit, list.items, {}, sortFn);
+    return list.toOwnedSlice(allocator);
+}
+
+/// Checks whether any credits exist for a given show ID.
+pub fn hasShowCredits(self: *SratimStorage, show_id: i64) bool {
+    self.readLock();
+    defer self.readUnlock();
+
+    var it = self.show_credits.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.show_id == show_id) return true;
+    }
+    return false;
+}
+
+/// Marks a show as having had its credits fetched.
+pub fn markShowCreditsFetched(self: *SratimStorage, show_id: i64) void {
+    self.writeLock();
+    defer self.writeUnlock();
+
+    if (self.shows.getPtr(show_id)) |ptr| {
+        ptr.credits_fetched = true;
+    }
+}
+
+/// Retrieves all present shows with valid TMDB IDs that have not yet had their credits fetched or populated.
+pub fn getShowsMissingCredits(self: *SratimStorage, allocator: std.mem.Allocator) ![]schema.Show {
+    self.readLock();
+    defer self.readUnlock();
+
+    var existing_credit_shows = std.AutoHashMap(i64, void).init(allocator);
+    defer existing_credit_shows.deinit();
+
+    var it_c = self.show_credits.iterator();
+    while (it_c.next()) |e| {
+        try existing_credit_shows.put(e.value_ptr.show_id, {});
+    }
+
+    var list = std.ArrayList(schema.Show).empty;
+    errdefer {
+        for (list.items) |*s| s.deinit(allocator);
+        list.deinit(allocator);
+    }
+
+    var it = self.shows.iterator();
+    while (it.next()) |e| {
+        const s = e.value_ptr;
+        if (s.is_present and s.tmdb_id != null and s.tmdb_id.? > 0) {
+            if (!s.credits_fetched and !existing_credit_shows.contains(s.id)) {
+                try list.append(allocator, try s.clone(allocator));
+            }
+        }
+    }
+
+    return list.toOwnedSlice(allocator);
+}
+
+/// Retrieves all shows from the library where this person participated.
+pub fn getShowsByPerson(self: *SratimStorage, allocator: std.mem.Allocator, person_id: i64) ![]schema.Show {
+    self.readLock();
+    defer self.readUnlock();
+
+    var show_ids = std.AutoHashMap(i64, void).init(allocator);
+    defer show_ids.deinit();
+
+    var it = self.show_credits.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.person_id == person_id) {
+            try show_ids.put(e.value_ptr.show_id, {});
+        }
+    }
+
+    var shows = std.ArrayList(schema.Show).empty;
+    errdefer {
+        for (shows.items) |*s| s.deinit(allocator);
+        shows.deinit(allocator);
+    }
+
+    var id_it = show_ids.iterator();
+    while (id_it.next()) |sid_entry| {
+        if (self.shows.get(sid_entry.key_ptr.*)) |s| {
+            if (s.is_present) {
+                const cloned = try s.clone(allocator);
+                try shows.append(allocator, cloned);
+            }
+        }
+    }
+
+    return shows.toOwnedSlice(allocator);
+}
+
+

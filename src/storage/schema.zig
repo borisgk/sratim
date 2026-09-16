@@ -116,6 +116,7 @@ pub const Show = struct {
     overview: ?[]const u8 = null,
     poster_path: ?[]const u8 = null,
     backdrop_path: ?[]const u8 = null,
+    credits_fetched: bool = false,
 
     pub fn clone(self: Show, allocator: std.mem.Allocator) !Show {
         return .{
@@ -128,6 +129,7 @@ pub const Show = struct {
             .overview = if (self.overview) |o| try allocator.dupe(u8, o) else null,
             .poster_path = if (self.poster_path) |p| try allocator.dupe(u8, p) else null,
             .backdrop_path = if (self.backdrop_path) |b| try allocator.dupe(u8, b) else null,
+            .credits_fetched = self.credits_fetched,
         };
     }
 
@@ -425,6 +427,42 @@ pub const MovieCredit = struct {
     }
 
     pub fn deinit(self: *MovieCredit, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        if (self.character) |c| allocator.free(c);
+        if (self.job) |j| allocator.free(j);
+        allocator.free(self.department);
+        if (self.profile_path) |p| allocator.free(p);
+    }
+};
+
+pub const ShowCredit = struct {
+    id: i64 = 0,
+    show_id: i64,
+    person_id: i64,
+    name: []const u8,
+    character: ?[]const u8 = null,
+    job: ?[]const u8 = null,
+    department: []const u8 = "Acting",
+    profile_path: ?[]const u8 = null,
+    order: i32 = 0,
+    is_cast: bool = true,
+
+    pub fn clone(self: ShowCredit, allocator: std.mem.Allocator) !ShowCredit {
+        return .{
+            .id = self.id,
+            .show_id = self.show_id,
+            .person_id = self.person_id,
+            .name = try allocator.dupe(u8, self.name),
+            .character = if (self.character) |c| try allocator.dupe(u8, c) else null,
+            .job = if (self.job) |j| try allocator.dupe(u8, j) else null,
+            .department = try allocator.dupe(u8, self.department),
+            .profile_path = if (self.profile_path) |p| try allocator.dupe(u8, p) else null,
+            .order = self.order,
+            .is_cast = self.is_cast,
+        };
+    }
+
+    pub fn deinit(self: *ShowCredit, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
         if (self.character) |c| allocator.free(c);
         if (self.job) |j| allocator.free(j);

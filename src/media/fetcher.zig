@@ -286,6 +286,70 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
             }
         }
 
+        // Backfill Credits for existing shows that have TMDB IDs but missing credits
+        const missing_show_credits = metadata_mod.getShowsMissingCredits(database, allocator) catch |err| {
+            std.debug.print("TMDB fetcher error querying shows missing credits: {}\n", .{err});
+            io.sleep(std.Io.Duration.fromSeconds(30), .awake) catch {};
+            continue;
+        };
+        defer {
+            for (missing_show_credits) |*s| {
+                var mut = s.*;
+                mut.deinit(allocator);
+            }
+            allocator.free(missing_show_credits);
+        }
+
+        if (missing_show_credits.len > 0) {
+            std.debug.print("TMDB fetcher found {d} shows needing credits backfill.\n", .{missing_show_credits.len});
+            for (missing_show_credits, 0..) |show, idx| {
+                const tmdb_id = show.tmdb_id orelse {
+                    metadata_mod.markShowCreditsFetched(database, show.id);
+                    continue;
+                };
+
+                const display_title = show.title;
+                std.debug.print("TMDB backfilling show credits [{d}/{d}]: {s} (TMDB ID {d})\n", .{
+                    idx + 1, missing_show_credits.len, display_title, tmdb_id,
+                });
+
+                if (tmdb.fetchShowCredits(allocator, io, tmdb_id, token, proxy_url)) |credits_parsed| {
+                    defer credits_parsed.deinit();
+                    const credits = credits_parsed.value;
+
+                    // Download profile pictures for top cast
+                    const cast_limit = @min(credits.cast.len, 20);
+                    for (credits.cast[0..cast_limit]) |c| {
+                        if (c.profile_path) |p| {
+                            tmdb.downloadProfileImage(allocator, io, p, proxy_url) catch {};
+                        }
+                    }
+                    // Download profile pictures for directors & creators
+                    for (credits.crew) |cr| {
+                        if (std.mem.eql(u8, cr.job, "Director") or
+                            std.mem.eql(u8, cr.job, "Creator") or
+                            std.mem.eql(u8, cr.job, "Series Director"))
+                        {
+                            if (cr.profile_path) |p| {
+                                tmdb.downloadProfileImage(allocator, io, p, proxy_url) catch {};
+                            }
+                        }
+                    }
+
+                    metadata_mod.saveShowCredits(database, show.id, credits.cast, credits.crew) catch |err| {
+                        std.debug.print("TMDB fetcher error saving credits for show {s}: {}\n", .{ show.title, err });
+                    };
+                } else |err| {
+                    std.debug.print("TMDB fetcher error fetching credits for show {s}: {}\n", .{ show.title, err });
+                    metadata_mod.markShowCreditsFetched(database, show.id);
+                }
+
+                // 1-second interval between TMDB requests
+                io.sleep(std.Io.Duration.fromSeconds(1), .awake) catch {};
+            }
+        }
+
+
         // Backfill / Refresh person details & filmography (30-day base TTL with jitter)
         const refresh_people = metadata_mod.getPeopleNeedingRefresh(database, allocator, 30 * 24 * 3600) catch |err| {
             std.debug.print("TMDB fetcher error querying person refresh candidates: {}\n", .{err});

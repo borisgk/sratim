@@ -21,6 +21,7 @@ pub const SratimStorage = struct {
     episodes: std.AutoHashMap(i64, schema.Episode),
     people: std.AutoHashMap(i64, schema.Person),
     movie_credits: std.AutoHashMap(i64, schema.MovieCredit),
+    show_credits: std.AutoHashMap(i64, schema.ShowCredit),
 
     next_user_id: i64 = 1,
     next_library_id: i64 = 1,
@@ -61,6 +62,7 @@ pub const SratimStorage = struct {
             .episodes = std.AutoHashMap(i64, schema.Episode).init(allocator),
             .people = std.AutoHashMap(i64, schema.Person).init(allocator),
             .movie_credits = std.AutoHashMap(i64, schema.MovieCredit).init(allocator),
+            .show_credits = std.AutoHashMap(i64, schema.ShowCredit).init(allocator),
         };
     }
 
@@ -115,6 +117,12 @@ pub const SratimStorage = struct {
             entry.value_ptr.deinit(self.allocator);
         }
         self.movie_credits.deinit();
+
+        var sh_cr_iter = self.show_credits.iterator();
+        while (sh_cr_iter.next()) |entry| {
+            entry.value_ptr.deinit(self.allocator);
+        }
+        self.show_credits.deinit();
     }
 
     // Snapshot operations
@@ -197,4 +205,11 @@ pub const SratimStorage = struct {
     pub const getPeopleMissingDetails = credits_mod.getPeopleMissingDetails;
     pub const getPeopleNeedingRefresh = credits_mod.getPeopleNeedingRefresh;
     pub const getPersonDetails = credits_mod.getPersonDetails;
+    pub const addShowCredit = credits_mod.addShowCredit;
+    pub const clearShowCredits = credits_mod.clearShowCredits;
+    pub const getCreditsByShow = credits_mod.getCreditsByShow;
+    pub const hasShowCredits = credits_mod.hasShowCredits;
+    pub const markShowCreditsFetched = credits_mod.markShowCreditsFetched;
+    pub const getShowsMissingCredits = credits_mod.getShowsMissingCredits;
+    pub const getShowsByPerson = credits_mod.getShowsByPerson;
 };

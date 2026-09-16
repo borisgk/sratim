@@ -37,6 +37,7 @@
 
         <div class="seasons-container">
             __SEASONS_HTML__
+            __CAST_HTML__
             <div id="no-results" class="no-results">No episodes found matching your search.</div>
         </div>
 
@@ -90,8 +91,12 @@
                 section.classList.toggle('active', isMatch);
             });
 
+            if (searchInput) {
+                searchInput.placeholder = activeSeason === 'cast' ? 'Search cast and crew...' : 'Search episodes...';
+            }
+
             if (updateHash) {
-                history.replaceState(null, '', '#season-' + season);
+                history.replaceState(null, '', season === 'cast' ? '#cast' : '#season-' + season);
             }
         }
 
@@ -102,6 +107,7 @@
                 if (searchInput && searchInput.value) {
                     searchInput.value = '';
                     rows.forEach(r => r.style.display = '');
+                    document.querySelectorAll('.cast-card').forEach(c => c.style.display = '');
                     if (noResults) noResults.style.display = 'none';
                 }
                 switchSeason(season);
@@ -111,12 +117,19 @@
         // URL hash navigation support
         function checkHash() {
             if (window.location.hash) {
-                const m = window.location.hash.match(/^#season-(\d+)$/);
-                if (m) {
-                    const targetSeason = m[1];
-                    const tabExists = document.querySelector(`.season-tab[data-season="${targetSeason}"]`);
-                    if (tabExists) {
-                        switchSeason(targetSeason, false);
+                if (window.location.hash === '#cast' || window.location.hash === '#season-cast') {
+                    const castTab = document.querySelector('.season-tab[data-season="cast"]');
+                    if (castTab) {
+                        switchSeason('cast', false);
+                    }
+                } else {
+                    const m = window.location.hash.match(/^#season-(\d+)$/);
+                    if (m) {
+                        const targetSeason = m[1];
+                        const tabExists = document.querySelector(`.season-tab[data-season="${targetSeason}"]`);
+                        if (tabExists) {
+                            switchSeason(targetSeason, false);
+                        }
                     }
                 }
             }
@@ -132,6 +145,7 @@
                 if (query === '') {
                     // Restore active season view
                     rows.forEach(row => row.style.display = '');
+                    document.querySelectorAll('.cast-card').forEach(card => card.style.display = '');
                     if (seasonTabs.length > 0 && activeSeason !== null) {
                         seasonSections.forEach(section => {
                             const isMatch = section.getAttribute('data-season') === String(activeSeason);
@@ -141,9 +155,39 @@
                         seasonSections.forEach(section => section.style.display = '');
                     }
                     if (noResults) noResults.style.display = 'none';
+                } else if (activeSeason === 'cast') {
+                    // Search across cast & crew cards
+                    seasonSections.forEach(section => {
+                        if (section.getAttribute('data-season') === 'cast') {
+                            section.style.display = '';
+                            const castCards = section.querySelectorAll('.cast-card');
+                            castCards.forEach(card => {
+                                const name = (card.getAttribute('data-name') || '').toLowerCase();
+                                const char = (card.getAttribute('data-character') || '').toLowerCase();
+
+                                if (name.includes(query) || char.includes(query)) {
+                                    card.style.display = '';
+                                    totalMatches++;
+                                } else {
+                                    card.style.display = 'none';
+                                }
+                            });
+                        } else {
+                            section.style.display = 'none';
+                        }
+                    });
+
+                    if (noResults) {
+                        noResults.textContent = 'No cast members found matching your search.';
+                        noResults.style.display = totalMatches > 0 ? 'none' : 'block';
+                    }
                 } else {
                     // Search across all seasons
                     seasonSections.forEach(section => {
+                        if (section.getAttribute('data-season') === 'cast') {
+                            section.style.display = 'none';
+                            return;
+                        }
                         let sectionMatches = 0;
                         const sectionRows = section.querySelectorAll('.episode-row');
                         sectionRows.forEach(row => {
@@ -162,6 +206,7 @@
                     });
 
                     if (noResults) {
+                        noResults.textContent = 'No episodes found matching your search.';
                         noResults.style.display = totalMatches > 0 ? 'none' : 'block';
                     }
                 }
