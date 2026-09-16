@@ -30,6 +30,7 @@ pub const FilmographyItem = person.FilmographyItem;
 pub const searchShow = shows.searchShow;
 pub const fetchShowDetails = shows.fetchShowDetails;
 pub const fetchShowCredits = shows.fetchShowCredits;
+pub const ParsedShowCredits = shows.ParsedShowCredits;
 pub const fetchEpisode = episodes.fetchEpisode;
 pub const downloadImages = images.downloadImages;
 pub const downloadProfileImage = images.downloadProfileImage;

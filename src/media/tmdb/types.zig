@@ -53,6 +53,53 @@ pub const TmdbCreditsResponse = struct {
     crew: []TmdbCrewMember = &.{},
 };
 
+pub const TmdbAggregateRole = struct {
+    credit_id: ?[]const u8 = null,
+    character: ?[]const u8 = null,
+    episode_count: ?u32 = null,
+};
+
+pub const TmdbAggregateJob = struct {
+    credit_id: ?[]const u8 = null,
+    job: []const u8 = "",
+    episode_count: ?u32 = null,
+};
+
+pub const TmdbAggregateCastMember = struct {
+    id: i64,
+    name: []const u8,
+    profile_path: ?[]const u8 = null,
+    order: i32 = 0,
+    roles: []TmdbAggregateRole = &.{},
+};
+
+pub const TmdbAggregateCrewMember = struct {
+    id: i64,
+    name: []const u8,
+    department: []const u8 = "",
+    profile_path: ?[]const u8 = null,
+    jobs: []TmdbAggregateJob = &.{},
+};
+
+pub const TmdbAggregateCredits = struct {
+    cast: []TmdbAggregateCastMember = &.{},
+    crew: []TmdbAggregateCrewMember = &.{},
+};
+
+pub const TmdbCreatedBy = struct {
+    id: i64,
+    name: []const u8,
+    profile_path: ?[]const u8 = null,
+};
+
+pub const TmdbShowFullCreditsResponse = struct {
+    id: i64,
+    name: ?[]const u8 = null,
+    created_by: []TmdbCreatedBy = &.{},
+    aggregate_credits: ?TmdbAggregateCredits = null,
+    credits: ?TmdbCreditsResponse = null,
+};
+
 pub const TmdbPersonMovieCast = struct {
     id: i64,
     title: []const u8 = "",

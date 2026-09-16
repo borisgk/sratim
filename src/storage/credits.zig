@@ -527,12 +527,13 @@ pub fn getShowsMissingCredits(self: *SratimStorage, allocator: std.mem.Allocator
     self.readLock();
     defer self.readUnlock();
 
-    var existing_credit_shows = std.AutoHashMap(i64, void).init(allocator);
-    defer existing_credit_shows.deinit();
+    var existing_credit_counts = std.AutoHashMap(i64, usize).init(allocator);
+    defer existing_credit_counts.deinit();
 
     var it_c = self.show_credits.iterator();
     while (it_c.next()) |e| {
-        try existing_credit_shows.put(e.value_ptr.show_id, {});
+        const count = existing_credit_counts.get(e.value_ptr.show_id) orelse 0;
+        try existing_credit_counts.put(e.value_ptr.show_id, count + 1);
     }
 
     var list = std.ArrayList(schema.Show).empty;
@@ -545,7 +546,8 @@ pub fn getShowsMissingCredits(self: *SratimStorage, allocator: std.mem.Allocator
     while (it.next()) |e| {
         const s = e.value_ptr;
         if (s.is_present and s.tmdb_id != null and s.tmdb_id.? > 0) {
-            if (!s.credits_fetched and !existing_credit_shows.contains(s.id)) {
+            const count = existing_credit_counts.get(s.id) orelse 0;
+            if (!s.credits_fetched or count == 0) {
                 try list.append(allocator, try s.clone(allocator));
             }
         }

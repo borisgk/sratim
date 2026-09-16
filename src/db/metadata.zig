@@ -393,17 +393,24 @@ pub fn saveShowCredits(
         });
     }
 
-    // Save creators and directors from crew
+    // Save creators and directors from crew (deduplicating by person id)
+    var seen_crew = std.AutoHashMap(i64, void).init(cat.allocator);
+    defer seen_crew.deinit();
+
     for (crew) |cr| {
         if (std.mem.eql(u8, cr.job, "Creator") or
+            std.mem.eql(u8, cr.job, "Created by") or
             std.mem.eql(u8, cr.job, "Director") or
             std.mem.eql(u8, cr.job, "Series Director"))
         {
+            if (seen_crew.contains(cr.id)) continue;
+            try seen_crew.put(cr.id, {});
+
             try cat.addOrUpdatePerson(.{
                 .id = cr.id,
                 .name = cr.name,
                 .profile_path = cr.profile_path,
-                .known_for_department = if (std.mem.eql(u8, cr.job, "Creator")) "Writing" else "Directing",
+                .known_for_department = if (std.mem.eql(u8, cr.job, "Creator") or std.mem.eql(u8, cr.job, "Created by")) "Writing" else "Directing",
             });
             _ = try cat.addShowCredit(.{
                 .id = 0,

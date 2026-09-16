@@ -97,19 +97,30 @@ pub fn fetchShowDetails(
     });
 }
 
+pub const ParsedShowCredits = struct {
+    arena: std.heap.ArenaAllocator,
+    value: types.TmdbCreditsResponse,
+
+    pub fn deinit(self: ParsedShowCredits) void {
+        var mut_arena = self.arena;
+        mut_arena.deinit();
+    }
+};
+
 pub fn fetchShowCredits(
     allocator: std.mem.Allocator,
     io: std.Io,
     tmdb_id: i64,
     token: []const u8,
     proxy_url: ?[]const u8,
-) !std.json.Parsed(types.TmdbCreditsResponse) {
+) !ParsedShowCredits {
     _ = io;
 
     var client = try client_mod.createClient(allocator, proxy_url);
     defer client.deinit();
 
-    const fetch_url = try std.fmt.allocPrint(allocator, "https://api.themoviedb.org/3/tv/{d}/credits", .{tmdb_id});
+    // Query show details with aggregate_credits and credits appended
+    const fetch_url = try std.fmt.allocPrint(allocator, "https://api.themoviedb.org/3/tv/{d}?append_to_response=aggregate_credits,credits", .{tmdb_id});
     defer allocator.free(fetch_url);
 
     std.debug.print("TMDB TV Credits Request URL: {s}\n", .{fetch_url});
@@ -134,9 +145,89 @@ pub fn fetchShowCredits(
 
     const response_body = response.body orelse return error.EmptyResponseBody;
 
-    return try std.json.parseFromSlice(types.TmdbCreditsResponse, allocator, response_body, .{
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    errdefer arena.deinit();
+    const arena_alloc = arena.allocator();
+
+    const parsed = try std.json.parseFromSlice(types.TmdbShowFullCreditsResponse, arena_alloc, response_body, .{
         .allocate = .alloc_always,
         .ignore_unknown_fields = true,
     });
+
+    var cast_list = std.ArrayList(types.TmdbCastMember).empty;
+    defer cast_list.deinit(arena_alloc);
+
+    var crew_list = std.ArrayList(types.TmdbCrewMember).empty;
+    defer crew_list.deinit(arena_alloc);
+
+    // 1. Process creators from created_by
+    for (parsed.value.created_by) |cb| {
+        try crew_list.append(arena_alloc, .{
+            .id = cb.id,
+            .name = cb.name,
+            .job = "Creator",
+            .department = "Writing",
+            .profile_path = cb.profile_path,
+        });
+    }
+
+    // 2. Process cast from aggregate_credits
+    if (parsed.value.aggregate_credits) |agg| {
+        if (agg.cast.len > 0) {
+            for (agg.cast) |c| {
+                const char = if (c.roles.len > 0) c.roles[0].character else null;
+                try cast_list.append(arena_alloc, .{
+                    .id = c.id,
+                    .name = c.name,
+                    .character = char,
+                    .profile_path = c.profile_path,
+                    .order = c.order,
+                });
+            }
+        }
+    }
+
+    // Fallback cast if aggregate_credits cast was empty
+    if (cast_list.items.len == 0) {
+        if (parsed.value.credits) |cr| {
+            for (cr.cast) |c| {
+                try cast_list.append(arena_alloc, c);
+            }
+        }
+    }
+
+    // 3. Process crew (directors, creators, etc.) from aggregate_credits
+    if (parsed.value.aggregate_credits) |agg| {
+        for (agg.crew) |cr| {
+            for (cr.jobs) |j| {
+                try crew_list.append(arena_alloc, .{
+                    .id = cr.id,
+                    .name = cr.name,
+                    .job = j.job,
+                    .department = cr.department,
+                    .profile_path = cr.profile_path,
+                });
+            }
+        }
+    }
+
+    // Fallback crew if aggregate_credits crew was empty
+    if (crew_list.items.len == parsed.value.created_by.len) {
+        if (parsed.value.credits) |cr| {
+            for (cr.crew) |c| {
+                try crew_list.append(arena_alloc, c);
+            }
+        }
+    }
+
+    return ParsedShowCredits{
+        .arena = arena,
+        .value = .{
+            .id = parsed.value.id,
+            .cast = try cast_list.toOwnedSlice(arena_alloc),
+            .crew = try crew_list.toOwnedSlice(arena_alloc),
+        },
+    };
 }
+
 

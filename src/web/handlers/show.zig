@@ -7,6 +7,24 @@ const tmdb = @import("../../media/tmdb.zig");
 const template_engine = @import("../../core/template.zig");
 const global_css: []const u8 = @embedFile("../style.css");
 
+var rechecked_mutex: std.atomic.Mutex = .unlocked;
+var rechecked_shows: std.AutoHashMap(i64, void) = undefined;
+var rechecked_shows_inited: bool = false;
+
+fn markAndCheckShowRechecked(show_id: i64) bool {
+    while (!rechecked_mutex.tryLock()) {
+        std.atomic.spinLoopHint();
+    }
+    defer rechecked_mutex.unlock();
+    if (!rechecked_shows_inited) {
+        rechecked_shows = std.AutoHashMap(i64, void).init(std.heap.page_allocator);
+        rechecked_shows_inited = true;
+    }
+    if (rechecked_shows.contains(show_id)) return true;
+    rechecked_shows.put(show_id, {}) catch {};
+    return false;
+}
+
 fn escapeHtml(writer: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
     for (input) |c| {
         switch (c) {
@@ -115,8 +133,17 @@ pub fn handleShow(
         allocator.free(credits);
     }
 
-    // On-demand fetch from TMDB if missing and show has a TMDB ID
-    if (credits.len == 0 and show.tmdb_id != null and show.tmdb_id.? > 0 and !show.credits_fetched) {
+    var cast_count: usize = 0;
+    for (credits) |c| {
+        if (c.is_cast) cast_count += 1;
+    }
+
+    const is_force_refresh = std.mem.indexOf(u8, request.head.target, "refresh=1") != null;
+    const is_incomplete = (cast_count <= 2 and !markAndCheckShowRechecked(show.id));
+    const should_fetch = (show.tmdb_id != null and show.tmdb_id.? > 0) and (is_force_refresh or !show.credits_fetched or is_incomplete);
+
+    // On-demand fetch from TMDB if missing or incomplete and show has a TMDB ID
+    if (should_fetch) {
         const token = config.getTmdbToken();
         if (token.len > 0) {
             if (tmdb.fetchShowCredits(allocator, io, show.tmdb_id.?, token, config.tmdb_proxy)) |credits_parsed| {
@@ -130,6 +157,7 @@ pub fn handleShow(
                 for (credits_parsed.value.crew) |cr| {
                     if (std.mem.eql(u8, cr.job, "Director") or
                         std.mem.eql(u8, cr.job, "Creator") or
+                        std.mem.eql(u8, cr.job, "Created by") or
                         std.mem.eql(u8, cr.job, "Series Director"))
                     {
                         if (cr.profile_path) |p| {
@@ -149,7 +177,7 @@ pub fn handleShow(
         }
     }
 
-    var cast_count: usize = 0;
+    cast_count = 0;
     for (credits) |c| {
         if (c.is_cast) cast_count += 1;
     }
@@ -344,13 +372,19 @@ pub fn handleShow(
         defer allocator.free(cast_header);
         try cast_buf.appendSlice(allocator, cast_header);
 
-        // Check for creators or directors
+        // Check for creators and directors
         var creator_count: usize = 0;
         var creators_buf = std.ArrayList(u8).empty;
         defer creators_buf.deinit(allocator);
 
+        var seen_creators = std.AutoHashMap(i64, void).init(allocator);
+        defer seen_creators.deinit();
+
         for (credits) |c| {
             if (!c.is_cast and c.job != null and (std.mem.eql(u8, c.job.?, "Creator") or std.mem.eql(u8, c.job.?, "Created by"))) {
+                if (seen_creators.contains(c.person_id)) continue;
+                try seen_creators.put(c.person_id, {});
+
                 if (creator_count > 0) {
                     try creators_buf.appendSlice(allocator, ", ");
                 }
@@ -365,28 +399,34 @@ pub fn handleShow(
             try cast_buf.appendSlice(allocator, "    <p class=\"show-creators\"><span class=\"show-creators-label\">Created by</span> ");
             try cast_buf.appendSlice(allocator, creators_buf.items);
             try cast_buf.appendSlice(allocator, "</p>\n");
-        } else {
-            var director_count: usize = 0;
-            var directors_buf = std.ArrayList(u8).empty;
-            defer directors_buf.deinit(allocator);
+        }
 
-            for (credits) |c| {
-                if (!c.is_cast and c.job != null and (std.mem.eql(u8, c.job.?, "Director") or std.mem.eql(u8, c.job.?, "Series Director"))) {
-                    if (director_count > 0) {
-                        try directors_buf.appendSlice(allocator, ", ");
-                    }
-                    const link = try std.fmt.allocPrint(allocator, "<a href=\"/person?id={d}\" class=\"show-creator-link\">{s}</a>", .{ c.person_id, c.name });
-                    defer allocator.free(link);
-                    try directors_buf.appendSlice(allocator, link);
-                    director_count += 1;
+        var director_count: usize = 0;
+        var directors_buf = std.ArrayList(u8).empty;
+        defer directors_buf.deinit(allocator);
+
+        var seen_directors = std.AutoHashMap(i64, void).init(allocator);
+        defer seen_directors.deinit();
+
+        for (credits) |c| {
+            if (!c.is_cast and c.job != null and (std.mem.eql(u8, c.job.?, "Director") or std.mem.eql(u8, c.job.?, "Series Director"))) {
+                if (seen_directors.contains(c.person_id)) continue;
+                try seen_directors.put(c.person_id, {});
+
+                if (director_count > 0) {
+                    try directors_buf.appendSlice(allocator, ", ");
                 }
+                const link = try std.fmt.allocPrint(allocator, "<a href=\"/person?id={d}\" class=\"show-creator-link\">{s}</a>", .{ c.person_id, c.name });
+                defer allocator.free(link);
+                try directors_buf.appendSlice(allocator, link);
+                director_count += 1;
             }
+        }
 
-            if (director_count > 0) {
-                try cast_buf.appendSlice(allocator, "    <p class=\"show-creators\"><span class=\"show-creators-label\">Directed by</span> ");
-                try cast_buf.appendSlice(allocator, directors_buf.items);
-                try cast_buf.appendSlice(allocator, "</p>\n");
-            }
+        if (director_count > 0) {
+            try cast_buf.appendSlice(allocator, "    <p class=\"show-creators\"><span class=\"show-creators-label\">Directed by</span> ");
+            try cast_buf.appendSlice(allocator, directors_buf.items);
+            try cast_buf.appendSlice(allocator, "</p>\n");
         }
 
         try cast_buf.appendSlice(allocator, "    <div class=\"cast-grid\">\n");
