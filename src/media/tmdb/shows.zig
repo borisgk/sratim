@@ -162,6 +162,7 @@ pub fn fetchShowCredits(
 
     // 1. Process creators from created_by
     for (parsed.value.created_by) |cb| {
+        if (cb.id == 0 or cb.name.len == 0) continue;
         try crew_list.append(arena_alloc, .{
             .id = cb.id,
             .name = cb.name,
@@ -175,6 +176,7 @@ pub fn fetchShowCredits(
     if (parsed.value.aggregate_credits) |agg| {
         if (agg.cast.len > 0) {
             for (agg.cast) |c| {
+                if (c.id == 0 or c.name.len == 0) continue;
                 const char = if (c.roles.len > 0) c.roles[0].character else null;
                 try cast_list.append(arena_alloc, .{
                     .id = c.id,
@@ -191,6 +193,7 @@ pub fn fetchShowCredits(
     if (cast_list.items.len == 0) {
         if (parsed.value.credits) |cr| {
             for (cr.cast) |c| {
+                if (c.id == 0 or c.name.len == 0) continue;
                 try cast_list.append(arena_alloc, c);
             }
         }
@@ -199,6 +202,7 @@ pub fn fetchShowCredits(
     // 3. Process crew (directors, creators, etc.) from aggregate_credits
     if (parsed.value.aggregate_credits) |agg| {
         for (agg.crew) |cr| {
+            if (cr.id == 0 or cr.name.len == 0) continue;
             for (cr.jobs) |j| {
                 try crew_list.append(arena_alloc, .{
                     .id = cr.id,
@@ -215,6 +219,7 @@ pub fn fetchShowCredits(
     if (crew_list.items.len == parsed.value.created_by.len) {
         if (parsed.value.credits) |cr| {
             for (cr.crew) |c| {
+                if (c.id == 0 or c.name.len == 0) continue;
                 try crew_list.append(arena_alloc, c);
             }
         }

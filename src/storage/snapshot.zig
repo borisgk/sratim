@@ -107,7 +107,7 @@ pub fn snapshot(self: *SratimStorage) !void {
     while (sh_cr_it.next()) |e| try sh_cr_list.append(self.allocator, e.value_ptr.*);
 
     const snap = SnapshotWriteData{
-        .version = 1,
+        .version = 2,
         .next_user_id = self.next_user_id,
         .next_library_id = self.next_library_id,
         .next_movie_id = self.next_movie_id,
@@ -272,19 +272,13 @@ pub fn load(self: *SratimStorage) !bool {
         try self.show_credits.put(cloned.id, cloned);
     }
 
-    // Reset credits_fetched for shows with <= 2 credits so they get upgraded to full aggregate credits
-    var show_credit_counts = std.AutoHashMap(i64, usize).init(self.allocator);
-    defer show_credit_counts.deinit();
-    var it_sc = self.show_credits.iterator();
-    while (it_sc.next()) |e| {
-        const count = show_credit_counts.get(e.value_ptr.show_id) orelse 0;
-        show_credit_counts.put(e.value_ptr.show_id, count + 1) catch {};
-    }
-    var it_shows = self.shows.iterator();
-    while (it_shows.next()) |e| {
-        if ((show_credit_counts.get(e.value_ptr.id) orelse 0) <= 2) {
+    // Version 2 upgrade: schedule refetch for all TV shows to upgrade to full aggregate credits
+    if (val.version < 2) {
+        var it_shows = self.shows.iterator();
+        while (it_shows.next()) |e| {
             e.value_ptr.credits_fetched = false;
         }
+        std.debug.print("Snapshot upgraded to version 2: scheduled refetch of all TV show credits.\n", .{});
     }
 
     return true;

@@ -32,23 +32,23 @@ pub const TmdbEpisode = struct {
 };
 
 pub const TmdbCastMember = struct {
-    id: i64,
-    name: []const u8,
+    id: i64 = 0,
+    name: []const u8 = "",
     character: ?[]const u8 = null,
     profile_path: ?[]const u8 = null,
     order: i32 = 0,
 };
 
 pub const TmdbCrewMember = struct {
-    id: i64,
-    name: []const u8,
-    job: []const u8,
-    department: []const u8,
+    id: i64 = 0,
+    name: []const u8 = "",
+    job: []const u8 = "",
+    department: []const u8 = "",
     profile_path: ?[]const u8 = null,
 };
 
 pub const TmdbCreditsResponse = struct {
-    id: i64,
+    id: i64 = 0,
     cast: []TmdbCastMember = &.{},
     crew: []TmdbCrewMember = &.{},
 };
@@ -66,16 +66,16 @@ pub const TmdbAggregateJob = struct {
 };
 
 pub const TmdbAggregateCastMember = struct {
-    id: i64,
-    name: []const u8,
+    id: i64 = 0,
+    name: []const u8 = "",
     profile_path: ?[]const u8 = null,
     order: i32 = 0,
     roles: []TmdbAggregateRole = &.{},
 };
 
 pub const TmdbAggregateCrewMember = struct {
-    id: i64,
-    name: []const u8,
+    id: i64 = 0,
+    name: []const u8 = "",
     department: []const u8 = "",
     profile_path: ?[]const u8 = null,
     jobs: []TmdbAggregateJob = &.{},
@@ -87,13 +87,13 @@ pub const TmdbAggregateCredits = struct {
 };
 
 pub const TmdbCreatedBy = struct {
-    id: i64,
-    name: []const u8,
+    id: i64 = 0,
+    name: []const u8 = "",
     profile_path: ?[]const u8 = null,
 };
 
 pub const TmdbShowFullCreditsResponse = struct {
-    id: i64,
+    id: i64 = 0,
     name: ?[]const u8 = null,
     created_by: []TmdbCreatedBy = &.{},
     aggregate_credits: ?TmdbAggregateCredits = null,
