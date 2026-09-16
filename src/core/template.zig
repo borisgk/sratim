@@ -23,6 +23,8 @@ pub fn render(allocator: std.mem.Allocator, template_str: []const u8, replacemen
                     .pointer => |p| {
                         if (p.size == .slice and p.child == u8) {
                             try result.appendSlice(allocator, value);
+                        } else if (p.size == .one and @typeInfo(p.child) == .array and @typeInfo(p.child).array.child == u8) {
+                            try result.appendSlice(allocator, value);
                         } else {
                             @compileError("Unsupported pointer type in template: " ++ @typeName(@TypeOf(value)));
                         }

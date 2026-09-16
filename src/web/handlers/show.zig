@@ -57,6 +57,55 @@ pub fn handleShow(
         allocator.free(episodes);
     }
 
+    var seasons_list = std.ArrayList(i32).empty;
+    defer seasons_list.deinit(allocator);
+
+    for (episodes) |ep| {
+        if (!ep.is_present) continue;
+        const s = @as(i32, @intCast(ep.season));
+        if (seasons_list.items.len == 0 or seasons_list.items[seasons_list.items.len - 1] != s) {
+            try seasons_list.append(allocator, s);
+        }
+    }
+
+    const has_multiple_seasons = seasons_list.items.len > 1;
+
+    // Default active season: prefer Season 1 if present; otherwise first season in list
+    var default_season: i32 = -1;
+    if (seasons_list.items.len > 0) {
+        default_season = seasons_list.items[0];
+        for (seasons_list.items) |s| {
+            if (s == 1) {
+                default_season = 1;
+                break;
+            }
+        }
+    }
+
+    // Generate Season Tabs HTML if multiple seasons
+    var tabs_buf = std.ArrayList(u8).empty;
+    defer tabs_buf.deinit(allocator);
+
+    if (has_multiple_seasons) {
+        try tabs_buf.appendSlice(allocator, "<div class=\"season-tabs-container\">\n    <nav class=\"season-tabs\" role=\"tablist\" aria-label=\"Seasons\">\n");
+        for (seasons_list.items) |s| {
+            const is_active = (s == default_season);
+            const active_class = if (is_active) " active" else "";
+            const aria_selected = if (is_active) "true" else "false";
+
+            var label_buf: [32]u8 = undefined;
+            const label = if (s == 0) "Specials" else try std.fmt.bufPrint(&label_buf, "Season {d}", .{s});
+
+            const tab_btn = try std.fmt.allocPrint(allocator,
+                \\        <button type="button" role="tab" class="season-tab{s}" data-season="{d}" aria-selected="{s}" aria-controls="season-{d}">{s}</button>
+                \\
+            , .{ active_class, s, aria_selected, s, label });
+            defer allocator.free(tab_btn);
+            try tabs_buf.appendSlice(allocator, tab_btn);
+        }
+        try tabs_buf.appendSlice(allocator, "    </nav>\n</div>\n");
+    }
+
     var seasons_buf = std.ArrayList(u8).empty;
     defer seasons_buf.deinit(allocator);
 
@@ -71,12 +120,25 @@ pub fn handleShow(
 
         if (season != current_season) {
             if (current_season != -1) {
-                try seasons_buf.appendSlice(allocator, "</div>\n");
+                try seasons_buf.appendSlice(allocator, "    </div>\n</section>\n");
             }
             current_season = season;
-            const season_header = try std.fmt.allocPrint(allocator, "<h2 style=\"margin-bottom: 20px; margin-top: 40px;\">Season {d}</h2>\n<div class=\"episode-list\" id=\"movie-grid\">\n", .{season});
-            defer allocator.free(season_header);
-            try seasons_buf.appendSlice(allocator, season_header);
+
+            const is_active = !has_multiple_seasons or (season == default_season);
+            const active_class = if (is_active) " active" else "";
+            const hide_style = if (is_active) "" else " style=\"display: none;\"";
+
+            var label_buf: [32]u8 = undefined;
+            const label = if (season == 0) "Specials" else try std.fmt.bufPrint(&label_buf, "Season {d}", .{season});
+
+            const section_header = try std.fmt.allocPrint(allocator,
+                \\<section class="season-section{s}" id="season-{d}" data-season="{d}"{s}>
+                \\    <h2 class="season-heading">{s}</h2>
+                \\    <div class="episode-list">
+                \\
+            , .{ active_class, season, season, hide_style, label });
+            defer allocator.free(section_header);
+            try seasons_buf.appendSlice(allocator, section_header);
         }
 
         const ep_title_opt = ep.title;
@@ -138,9 +200,9 @@ pub fn handleShow(
     }
     
     if (current_season != -1) {
-        try seasons_buf.appendSlice(allocator, "</div>\n");
+        try seasons_buf.appendSlice(allocator, "    </div>\n</section>\n");
     } else {
-        try seasons_buf.appendSlice(allocator, "<p>No episodes found.</p>\n");
+        try seasons_buf.appendSlice(allocator, "<p class=\"no-episodes-msg\">No episodes found.</p>\n");
     }
 
     var lib_id_buf: [32]u8 = undefined;
@@ -167,6 +229,7 @@ pub fn handleShow(
         .SHOW_TITLE = title,
         .LIBRARY_ID = lib_id_str,
         .LIBRARY_NAME = lib_name,
+        .SEASON_TABS_HTML = tabs_buf.items,
         .SEASONS_HTML = seasons_buf.items,
         .SHOW_BACKDROP_HTML = backdrop_html.items,
     });
@@ -178,4 +241,78 @@ pub fn handleShow(
             .{ .name = "content-type", .value = "text/html; charset=utf-8" },
         },
     });
+}
+
+test "show template renders season tabs when provided" {
+    const allocator = std.testing.allocator;
+    const template_str = @embedFile("../templates/show_view.html");
+
+    // Multi-season render
+    {
+        const tabs_html =
+            \\<div class="season-tabs-container">
+            \\    <nav class="season-tabs" role="tablist" aria-label="Seasons">
+            \\        <button type="button" role="tab" class="season-tab active" data-season="1" aria-selected="true" aria-controls="season-1">Season 1</button>
+            \\        <button type="button" role="tab" class="season-tab" data-season="2" aria-selected="false" aria-controls="season-2">Season 2</button>
+            \\    </nav>
+            \\</div>
+        ;
+        const seasons_html =
+            \\<section class="season-section active" id="season-1" data-season="1">
+            \\    <h2 class="season-heading">Season 1</h2>
+            \\    <div class="episode-list">
+            \\        <div class="episode-row" data-name="Pilot">Episode 1 - Pilot</div>
+            \\    </div>
+            \\</section>
+            \\<section class="season-section" id="season-2" data-season="2" style="display: none;">
+            \\    <h2 class="season-heading">Season 2</h2>
+            \\    <div class="episode-list">
+            \\        <div class="episode-row" data-name="Episode 1">Episode 1 - S2E1</div>
+            \\    </div>
+            \\</section>
+        ;
+
+        const rendered = try template_engine.render(allocator, template_str, .{
+            .INLINE_CSS = "/* css */",
+            .SHOW_TITLE = "Test TV Show",
+            .LIBRARY_ID = "42",
+            .LIBRARY_NAME = "Shows",
+            .SEASON_TABS_HTML = tabs_html,
+            .SEASONS_HTML = seasons_html,
+            .SHOW_BACKDROP_HTML = "",
+        });
+        defer allocator.free(rendered);
+
+        try std.testing.expect(std.mem.indexOf(u8, rendered, "class=\"season-tabs-container\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, rendered, "data-season=\"1\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, rendered, "data-season=\"2\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, rendered, "switchSeason") != null);
+    }
+
+    // Single-season render (tabs empty)
+    {
+        const tabs_html = "";
+        const seasons_html =
+            \\<section class="season-section active" id="season-1" data-season="1">
+            \\    <h2 class="season-heading">Season 1</h2>
+            \\    <div class="episode-list">
+            \\        <div class="episode-row" data-name="Single Ep">Episode 1</div>
+            \\    </div>
+            \\</section>
+        ;
+
+        const rendered = try template_engine.render(allocator, template_str, .{
+            .INLINE_CSS = "/* css */",
+            .SHOW_TITLE = "Mini Series",
+            .LIBRARY_ID = "42",
+            .LIBRARY_NAME = "Shows",
+            .SEASON_TABS_HTML = tabs_html,
+            .SEASONS_HTML = seasons_html,
+            .SHOW_BACKDROP_HTML = "",
+        });
+        defer allocator.free(rendered);
+
+        try std.testing.expect(std.mem.indexOf(u8, rendered, "class=\"season-tabs-container\"") == null);
+        try std.testing.expect(std.mem.indexOf(u8, rendered, "Mini Series") != null);
+    }
 }

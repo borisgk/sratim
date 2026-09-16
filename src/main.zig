@@ -151,6 +151,7 @@ test {
     _ = @import("db/analytics.zig");
     _ = @import("db/admin.zig");
     _ = @import("web/handlers/analytics_admin.zig");
+    _ = @import("web/handlers/show.zig");
     if (build_options.test_audio) {
         _ = @import("media/native/audio/test_ac3_mkv.zig");
         _ = @import("media/native/audio/test_eac3_mkv.zig");

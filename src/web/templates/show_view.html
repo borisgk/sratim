@@ -33,6 +33,8 @@
             <input type="text" id="search-input" class="search-input" placeholder="Search episodes..." autocomplete="off">
         </div>
 
+        __SEASON_TABS_HTML__
+
         <div class="seasons-container">
             __SEASONS_HTML__
             <div id="no-results" class="no-results">No episodes found matching your search.</div>
@@ -63,28 +65,105 @@
         const searchInput = document.getElementById('search-input');
         const rows = document.querySelectorAll('.episode-row');
         const noResults = document.getElementById('no-results');
+        const seasonTabs = document.querySelectorAll('.season-tab');
+        const seasonSections = document.querySelectorAll('.season-section');
+
+        let activeSeason = null;
+        const initialActiveTab = document.querySelector('.season-tab.active');
+        if (initialActiveTab) {
+            activeSeason = initialActiveTab.getAttribute('data-season');
+        } else if (seasonSections.length > 0) {
+            activeSeason = seasonSections[0].getAttribute('data-season');
+        }
+
+        function switchSeason(season, updateHash = true) {
+            activeSeason = String(season);
+            seasonTabs.forEach(tab => {
+                const isMatch = tab.getAttribute('data-season') === String(season);
+                tab.classList.toggle('active', isMatch);
+                tab.setAttribute('aria-selected', isMatch ? 'true' : 'false');
+            });
+
+            seasonSections.forEach(section => {
+                const isMatch = section.getAttribute('data-season') === String(season);
+                section.style.display = isMatch ? '' : 'none';
+                section.classList.toggle('active', isMatch);
+            });
+
+            if (updateHash) {
+                history.replaceState(null, '', '#season-' + season);
+            }
+        }
+
+        seasonTabs.forEach(tab => {
+            tab.addEventListener('click', (e) => {
+                e.preventDefault();
+                const season = tab.getAttribute('data-season');
+                if (searchInput && searchInput.value) {
+                    searchInput.value = '';
+                    rows.forEach(r => r.style.display = '');
+                    if (noResults) noResults.style.display = 'none';
+                }
+                switchSeason(season);
+            });
+        });
+
+        // URL hash navigation support
+        function checkHash() {
+            if (window.location.hash) {
+                const m = window.location.hash.match(/^#season-(\d+)$/);
+                if (m) {
+                    const targetSeason = m[1];
+                    const tabExists = document.querySelector(`.season-tab[data-season="${targetSeason}"]`);
+                    if (tabExists) {
+                        switchSeason(targetSeason, false);
+                    }
+                }
+            }
+        }
+        checkHash();
+        window.addEventListener('hashchange', checkHash);
 
         if (searchInput) {
             searchInput.addEventListener('input', (e) => {
                 const query = e.target.value.toLowerCase().trim();
-                let hasMatches = false;
+                let totalMatches = 0;
 
-                rows.forEach(row => {
-                    const name = (row.getAttribute('data-name') || '').toLowerCase();
-                    const text = row.innerText.toLowerCase();
-
-                    if (query === '' || name.includes(query) || text.includes(query)) {
-                        row.style.display = '';
-                        hasMatches = true;
+                if (query === '') {
+                    // Restore active season view
+                    rows.forEach(row => row.style.display = '');
+                    if (seasonTabs.length > 0 && activeSeason !== null) {
+                        seasonSections.forEach(section => {
+                            const isMatch = section.getAttribute('data-season') === String(activeSeason);
+                            section.style.display = isMatch ? '' : 'none';
+                        });
                     } else {
-                        row.style.display = 'none';
+                        seasonSections.forEach(section => section.style.display = '');
                     }
-                });
-
-                if (hasMatches || query === '') {
-                    noResults.style.display = 'none';
+                    if (noResults) noResults.style.display = 'none';
                 } else {
-                    noResults.style.display = 'block';
+                    // Search across all seasons
+                    seasonSections.forEach(section => {
+                        let sectionMatches = 0;
+                        const sectionRows = section.querySelectorAll('.episode-row');
+                        sectionRows.forEach(row => {
+                            const name = (row.getAttribute('data-name') || '').toLowerCase();
+                            const text = row.innerText.toLowerCase();
+
+                            if (name.includes(query) || text.includes(query)) {
+                                row.style.display = '';
+                                sectionMatches++;
+                                totalMatches++;
+                            } else {
+                                row.style.display = 'none';
+                            }
+                        });
+                        section.style.display = sectionMatches > 0 ? '' : 'none';
+                    });
+
+                    if (noResults) {
+                        noResults.style.display = totalMatches > 0 ? 'none' : 'block';
+                    }
                 }
             });
         }
