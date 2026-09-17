@@ -338,12 +338,11 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
 
                     metadata_mod.saveShowCredits(database, show.id, credits.cast, credits.crew) catch |err| {
                         std.debug.print("TMDB fetcher error saving credits for show {s}: {}\n", .{ show.title, err });
+                        metadata_mod.markShowCreditsFetched(database, show.id);
                     };
                 } else |err| {
                     std.debug.print("TMDB fetcher error fetching credits for show {s}: {}\n", .{ show.title, err });
-                    if (err == error.NotFound) {
-                        metadata_mod.markShowCreditsFetched(database, show.id);
-                    }
+                    metadata_mod.markShowCreditsFetched(database, show.id);
                 }
 
                 // 1-second interval between TMDB requests

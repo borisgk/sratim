@@ -172,10 +172,8 @@ pub fn handleShow(
                 }
                 allocator.free(credits);
                 credits = cat.getCreditsByShow(allocator, show_id) catch &.{};
-            } else |err| {
-                if (err == error.NotFound) {
-                    metadata_mod.markShowCreditsFetched(database, show.id);
-                }
+            } else |_| {
+                metadata_mod.markShowCreditsFetched(database, show.id);
             }
         }
     }

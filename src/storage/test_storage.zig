@@ -949,3 +949,60 @@ test "ShowCredit: re-linking show with different tmdb_id clears old credits and 
     try testing.expectEqual(@as(i64, 1396), missing[0].tmdb_id.?);
 }
 
+test "ShowCredit: show with 0 credits and credits_fetched=true is not returned as missing" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_show_zero_credits.json";
+    const wal_path = "tmp/test_show_zero_credits.wal";
+    const persons_dir = "tmp/test_show_zero_credits_persons";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
+
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
+    defer storage.deinit();
+
+    const lib = try storage.addLibrary("Shows", "/path/to/shows", .Shows);
+    const show_id = try storage.addOrUpdateShow(.{
+        .id = 0,
+        .library_id = lib.id,
+        .path = "/path/to/shows/Obscure Show",
+        .title = "Obscure Show",
+        .tmdb_id = 999999,
+        .is_present = true,
+        .credits_fetched = false,
+    });
+
+    // Before marking fetched: show is missing credits
+    {
+        const missing = try storage.getShowsMissingCredits(allocator);
+        defer {
+            for (missing) |*s| {
+                var mut = s.*;
+                mut.deinit(allocator);
+            }
+            allocator.free(missing);
+        }
+        try testing.expectEqual(@as(usize, 1), missing.len);
+        try testing.expectEqual(show_id, missing[0].id);
+    }
+
+    // Mark show credits as fetched (even with 0 credits added, e.g. TMDB has no credits)
+    storage.markShowCreditsFetched(show_id);
+    try testing.expect(!storage.hasShowCredits(show_id));
+
+    // Show must NOT be reported as missing credits anymore
+    {
+        const missing = try storage.getShowsMissingCredits(allocator);
+        defer {
+            for (missing) |*s| {
+                var mut = s.*;
+                mut.deinit(allocator);
+            }
+            allocator.free(missing);
+        }
+        try testing.expectEqual(@as(usize, 0), missing.len);
+    }
+}
+
