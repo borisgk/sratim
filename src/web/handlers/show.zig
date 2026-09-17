@@ -98,6 +98,7 @@ pub fn handleShow(
     database: *db_mod.Database,
     logs_database: *db_mod.Database,
     username: []const u8,
+    is_admin: bool,
     show_id: i64,
 ) !void {
     _ = logs_database;
@@ -472,6 +473,31 @@ pub fn handleShow(
         try backdrop_html.appendSlice(allocator, "')\"></div>");
     }
 
+    var admin_actions_html = std.ArrayList(u8).empty;
+    defer admin_actions_html.deinit(allocator);
+
+    var show_id_buf: [32]u8 = undefined;
+    const show_id_str = try std.fmt.bufPrint(&show_id_buf, "{d}", .{show_id});
+
+    if (is_admin) {
+        try admin_actions_html.appendSlice(allocator,
+            \\<div class="show-admin-actions">
+            \\    <button id="refetch-cast-btn" class="action-pill-btn" data-id="
+        );
+        try admin_actions_html.appendSlice(allocator, show_id_str);
+        try admin_actions_html.appendSlice(allocator,
+            \\">
+            \\        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            \\            <polyline points="23 4 23 10 17 10"></polyline>
+            \\            <polyline points="1 20 1 14 7 14"></polyline>
+            \\            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            \\        </svg>
+            \\        <span>Refetch Cast</span>
+            \\    </button>
+            \\</div>
+        );
+    }
+
     const html = try template_engine.render(allocator, @embedFile("../templates/show_view.html"), .{
         .INLINE_CSS = global_css,
         .SHOW_TITLE = title,
@@ -481,6 +507,7 @@ pub fn handleShow(
         .SEASONS_HTML = seasons_buf.items,
         .CAST_HTML = cast_buf.items,
         .SHOW_BACKDROP_HTML = backdrop_html.items,
+        .ADMIN_ACTIONS_HTML = admin_actions_html.items,
     });
     defer allocator.free(html);
 
@@ -544,6 +571,7 @@ test "show template renders season tabs and cast when provided" {
             .SEASONS_HTML = seasons_html,
             .CAST_HTML = cast_html,
             .SHOW_BACKDROP_HTML = "",
+            .ADMIN_ACTIONS_HTML = "",
         });
         defer allocator.free(rendered);
 
@@ -597,6 +625,7 @@ test "show template renders season tabs and cast when provided" {
             .SEASONS_HTML = seasons_html,
             .CAST_HTML = cast_html,
             .SHOW_BACKDROP_HTML = "",
+            .ADMIN_ACTIONS_HTML = "",
         });
         defer allocator.free(rendered);
 

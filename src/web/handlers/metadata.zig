@@ -107,7 +107,76 @@ pub fn handleApiMetadataLink(request: *std.http.Server.Request, allocator: std.m
         payload.release_date,
     );
 
+    const token = config.getTmdbToken();
+    if (token.len > 0) {
+        _ = syncMovieCredits(allocator, io, database, config, payload.movie_id, payload.tmdb_id, token) catch {};
+    }
+
     request.respond("OK", .{ .status = .ok }) catch return;
+}
+
+pub fn syncShowCredits(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    database: *db_mod.Database,
+    config: *const config_mod.Config,
+    show_id: i64,
+    tmdb_id: i64,
+    token: []const u8,
+) !usize {
+    var credits_parsed = try tmdb.fetchShowCredits(allocator, io, tmdb_id, token, config.tmdb_proxy);
+    defer credits_parsed.deinit();
+
+    const credits = credits_parsed.value;
+    const cast_limit = @min(credits.cast.len, 20);
+    for (credits.cast[0..cast_limit]) |c| {
+        if (c.profile_path) |p| {
+            tmdb.downloadProfileImage(allocator, io, p, config.tmdb_proxy) catch {};
+        }
+    }
+    for (credits.crew) |cr| {
+        if (std.mem.eql(u8, cr.job, "Director") or
+            std.mem.eql(u8, cr.job, "Creator") or
+            std.mem.eql(u8, cr.job, "Created by") or
+            std.mem.eql(u8, cr.job, "Series Director"))
+        {
+            if (cr.profile_path) |p| {
+                tmdb.downloadProfileImage(allocator, io, p, config.tmdb_proxy) catch {};
+            }
+        }
+    }
+    try metadata_mod.saveShowCredits(database, show_id, credits.cast, credits.crew);
+    return cast_limit;
+}
+
+pub fn syncMovieCredits(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    database: *db_mod.Database,
+    config: *const config_mod.Config,
+    movie_id: i64,
+    tmdb_id: i64,
+    token: []const u8,
+) !usize {
+    var credits_parsed = try tmdb.fetchMovieCredits(allocator, io, tmdb_id, token, config.tmdb_proxy);
+    defer credits_parsed.deinit();
+
+    const credits = credits_parsed.value;
+    const cast_limit = @min(credits.cast.len, 20);
+    for (credits.cast[0..cast_limit]) |c| {
+        if (c.profile_path) |p| {
+            tmdb.downloadProfileImage(allocator, io, p, config.tmdb_proxy) catch {};
+        }
+    }
+    for (credits.crew) |cr| {
+        if (std.mem.eql(u8, cr.job, "Director")) {
+            if (cr.profile_path) |p| {
+                tmdb.downloadProfileImage(allocator, io, p, config.tmdb_proxy) catch {};
+            }
+        }
+    }
+    try metadata_mod.saveMovieCredits(database, movie_id, credits.cast, credits.crew);
+    return cast_limit;
 }
 
 const MetadataAutoLinkPayload = struct {
@@ -188,6 +257,8 @@ pub fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: s
 
         try metadata_mod.resetShowEpisodesMetadata(database, show_id);
 
+        _ = syncShowCredits(allocator, io, database, config, show_id, first_show.id, token) catch {};
+
         request.respond("OK", .{ .status = .ok }) catch return;
         return;
     }
@@ -245,25 +316,7 @@ pub fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: s
         first_movie.release_date,
     );
 
-    // Fetch credits & profile pictures
-    if (tmdb.fetchMovieCredits(allocator, io, first_movie.id, token, config.tmdb_proxy)) |credits_parsed| {
-        defer credits_parsed.deinit();
-        const credits = credits_parsed.value;
-        const cast_limit = @min(credits.cast.len, 20);
-        for (credits.cast[0..cast_limit]) |c| {
-            if (c.profile_path) |p| {
-                tmdb.downloadProfileImage(allocator, io, p, config.tmdb_proxy) catch {};
-            }
-        }
-        for (credits.crew) |cr| {
-            if (std.mem.eql(u8, cr.job, "Director")) {
-                if (cr.profile_path) |p| {
-                    tmdb.downloadProfileImage(allocator, io, p, config.tmdb_proxy) catch {};
-                }
-            }
-        }
-        metadata_mod.saveMovieCredits(database, movie_id, credits.cast, credits.crew) catch {};
-    } else |_| {}
+    _ = syncMovieCredits(allocator, io, database, config, movie_id, first_movie.id, token) catch {};
 
     request.respond("OK", .{ .status = .ok }) catch return;
 }
@@ -339,6 +392,8 @@ pub fn handleApiMetadataManualLink(request: *std.http.Server.Request, allocator:
 
         try metadata_mod.resetShowEpisodesMetadata(database, show_id);
 
+        _ = syncShowCredits(allocator, io, database, config, show_id, show.id, token) catch {};
+
         request.respond("OK", .{ .status = .ok }) catch return;
         return;
     }
@@ -376,27 +431,123 @@ pub fn handleApiMetadataManualLink(request: *std.http.Server.Request, allocator:
         movie.release_date,
     );
 
-    // Fetch credits & profile pictures
-    if (tmdb.fetchMovieCredits(allocator, io, movie.id, token, config.tmdb_proxy)) |credits_parsed| {
-        defer credits_parsed.deinit();
-        const credits = credits_parsed.value;
-        const cast_limit = @min(credits.cast.len, 20);
-        for (credits.cast[0..cast_limit]) |c| {
-            if (c.profile_path) |p| {
-                tmdb.downloadProfileImage(allocator, io, p, config.tmdb_proxy) catch {};
-            }
-        }
-        for (credits.crew) |cr| {
-            if (std.mem.eql(u8, cr.job, "Director")) {
-                if (cr.profile_path) |p| {
-                    tmdb.downloadProfileImage(allocator, io, p, config.tmdb_proxy) catch {};
-                }
-            }
-        }
-        metadata_mod.saveMovieCredits(database, movie_id, credits.cast, credits.crew) catch {};
-    } else |_| {}
+    _ = syncMovieCredits(allocator, io, database, config, movie_id, movie.id, token) catch {};
 
     request.respond("OK", .{ .status = .ok }) catch return;
+}
+
+const MetadataRefetchCreditsPayload = struct {
+    movie_id: ?i64 = null,
+    show_id: ?i64 = null,
+};
+
+pub fn handleApiMetadataRefetchCredits(
+    request: *std.http.Server.Request,
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    database: *db_mod.Database,
+    config: *const config_mod.Config,
+    body_buf: *[8192]u8,
+) !void {
+    const token = config.getTmdbToken();
+    if (token.len == 0) {
+        request.respond("TMDB Access Token is empty in config.json", .{ .status = .bad_request }) catch return;
+        return;
+    }
+
+    var reader = request.readerExpectNone(body_buf);
+    var body_data = std.ArrayList(u8).empty;
+    defer body_data.deinit(allocator);
+
+    var chunk_buf: [4096]u8 = undefined;
+    while (true) {
+        const n = reader.readSliceShort(&chunk_buf) catch break;
+        if (n == 0) break;
+        try body_data.appendSlice(allocator, chunk_buf[0..n]);
+    }
+
+    const parsed = std.json.parseFromSlice(MetadataRefetchCreditsPayload, allocator, body_data.items, .{
+        .ignore_unknown_fields = true,
+    }) catch |err| {
+        std.debug.print("Failed to parse metadata refetch credits JSON: {any}\n", .{err});
+        request.respond("Bad Request", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    defer parsed.deinit();
+
+    const payload = parsed.value;
+    const cat = database.catalog orelse {
+        request.respond("Catalog not configured", .{ .status = .internal_server_error }) catch return;
+        return;
+    };
+
+    if (payload.show_id) |show_id| {
+        const show_opt = try cat.getShowById(allocator, show_id);
+        if (show_opt == null) {
+            request.respond("Show not found", .{ .status = .not_found }) catch return;
+            return;
+        }
+        defer {
+            var s = show_opt.?;
+            s.deinit(allocator);
+        }
+        const s = show_opt.?;
+        if (s.tmdb_id == null or s.tmdb_id.? <= 0) {
+            request.respond("Show has no TMDB ID", .{ .status = .bad_request }) catch return;
+            return;
+        }
+
+        const count = syncShowCredits(allocator, io, database, config, show_id, s.tmdb_id.?, token) catch |err| {
+            std.debug.print("Failed to refetch show credits: {}\n", .{err});
+            request.respond("Failed to fetch credits from TMDB", .{ .status = .internal_server_error }) catch return;
+            return;
+        };
+
+        var res_buf: [128]u8 = undefined;
+        const res_json = try std.fmt.bufPrint(&res_buf, "{{\"status\":\"ok\",\"cast_count\":{d}}}", .{count});
+        request.respond(res_json, .{
+            .status = .ok,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "application/json" },
+            },
+        }) catch return;
+        return;
+    }
+
+    if (payload.movie_id) |movie_id| {
+        const movie_opt = try cat.getMovieById(allocator, movie_id);
+        if (movie_opt == null) {
+            request.respond("Movie not found", .{ .status = .not_found }) catch return;
+            return;
+        }
+        defer {
+            var m = movie_opt.?;
+            m.deinit(allocator);
+        }
+        const m = movie_opt.?;
+        if (m.tmdb_id == null or m.tmdb_id.? <= 0) {
+            request.respond("Movie has no TMDB ID", .{ .status = .bad_request }) catch return;
+            return;
+        }
+
+        const count = syncMovieCredits(allocator, io, database, config, movie_id, m.tmdb_id.?, token) catch |err| {
+            std.debug.print("Failed to refetch movie credits: {}\n", .{err});
+            request.respond("Failed to fetch credits from TMDB", .{ .status = .internal_server_error }) catch return;
+            return;
+        };
+
+        var res_buf: [128]u8 = undefined;
+        const res_json = try std.fmt.bufPrint(&res_buf, "{{\"status\":\"ok\",\"cast_count\":{d}}}", .{count});
+        request.respond(res_json, .{
+            .status = .ok,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "application/json" },
+            },
+        }) catch return;
+        return;
+    }
+
+    request.respond("Missing show_id or movie_id", .{ .status = .bad_request }) catch return;
 }
 
 pub fn handleApiMetadataSyncCredits(

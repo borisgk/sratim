@@ -48,9 +48,10 @@ pub fn appendMovieCard(
         const dropdown_content = try std.fmt.allocPrint(allocator,
             \\                <button class="dropdown-item lookup-btn" data-id="{d}" data-type="movie">Lookup Metadata</button>
             \\                <button class="dropdown-item manual-id-btn" data-id="{d}" data-type="movie" data-tmdb-id="{s}">Manual TMDB ID</button>
+            \\                <button class="dropdown-item refetch-credits-btn" data-id="{d}" data-type="movie">Refetch Cast</button>
             \\            </div>
             \\
-        , .{ movie_id, movie_id, tmdb_id_str });
+        , .{ movie_id, movie_id, tmdb_id_str, movie_id });
         defer allocator.free(dropdown_content);
         try cards_buf.appendSlice(allocator, dropdown_content);
     }
@@ -126,9 +127,10 @@ pub fn appendShowCard(
         const dropdown_content = try std.fmt.allocPrint(allocator,
             \\                <button class="dropdown-item lookup-btn" data-id="{d}" data-type="show">Lookup Metadata</button>
             \\                <button class="dropdown-item manual-id-btn" data-id="{d}" data-type="show" data-tmdb-id="{s}">Manual TMDB ID</button>
+            \\                <button class="dropdown-item refetch-credits-btn" data-id="{d}" data-type="show">Refetch Cast</button>
             \\            </div>
             \\
-        , .{ show_id, show_id, tmdb_id_str });
+        , .{ show_id, show_id, tmdb_id_str, show_id });
         defer allocator.free(dropdown_content);
         try cards_buf.appendSlice(allocator, dropdown_content);
     }

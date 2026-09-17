@@ -4,7 +4,43 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sratim — __SHOW_TITLE__</title>
-    <style>__INLINE_CSS__</style>
+    <style>
+        __INLINE_CSS__
+        .show-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .show-admin-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .action-pill-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 20px;
+            color: #d1d5db;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            backdrop-filter: blur(10px);
+            transition: all 0.2s ease;
+        }
+        .action-pill-btn:hover {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: rgba(56, 189, 248, 0.4);
+            color: #38bdf8;
+            transform: translateY(-1px);
+        }
+    </style>
 </head>
 <body>
     __SHOW_BACKDROP_HTML__
@@ -22,8 +58,9 @@
             </svg>
             Logout
         </a>
-        <header>
+        <header class="show-header">
             <h1>__SHOW_TITLE__</h1>
+            __ADMIN_ACTIONS_HTML__
         </header>
 
         <div class="search-container">
@@ -245,6 +282,38 @@
                 });
             }
         });
+
+        // Admin Refetch Cast Logic
+        const refetchCastBtn = document.getElementById('refetch-cast-btn');
+        if (refetchCastBtn) {
+            refetchCastBtn.addEventListener('click', async () => {
+                const showId = parseInt(refetchCastBtn.getAttribute('data-id'), 10);
+                const span = refetchCastBtn.querySelector('span');
+                const origText = span ? span.innerText : refetchCastBtn.innerText;
+                if (span) span.innerText = 'Refetching...';
+                refetchCastBtn.disabled = true;
+
+                try {
+                    const res = await fetch('/api/metadata/refetch-credits', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ show_id: showId })
+                    });
+                    if (res.ok) {
+                        window.location.reload();
+                    } else {
+                        const txt = await res.text();
+                        alert('Failed to refetch cast: ' + txt);
+                        if (span) span.innerText = origText;
+                        refetchCastBtn.disabled = false;
+                    }
+                } catch (err) {
+                    alert('Error: ' + err.message);
+                    if (span) span.innerText = origText;
+                    refetchCastBtn.disabled = false;
+                }
+            });
+        }
     </script>
 </body>
 </html>

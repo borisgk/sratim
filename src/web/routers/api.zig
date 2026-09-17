@@ -143,6 +143,18 @@ pub fn route(
         return true;
     }
 
+    if (std.mem.startsWith(u8, target, "/api/metadata/refetch-credits") and method == .POST) {
+        if (!session_info.is_admin) {
+            try request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden });
+            return true;
+        }
+        metadata_handler.handleApiMetadataRefetchCredits(request, allocator, io, database, config, resp_buf) catch |err| {
+            std.debug.print("API Metadata Refetch Credits error: {}\n", .{err});
+            try request.respond("Internal Server Error", .{ .status = .internal_server_error });
+        };
+        return true;
+    }
+
     if (std.mem.startsWith(u8, target, "/api/metadata/sync-credits")) {
         metadata_handler.handleApiMetadataSyncCredits(request, allocator, database, session_info.is_admin) catch |err| {
             std.debug.print("API Metadata Sync Credits error: {}\n", .{err});

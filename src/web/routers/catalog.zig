@@ -118,7 +118,7 @@ pub fn route(
             return true;
         };
 
-        show_handler.handleShow(allocator, io, config, request, database, logs_database, session_info.username, show_id) catch |err| {
+        show_handler.handleShow(allocator, io, config, request, database, logs_database, session_info.username, session_info.is_admin, show_id) catch |err| {
             std.debug.print("Show view error: {}\n", .{err});
             try request.respond("Internal Server Error", .{ .status = .internal_server_error });
         };

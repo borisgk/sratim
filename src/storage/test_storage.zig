@@ -885,3 +885,67 @@ test "ShowCredit: storage CRUD, sorting, snapshot roundtrip, and getShowsByPerso
     try testing.expectEqualStrings("Vince Gilligan", reloaded_credits[2].name);
 }
 
+test "ShowCredit: re-linking show with different tmdb_id clears old credits and resets credits_fetched" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_show_relink.json";
+    const wal_path = "tmp/test_show_relink.wal";
+    const persons_dir = "tmp/test_show_relink_persons";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
+
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
+    defer storage.deinit();
+
+    const lib = try storage.addLibrary("TV Shows", "/path/to/shows", .Shows);
+    const show_id = try storage.addOrUpdateShow(.{
+        .id = 0,
+        .library_id = lib.id,
+        .path = "/path/to/shows/Misidentified Show",
+        .title = "Wrong Show Title",
+        .tmdb_id = 99999,
+        .is_present = true,
+        .credits_fetched = true,
+    });
+
+    _ = try storage.addShowCredit(.{
+        .id = 0,
+        .show_id = show_id,
+        .person_id = 111,
+        .name = "Wrong Actor",
+        .character = "Wrong Character",
+        .order = 0,
+        .is_cast = true,
+    });
+
+    try testing.expect(storage.hasShowCredits(show_id));
+
+    // Re-link with new TMDB ID
+    try storage.linkShowMetadata(
+        show_id,
+        1396,
+        "Breaking Bad",
+        "A chemistry teacher diagnosed with lung cancer...",
+        "/poster.jpg",
+        "/backdrop.jpg",
+    );
+
+    // Verify credits are cleared and credits_fetched is reset
+    try testing.expect(!storage.hasShowCredits(show_id));
+
+    const missing = try storage.getShowsMissingCredits(allocator);
+    defer {
+        for (missing) |*s| {
+            var mut = s.*;
+            mut.deinit(allocator);
+        }
+        allocator.free(missing);
+    }
+    try testing.expectEqual(@as(usize, 1), missing.len);
+    try testing.expectEqual(show_id, missing[0].id);
+    try testing.expect(!missing[0].credits_fetched);
+    try testing.expectEqual(@as(i64, 1396), missing[0].tmdb_id.?);
+}
+

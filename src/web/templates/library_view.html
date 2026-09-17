@@ -268,6 +268,48 @@
             }
         });
 
+        // Refetch Cast & Crew Logic (Admin only)
+        document.querySelectorAll('.refetch-credits-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const targetId = parseInt(btn.getAttribute('data-id'), 10);
+                const itemType = btn.getAttribute('data-type') || 'movie';
+                const originalText = btn.innerText;
+                btn.innerText = 'Refetching...';
+                btn.disabled = true;
+
+                const payload = (itemType === 'show')
+                    ? { show_id: targetId }
+                    : { movie_id: targetId };
+
+                try {
+                    const res = await fetch('/api/metadata/refetch-credits', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (res.ok) {
+                        window.location.reload();
+                    } else {
+                        const text = await res.text();
+                        alert('Failed to refetch cast: ' + text);
+                        btn.innerText = originalText;
+                        btn.disabled = false;
+                    }
+                } catch (err) {
+                    console.error('Error refetching cast:', err);
+                    alert('Error connecting to server');
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                }
+
+                btn.parentElement.classList.remove('active');
+            });
+        });
+
         // Rescan Library Logic (Admin only)
         const rescanBtn = document.getElementById('rescan-lib-btn');
         if (rescanBtn) {

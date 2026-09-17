@@ -317,6 +317,24 @@ pub fn linkMovieMetadata(
     defer self.writeUnlock();
 
     if (self.movies.getPtr(id)) |ptr| {
+        const tmdb_changed = (ptr.tmdb_id == null or ptr.tmdb_id.? != tmdb_id);
+        if (tmdb_changed) {
+            ptr.credits_fetched = false;
+            var to_remove = std.ArrayList(i64).empty;
+            defer to_remove.deinit(self.allocator);
+            var it = self.movie_credits.iterator();
+            while (it.next()) |e| {
+                if (e.value_ptr.movie_id == id) {
+                    to_remove.append(self.allocator, e.key_ptr.*) catch {};
+                }
+            }
+            for (to_remove.items) |cid| {
+                if (self.movie_credits.fetchRemove(cid)) |entry| {
+                    var mut_val = entry.value;
+                    mut_val.deinit(self.allocator);
+                }
+            }
+        }
         ptr.tmdb_id = tmdb_id;
         if (ptr.title) |t| self.allocator.free(t);
         ptr.title = try self.allocator.dupe(u8, title);
@@ -343,6 +361,21 @@ pub fn unlinkMovieMetadata(self: *SratimStorage, id: i64) !void {
 
     if (self.movies.getPtr(id)) |ptr| {
         ptr.tmdb_id = null;
+        ptr.credits_fetched = false;
+        var to_remove = std.ArrayList(i64).empty;
+        defer to_remove.deinit(self.allocator);
+        var it = self.movie_credits.iterator();
+        while (it.next()) |e| {
+            if (e.value_ptr.movie_id == id) {
+                to_remove.append(self.allocator, e.key_ptr.*) catch {};
+            }
+        }
+        for (to_remove.items) |cid| {
+            if (self.movie_credits.fetchRemove(cid)) |entry| {
+                var mut_val = entry.value;
+                mut_val.deinit(self.allocator);
+            }
+        }
         if (ptr.title) |t| {
             self.allocator.free(t);
             ptr.title = null;
@@ -550,6 +583,24 @@ pub fn linkShowMetadata(
     defer self.writeUnlock();
 
     if (self.shows.getPtr(id)) |ptr| {
+        const tmdb_changed = (ptr.tmdb_id == null or ptr.tmdb_id.? != tmdb_id);
+        if (tmdb_changed) {
+            ptr.credits_fetched = false;
+            var to_remove = std.ArrayList(i64).empty;
+            defer to_remove.deinit(self.allocator);
+            var it = self.show_credits.iterator();
+            while (it.next()) |e| {
+                if (e.value_ptr.show_id == id) {
+                    to_remove.append(self.allocator, e.key_ptr.*) catch {};
+                }
+            }
+            for (to_remove.items) |cid| {
+                if (self.show_credits.fetchRemove(cid)) |entry| {
+                    var mut_val = entry.value;
+                    mut_val.deinit(self.allocator);
+                }
+            }
+        }
         ptr.tmdb_id = tmdb_id;
         self.allocator.free(ptr.title);
         ptr.title = try self.allocator.dupe(u8, title);
@@ -573,6 +624,21 @@ pub fn unlinkShowMetadata(self: *SratimStorage, id: i64) !void {
 
     if (self.shows.getPtr(id)) |ptr| {
         ptr.tmdb_id = null;
+        ptr.credits_fetched = false;
+        var to_remove = std.ArrayList(i64).empty;
+        defer to_remove.deinit(self.allocator);
+        var it = self.show_credits.iterator();
+        while (it.next()) |e| {
+            if (e.value_ptr.show_id == id) {
+                to_remove.append(self.allocator, e.key_ptr.*) catch {};
+            }
+        }
+        for (to_remove.items) |cid| {
+            if (self.show_credits.fetchRemove(cid)) |entry| {
+                var mut_val = entry.value;
+                mut_val.deinit(self.allocator);
+            }
+        }
         if (ptr.overview) |o| {
             self.allocator.free(o);
             ptr.overview = null;
