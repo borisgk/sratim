@@ -104,8 +104,10 @@ pub fn generatePersonHtml(
                 var mut_m = m;
                 mut_m.deinit(allocator);
             }
-            if (m.tmdb_id) |tid| {
-                library_tmdb_ids.put(tid, {}) catch {};
+            if (m.is_present) {
+                if (m.tmdb_id) |tid| {
+                    library_tmdb_ids.put(tid, {}) catch {};
+                }
             }
         }
     }
@@ -279,20 +281,22 @@ pub fn generatePersonHtml(
     for (credits) |c| {
         if (!c.is_cast and (c.job != null and std.mem.eql(u8, c.job.?, "Director"))) {
             if (!directed_movie_ids.contains(c.movie_id)) {
-                try directed_movie_ids.put(c.movie_id, {});
                 if (cat.getMovieById(allocator, c.movie_id) catch null) |m| {
                     defer {
                         var mut_m = m;
                         mut_m.deinit(allocator);
                     }
-                    var progress_pct: ?f64 = null;
-                    for (progress_list) |item| {
-                        if (item.movie_id == m.id and item.duration > 0) {
-                            progress_pct = (item.position / item.duration) * 100.0;
-                            break;
+                    if (m.is_present) {
+                        try directed_movie_ids.put(c.movie_id, {});
+                        var progress_pct: ?f64 = null;
+                        for (progress_list) |item| {
+                            if (item.movie_id == m.id and item.duration > 0) {
+                                progress_pct = (item.position / item.duration) * 100.0;
+                                break;
+                            }
                         }
+                        try cards.appendMovieCard(&directed_cards_buf, allocator, m.id, m.file_path, m.clean_name, m.title, m.poster_path, m.tmdb_id, progress_pct, is_admin, null);
                     }
-                    try cards.appendMovieCard(&directed_cards_buf, allocator, m.id, m.file_path, m.clean_name, m.title, m.poster_path, m.tmdb_id, progress_pct, is_admin, null);
                 }
             }
         }
@@ -325,20 +329,22 @@ pub fn generatePersonHtml(
     for (credits) |c| {
         if (c.is_cast) {
             if (!library_movie_ids.contains(c.movie_id) and !directed_movie_ids.contains(c.movie_id)) {
-                try library_movie_ids.put(c.movie_id, {});
                 if (cat.getMovieById(allocator, c.movie_id) catch null) |m| {
                     defer {
                         var mut_m = m;
                         mut_m.deinit(allocator);
                     }
-                    var progress_pct: ?f64 = null;
-                    for (progress_list) |item| {
-                        if (item.movie_id == m.id and item.duration > 0) {
-                            progress_pct = (item.position / item.duration) * 100.0;
-                            break;
+                    if (m.is_present) {
+                        try library_movie_ids.put(c.movie_id, {});
+                        var progress_pct: ?f64 = null;
+                        for (progress_list) |item| {
+                            if (item.movie_id == m.id and item.duration > 0) {
+                                progress_pct = (item.position / item.duration) * 100.0;
+                                break;
+                            }
                         }
+                        try cards.appendMovieCard(&library_cards_buf, allocator, m.id, m.file_path, m.clean_name, m.title, m.poster_path, m.tmdb_id, progress_pct, is_admin, null);
                     }
-                    try cards.appendMovieCard(&library_cards_buf, allocator, m.id, m.file_path, m.clean_name, m.title, m.poster_path, m.tmdb_id, progress_pct, is_admin, null);
                 }
             }
         }

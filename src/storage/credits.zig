@@ -287,6 +287,11 @@ pub fn getCreditsByPerson(self: *SratimStorage, allocator: std.mem.Allocator, pe
     var it = self.movie_credits.iterator();
     while (it.next()) |e| {
         if (e.value_ptr.person_id == person_id) {
+            if (self.movies.get(e.value_ptr.movie_id)) |m| {
+                if (!m.is_present) continue;
+            } else {
+                continue;
+            }
             const cloned = try e.value_ptr.clone(allocator);
             try list.append(allocator, cloned);
         }
@@ -346,6 +351,11 @@ pub fn getMoviePeopleNamesMap(self: *SratimStorage, allocator: std.mem.Allocator
     var it = self.movie_credits.iterator();
     while (it.next()) |e| {
         const mid = e.value_ptr.movie_id;
+        if (self.movies.get(mid)) |m| {
+            if (!m.is_present) continue;
+        } else {
+            continue;
+        }
         const res = try temp_map.getOrPut(mid);
         if (!res.found_existing) {
             res.value_ptr.* = std.ArrayList(u8).empty;

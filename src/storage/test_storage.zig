@@ -1006,3 +1006,118 @@ test "ShowCredit: show with 0 credits and credits_fetched=true is not returned a
     }
 }
 
+test "SratimStorage: getCreditsByPerson and getMoviePeopleNamesMap exclude absent/deleted movies" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_absent_credits.json";
+    const wal_path = "tmp/test_absent_credits.wal";
+    const persons_dir = "tmp/test_absent_credits_persons";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
+
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
+    defer storage.deinit();
+
+    // Add person
+    try storage.addOrUpdatePerson(.{
+        .id = 100,
+        .name = "Keanu Reeves",
+        .profile_path = null,
+        .known_for_department = "Acting",
+        .details_fetched = false,
+        .details_updated_at = 0,
+    });
+
+    // Add movie 1 (present)
+    const mov1_id = try storage.addOrUpdateMovie(.{
+        .id = 0,
+        .library_id = 1,
+        .file_path = "/movies/matrix.mkv",
+        .clean_name = "The Matrix",
+        .title = "The Matrix",
+        .tmdb_id = 603,
+        .is_present = true,
+    });
+
+    // Add movie 2 (absent / deleted)
+    const mov2_id = try storage.addOrUpdateMovie(.{
+        .id = 0,
+        .library_id = 1,
+        .file_path = "/movies/john_wick.mkv",
+        .clean_name = "John Wick",
+        .title = "John Wick",
+        .tmdb_id = 245891,
+        .is_present = false,
+    });
+
+    // Add credits for both movies
+    _ = try storage.addMovieCredit(.{
+        .id = 0,
+        .movie_id = mov1_id,
+        .person_id = 100,
+        .name = "Keanu Reeves",
+        .character = "Neo",
+        .profile_path = null,
+        .order = 0,
+        .is_cast = true,
+    });
+
+    _ = try storage.addMovieCredit(.{
+        .id = 0,
+        .movie_id = mov2_id,
+        .person_id = 100,
+        .name = "Keanu Reeves",
+        .character = "John Wick",
+        .profile_path = null,
+        .order = 0,
+        .is_cast = true,
+    });
+
+    // 1. getCreditsByPerson must only return credit for mov1 (present), not mov2 (absent)
+    {
+        const credits = try storage.getCreditsByPerson(allocator, 100);
+        defer {
+            for (credits) |*c| c.deinit(allocator);
+            allocator.free(credits);
+        }
+        try testing.expectEqual(@as(usize, 1), credits.len);
+        try testing.expectEqual(mov1_id, credits[0].movie_id);
+    }
+
+    // 2. getMoviesByPerson must only return mov1
+    {
+        const movies = try storage.getMoviesByPerson(allocator, 100);
+        defer {
+            for (movies) |*m| m.deinit(allocator);
+            allocator.free(movies);
+        }
+        try testing.expectEqual(@as(usize, 1), movies.len);
+        try testing.expectEqual(mov1_id, movies[0].id);
+    }
+
+    // 3. getMoviePeopleNamesMap must contain mov1 and NOT mov2
+    {
+        var people_map = try storage.getMoviePeopleNamesMap(allocator);
+        defer {
+            var it = people_map.iterator();
+            while (it.next()) |e| allocator.free(e.value_ptr.*);
+            people_map.deinit();
+        }
+        try testing.expect(people_map.contains(mov1_id));
+        try testing.expect(!people_map.contains(mov2_id));
+    }
+
+    // 4. If mov1 is also marked absent, getCreditsByPerson returns 0
+    storage.markAllMoviesAbsent(1);
+    {
+        const credits = try storage.getCreditsByPerson(allocator, 100);
+        defer {
+            for (credits) |*c| c.deinit(allocator);
+            allocator.free(credits);
+        }
+        try testing.expectEqual(@as(usize, 0), credits.len);
+    }
+}
+
