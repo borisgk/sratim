@@ -183,7 +183,7 @@ jobs:
           CL_TRUNCATED=$(echo "$CHANGELOG" | head -c 2500)
           ESCAPED_CL=$(printf '%s' "$CL_TRUNCATED" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
 
-          TEXT=$(printf '%s\n\n%s\n%s\n\n%s\n%s\n\n%s' \
+          TEXT=$(printf '%s\n\n%s\n%s\n\n%s' \
             "🚀 <b>Sratim Release ${TAG}</b>!" \
             "📝 <b>Changelog:</b>" \
             "<pre>${ESCAPED_CL}</pre>" \
