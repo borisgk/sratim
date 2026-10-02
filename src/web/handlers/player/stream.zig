@@ -114,14 +114,14 @@ pub fn handleStream(
                             }
                             if (selected_at.stsd_raw.len >= 24) {
                                 const fourcc = selected_at.stsd_raw[20..24];
-                                if (std.mem.eql(u8, &fourcc, "mp4a")) {
+                                if (std.mem.eql(u8, fourcc, "mp4a")) {
                                     orig_audio_codec = "AAC";
-                                } else if (std.mem.eql(u8, &fourcc, "ac-3")) {
+                                } else if (std.mem.eql(u8, fourcc, "ac-3")) {
                                     orig_audio_codec = "AC-3";
-                                } else if (std.mem.eql(u8, &fourcc, "ec-3")) {
+                                } else if (std.mem.eql(u8, fourcc, "ec-3")) {
                                     orig_audio_codec = "E-AC-3";
                                 } else {
-                                    orig_audio_codec = std.fmt.bufPrint(&orig_audio_codec_buf, "{s}", .{&fourcc}) catch "AAC";
+                                    orig_audio_codec = std.fmt.bufPrint(&orig_audio_codec_buf, "{s}", .{fourcc}) catch "AAC";
                                 }
                             }
                         }
