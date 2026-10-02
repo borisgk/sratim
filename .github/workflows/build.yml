@@ -90,6 +90,9 @@ jobs:
     name: Generate Semantic Release
     needs: build
     runs-on: ubuntu-latest 
+    outputs:
+      new_tag: ${{ steps.tag_version.outputs.new_tag }}
+      changelog: ${{ steps.tag_version.outputs.changelog }}
     
     steps:
       - name: Checkout Repository
@@ -157,3 +160,53 @@ jobs:
           key: ${{ secrets.DEMO_SSH_KEY }}
           script: |
             curl -sL https://raw.githubusercontent.com/borisgk/sratim/main/scripts/install.sh | sudo bash
+
+  notify-telegram:
+    name: Publish Release Updates to Telegram
+    needs: [release, deploy, deploy-demo]
+    if: always() && needs.release.result == 'success' && needs.deploy.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Telegram Notification
+        if: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TAG: ${{ needs.release.outputs.new_tag }}
+          CHANGELOG: ${{ needs.release.outputs.changelog }}
+          REPO: ${{ github.repository }}
+        run: |
+          CL_TRUNCATED=$(echo "$CHANGELOG" | head -c 2500)
+          ESCAPED_CL=$(printf '%s' "$CL_TRUNCATED" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+
+          TEXT="🚀 <b>Sratim Release ${TAG}</b> Deployed!
+
+<b>Production:</b> https://elvis.rus9n.com
+<b>Demo:</b> https://il1.rus9n.com
+
+📝 <b>Changelog:</b>
+<pre>${ESCAPED_CL}</pre>
+
+🔗 <a href=\"https://github.com/${REPO}/releases/tag/${TAG}\">View Release on GitHub</a>"
+
+          PAYLOAD=$(jq -n \
+            --arg chat_id "$TELEGRAM_CHAT_ID" \
+            --arg text "$TEXT" \
+            '{
+              chat_id: $chat_id,
+              text: $text,
+              parse_mode: "HTML",
+              disable_web_page_preview: true
+            }')
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "::warning::Telegram notification failed with HTTP $HTTP_CODE: $BODY"
+          else
+            echo "Telegram notification sent successfully."
+          fi
