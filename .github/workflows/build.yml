@@ -184,9 +184,7 @@ jobs:
           ESCAPED_CL=$(printf '%s' "$CL_TRUNCATED" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
 
           TEXT=$(printf '%s\n\n%s\n%s\n\n%s\n%s\n\n%s' \
-            "🚀 <b>Sratim Release ${TAG}</b> Deployed!" \
-            "<b>Production:</b> https://elvis.rus9n.com" \
-            "<b>Demo:</b> https://il1.rus9n.com" \
+            "🚀 <b>Sratim Release ${TAG}</b>!" \
             "📝 <b>Changelog:</b>" \
             "<pre>${ESCAPED_CL}</pre>" \
             "🔗 <a href=\"https://github.com/${REPO}/releases/tag/${TAG}\">View Release on GitHub</a>")
