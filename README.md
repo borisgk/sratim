@@ -2,6 +2,10 @@
 
 A lightweight media server written in Zig (0.16.0). Sratim automatically scans your media library, fetches metadata from TMDB, and serves your content via a fast, concurrent web server backed by a high-performance, pure-Zig in-memory database engine (SratimDB) with JSON snapshots and binary write-ahead logging (WAL).
 
+## Telegram Channel
+
+Join our channel to stay updated with the latest releases and news: [Sratim Server](https://t.me/sratimserver)
+
 ## Installation
 
 You can install Sratim automatically on any systemd-based Linux distribution (Arch Linux, Debian, Ubuntu) using our universal installation script.
