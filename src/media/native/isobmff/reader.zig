@@ -35,15 +35,9 @@ pub fn readBoxHeader(r: *std.Io.Reader, current_pos: u64) !?BoxHeader {
     };
 }
 
-/// Skips the specified number of bytes using chunked reads.
+/// Skips the specified number of bytes using fast reader discard.
 pub fn skipBytes(r: *std.Io.Reader, count: u64) !void {
-    var remaining = count;
-    var discard_buf: [4096]u8 = undefined;
-    while (remaining > 0) {
-        const to_read: usize = @intCast(@min(remaining, discard_buf.len));
-        try r.readSliceAll(discard_buf[0..to_read]);
-        remaining -= to_read;
-    }
+    try r.discardAll64(count);
 }
 
 /// Checks if a 4-byte box type matches a FourCC string using comptime u32 comparison.

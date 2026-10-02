@@ -6,16 +6,11 @@ const transcoder_mod = @import("../transcoder.zig");
 const track_parser = @import("mkv/track_parser.zig");
 const config_mod = @import("../../config.zig");
 
-/// Checks whether an MP4 file can be streamed natively (valid tracks and supported audio).
-pub fn canStreamMp4Natively(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    file_path: [:0]const u8,
+/// Checks whether an already parsed Mp4Media structure can be streamed natively.
+pub fn canStreamParsedMp4(
+    media: *const isobmff.Mp4Media,
     audio_idx_requested: c_int,
 ) bool {
-    var media = isobmff.parseMp4Media(allocator, io, file_path) catch return false;
-    defer media.deinit(allocator);
-
     const video_track = media.video_track orelse return false;
     if (video_track.samples.len == 0) return false;
 
@@ -53,6 +48,18 @@ pub fn canStreamMp4Natively(
     return true;
 }
 
+/// Checks whether an MP4 file can be streamed natively (valid tracks and supported audio).
+pub fn canStreamMp4Natively(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    file_path: [:0]const u8,
+    audio_idx_requested: c_int,
+) bool {
+    var media = isobmff.parseMp4Media(allocator, io, file_path) catch return false;
+    defer media.deinit(allocator);
+    return canStreamParsedMp4(&media, audio_idx_requested);
+}
+
 /// Slices an existing MP4 file into a byte-compatible fMP4 stream starting at the nearest keyframe.
 pub fn streamMp4(
     allocator: std.mem.Allocator,
@@ -63,10 +70,23 @@ pub fn streamMp4(
     http_ctx: *streamer.HttpStreamContext,
     audio_transcoder_mode: config_mod.EngineMode,
 ) !void {
-    _ = audio_transcoder_mode;
     var media = try isobmff.parseMp4Media(allocator, io, file_path);
     defer media.deinit(allocator);
+    return streamMp4WithMedia(allocator, io, file_path, media, start_time, audio_idx_requested, http_ctx, audio_transcoder_mode);
+}
 
+/// Slices an already parsed MP4 media structure into a byte-compatible fMP4 stream starting at the nearest keyframe.
+pub fn streamMp4WithMedia(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    file_path: [:0]const u8,
+    media: isobmff.Mp4Media,
+    start_time: f64,
+    audio_idx_requested: c_int,
+    http_ctx: *streamer.HttpStreamContext,
+    audio_transcoder_mode: config_mod.EngineMode,
+) !void {
+    _ = audio_transcoder_mode;
     const video_track = media.video_track orelse return error.NoVideoTrackFound;
     if (video_track.samples.len == 0) return error.NoVideoSamplesFound;
 

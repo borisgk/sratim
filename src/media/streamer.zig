@@ -77,6 +77,20 @@ pub fn streamMedia(
     }
 }
 
+/// Streams an already parsed MP4 file into fMP4 without re-parsing its track/sample atoms.
+pub fn streamMp4WithMedia(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    file_path: [:0]const u8,
+    media: isobmff.Mp4Media,
+    start_time: f64,
+    audio_idx_requested: c_int,
+    http_ctx: *HttpStreamContext,
+    audio_transcoder_mode: config_mod.EngineMode,
+) !void {
+    return mp4_streamer.streamMp4WithMedia(allocator, io, file_path, media, start_time, audio_idx_requested, http_ctx, audio_transcoder_mode);
+}
+
 const native_metadata = @import("native/metadata.zig");
 
 pub const SubtitleTrack = native_metadata.SubtitleTrack;

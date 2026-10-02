@@ -69,6 +69,13 @@ pub fn handleStream(
     defer allocator.free(z_path);
 
     var is_supported = false;
+    var mp4_media_opt: ?isobmff.Mp4Media = null;
+    defer if (mp4_media_opt) |*m| m.deinit(std.heap.c_allocator);
+
+    var actual_start: f64 = 0.0;
+    var orig_audio_codec_buf: [64]u8 = undefined;
+    var orig_audio_codec: []const u8 = "AAC";
+
     {
         const file = std.Io.Dir.cwd().openFile(io, z_path, .{ .mode = .read_only }) catch null;
         if (file) |f| {
@@ -78,9 +85,72 @@ pub fn handleStream(
             var magic_buf: [16]u8 = undefined;
             const bytes_read = file_reader.interface.readSliceShort(&magic_buf) catch 0;
             if (bytes_read >= 8 and isobmff.isMp4Container(magic_buf[0..bytes_read])) {
-                is_supported = mp4_streamer.canStreamMp4Natively(allocator, io, z_path, audio_idx);
+                const media = isobmff.parseMp4Media(std.heap.c_allocator, io, z_path) catch null;
+                if (media) |m| {
+                    if (mp4_streamer.canStreamParsedMp4(&m, audio_idx)) {
+                        is_supported = true;
+                        if (m.video_track) |vt| {
+                            if (vt.samples.len > 0 and start_time > 0.0) {
+                                for (vt.samples) |s| {
+                                    if (s.is_sync) {
+                                        if (s.pts_sec <= start_time) {
+                                            actual_start = s.pts_sec;
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (m.audio_tracks.len > 0) {
+                            var selected_at = m.audio_tracks[0];
+                            if (audio_idx >= 0) {
+                                for (m.audio_tracks) |at| {
+                                    if (at.stream_idx == @as(usize, @intCast(audio_idx))) {
+                                        selected_at = at;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (selected_at.stsd_raw.len >= 24) {
+                                const fourcc = selected_at.stsd_raw[20..24];
+                                if (std.mem.eql(u8, &fourcc, "mp4a")) {
+                                    orig_audio_codec = "AAC";
+                                } else if (std.mem.eql(u8, &fourcc, "ac-3")) {
+                                    orig_audio_codec = "AC-3";
+                                } else if (std.mem.eql(u8, &fourcc, "ec-3")) {
+                                    orig_audio_codec = "E-AC-3";
+                                } else {
+                                    orig_audio_codec = std.fmt.bufPrint(&orig_audio_codec_buf, "{s}", .{&fourcc}) catch "AAC";
+                                }
+                            }
+                        }
+                        mp4_media_opt = m;
+                    } else {
+                        var tmp_m = m;
+                        tmp_m.deinit(std.heap.c_allocator);
+                    }
+                }
             } else if (bytes_read >= 4 and magic_buf[0] == 0x1A and magic_buf[1] == 0x45 and magic_buf[2] == 0xDF and magic_buf[3] == 0xA3) {
                 is_supported = mkv_streamer.canStreamMkvNatively(allocator, io, z_path, audio_idx);
+                if (is_supported) {
+                    actual_start = media_metadata.getKeyframePts(io, resolved.?.resolved_path, start_time, audio_idx, config.media_engine.metadata);
+                    if (streamer.getMediaInfo(allocator, io, z_path, config.media_engine.metadata)) |minfo| {
+                        defer minfo.deinit(allocator);
+                        if (minfo.audio_tracks.len > 0) {
+                            var selected_codec: []const u8 = minfo.audio_tracks[0].codec;
+                            if (audio_idx >= 0) {
+                                for (minfo.audio_tracks) |at| {
+                                    if (at.id == @as(usize, @intCast(audio_idx))) {
+                                        selected_codec = at.codec;
+                                        break;
+                                    }
+                                }
+                            }
+                            orig_audio_codec = std.fmt.bufPrint(&orig_audio_codec_buf, "{s}", .{selected_codec}) catch "AAC";
+                        }
+                    } else |_| {}
+                }
             }
         }
     }
@@ -96,30 +166,11 @@ pub fn handleStream(
         return;
     }
 
-    const actual_start = media_metadata.getKeyframePts(io, resolved.?.resolved_path, start_time, audio_idx, config.media_engine.metadata);
     var actual_start_buf: [32]u8 = undefined;
     const actual_start_str = try std.fmt.bufPrint(&actual_start_buf, "{d:.3}", .{actual_start});
 
     const is_native = (config.media_engine.streamer == .native);
     const audio_mode_str = if (config.media_engine.audio_transcoder == .native) "native-aac" else "ffmpeg";
-
-    var orig_audio_codec_buf: [64]u8 = undefined;
-    var orig_audio_codec: []const u8 = "AAC";
-    if (streamer.getMediaInfo(allocator, io, z_path, config.media_engine.metadata)) |minfo| {
-        defer minfo.deinit(allocator);
-        if (minfo.audio_tracks.len > 0) {
-            var selected_codec: []const u8 = minfo.audio_tracks[0].codec;
-            if (audio_idx >= 0) {
-                for (minfo.audio_tracks) |at| {
-                    if (at.id == @as(usize, @intCast(audio_idx))) {
-                        selected_codec = at.codec;
-                        break;
-                    }
-                }
-            }
-            orig_audio_codec = std.fmt.bufPrint(&orig_audio_codec_buf, "{s}", .{selected_codec}) catch "AAC";
-        }
-    } else |_| {}
 
     var resp = try request.respondStreaming(resp_buf, .{
         .respond_options = .{
@@ -143,12 +194,21 @@ pub fn handleStream(
 
     var stream_ctx = streamer.HttpStreamContext{ .writer = &resp };
     // Use std.heap.c_allocator so that each GOP fragment and AAC frame buffer is freed to the OS heap immediately
-    streamer.streamMedia(std.heap.c_allocator, io, resolved.?.resolved_path, start_time, audio_idx, &stream_ctx, config.media_engine.streamer, config.media_engine.audio_transcoder) catch |e| {
-        if (e != error.ConnectionDropped) {
-            std.debug.print("Stream error: {}\n", .{e});
-        }
-        return;
-    };
+    if (mp4_media_opt) |m| {
+        streamer.streamMp4WithMedia(std.heap.c_allocator, io, z_path, m, start_time, audio_idx, &stream_ctx, config.media_engine.audio_transcoder) catch |e| {
+            if (e != error.ConnectionDropped) {
+                std.debug.print("Stream error: {}\n", .{e});
+            }
+            return;
+        };
+    } else {
+        streamer.streamMedia(std.heap.c_allocator, io, resolved.?.resolved_path, start_time, audio_idx, &stream_ctx, config.media_engine.streamer, config.media_engine.audio_transcoder) catch |e| {
+            if (e != error.ConnectionDropped) {
+                std.debug.print("Stream error: {}\n", .{e});
+            }
+            return;
+        };
+    }
 
     if (!stream_ctx.has_error) {
         resp.end() catch {};
