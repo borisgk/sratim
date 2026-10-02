@@ -168,7 +168,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Send Telegram Notification
-        if: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -176,6 +175,11 @@ jobs:
           CHANGELOG: ${{ needs.release.outputs.changelog }}
           REPO: ${{ github.repository }}
         run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram secrets (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID) not configured. Skipping notification."
+            exit 0
+          fi
+
           CL_TRUNCATED=$(echo "$CHANGELOG" | head -c 2500)
           ESCAPED_CL=$(printf '%s' "$CL_TRUNCATED" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
 
