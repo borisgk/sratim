@@ -89,11 +89,115 @@ pub fn parseCues(r: *std.Io.Reader, cues_elem: ebml.ElementHeader, timestamp_sca
     return res.pts_sec;
 }
 
+/// Scans cluster headers sequentially from first_cluster_pos to find the nearest cluster before or at start_time.
+/// Used as an efficient fallback when Cues are missing, corrupted, or beyond EOF (e.g. truncated files).
+pub fn findClusterSeekPosition(
+    r: *std.Io.Reader,
+    file_reader: anytype,
+    first_cluster_pos: u64,
+    file_size: u64,
+    timestamp_scale: f64,
+    start_time: f64,
+    video_track_num: ?u64,
+) CueSeekResult {
+    var cur_pos = first_cluster_pos;
+    var best_cluster_offset = first_cluster_pos;
+    var best_ts_sec: f64 = 0.0;
+
+    while (cur_pos < file_size) {
+        file_reader.seekTo(cur_pos) catch break;
+        const elem = (ebml.readElementHeader(r) catch break) orelse break;
+        if (elem.id != ebml.ID_CLUSTER) break;
+        if (elem.size == ebml.UNKNOWN_SIZE or elem.size == 0) break;
+
+        var cluster_rem = elem.size;
+        var cluster_time_raw: ?u64 = null;
+        var first_keyframe_pts_sec: ?f64 = null;
+
+        while (cluster_rem > 0) {
+            const sub = (ebml.readElementHeader(r) catch break) orelse break;
+            cluster_rem -= sub.header_size;
+            if (sub.size != ebml.UNKNOWN_SIZE and sub.size > cluster_rem) break;
+
+            if (sub.id == ebml.ID_CLUSTER_TIMESTAMP) {
+                cluster_time_raw = ebml.readUint(r, sub.size) catch null;
+                if (first_keyframe_pts_sec != null) break;
+            } else if (sub.id == ebml.ID_SIMPLE_BLOCK) {
+                if (first_keyframe_pts_sec == null and cluster_time_raw != null) {
+                    var first_b_buf: [1]u8 = undefined;
+                    if (r.readSliceAll(&first_b_buf)) |_| {
+                        const fb = first_b_buf[0];
+                        if (fb != 0) {
+                            var num_bytes: usize = 1;
+                            var mask: u8 = 0x80;
+                            while ((fb & mask) == 0 and num_bytes <= 8) : (mask >>= 1) {
+                                num_bytes += 1;
+                            }
+                            var trk_num: u64 = fb & (mask - 1);
+                            if (num_bytes > 1) {
+                                var rest: [7]u8 = undefined;
+                                const to_read = num_bytes - 1;
+                                if (r.readSliceAll(rest[0..to_read])) |_| {
+                                    for (0..to_read) |i| trk_num = (trk_num << 8) | rest[i];
+                                } else |_| {}
+                            }
+                            var tc_buf: [2]u8 = undefined;
+                            if (r.readSliceAll(&tc_buf)) |_| {
+                                const rel_tc_raw = std.mem.readInt(u16, &tc_buf, .big);
+                                const rel_tc: i16 = @bitCast(rel_tc_raw);
+                                if (r.takeByte()) |flags| {
+                                    const is_kf = (flags & 0x80) != 0;
+                                    if (is_kf and (video_track_num == null or trk_num == video_track_num.?)) {
+                                        const pts_ms = @as(i64, @intCast(cluster_time_raw.?)) + @as(i64, rel_tc);
+                                        if (pts_ms >= 0) {
+                                            first_keyframe_pts_sec = (@as(f64, @floatFromInt(pts_ms)) * timestamp_scale) / 1_000_000_000.0;
+                                        }
+                                    }
+                                } else |_| {}
+                            } else |_| {}
+                        }
+                    } else |_| {}
+                }
+                break;
+            } else if (sub.id == ebml.ID_BLOCK_GROUP) {
+                break;
+            } else {
+                ebml.skipBytes(r, sub.size) catch break;
+            }
+            if (sub.size != ebml.UNKNOWN_SIZE) cluster_rem -= sub.size;
+        }
+
+        if (cluster_time_raw) |raw_tc| {
+            const cluster_ts_sec = (@as(f64, @floatFromInt(raw_tc)) * timestamp_scale) / 1_000_000_000.0;
+            const ts_sec = first_keyframe_pts_sec orelse cluster_ts_sec;
+
+            if (ts_sec <= start_time) {
+                best_cluster_offset = cur_pos;
+                best_ts_sec = ts_sec;
+            } else {
+                break;
+            }
+        }
+
+        const next_pos = cur_pos + elem.header_size + elem.size;
+        if (next_pos <= cur_pos) break;
+        cur_pos = next_pos;
+    }
+
+    return CueSeekResult{
+        .pts_sec = best_ts_sec,
+        .cluster_offset = best_cluster_offset,
+    };
+}
+
 /// Pure Zig keyframe PTS finder for Matroska files.
 /// Inspects Cues (or Cluster headers) to find the nearest previous keyframe timestamp and cluster byte offset.
 pub fn findCueSeekPosition(io: std.Io, file_path: []const u8, start_time: f64) !CueSeekResult {
     const file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
     defer file.close(io);
+
+    const file_stat = file.stat(io) catch null;
+    const file_size = if (file_stat) |s| s.size else std.math.maxInt(u64);
 
     var file_buf: [65536]u8 = undefined;
     var file_reader = file.reader(io, &file_buf);
@@ -205,15 +309,30 @@ pub fn findCueSeekPosition(io: std.Io, file_path: []const u8, start_time: f64) !
                 if (sub.size != ebml.UNKNOWN_SIZE) tracks_rem -= sub.size;
             }
         } else if (elem.id == ebml.ID_CUES) {
-            return parseCuesWithOffset(r, elem, timestamp_scale, segment_data_pos, start_time, video_track_num);
+            const cue_res = try parseCuesWithOffset(r, elem, timestamp_scale, segment_data_pos, start_time, video_track_num);
+            if (cue_res.cluster_offset > 0 and cue_res.cluster_offset < file_size) {
+                return cue_res;
+            }
         } else if (elem.id == ebml.ID_CLUSTER) {
             if (first_cluster_pos == null) first_cluster_pos = elem_pos;
             if (cues_pos) |pos| {
-                file_reader.seekTo(pos) catch {};
-                const cue_elem = (try ebml.readElementHeader(r)) orelse return CueSeekResult{ .pts_sec = 0.0, .cluster_offset = first_cluster_pos.? };
-                if (cue_elem.id == ebml.ID_CUES) {
-                    return parseCuesWithOffset(r, cue_elem, timestamp_scale, segment_data_pos, start_time, video_track_num);
+                if (pos < file_size) {
+                    if (file_reader.seekTo(pos)) |_| {
+                        if (ebml.readElementHeader(r) catch null) |cue_elem| {
+                            if (cue_elem.id == ebml.ID_CUES) {
+                                const cue_res = parseCuesWithOffset(r, cue_elem, timestamp_scale, segment_data_pos, start_time, video_track_num) catch null;
+                                if (cue_res) |cr| {
+                                    if (cr.cluster_offset > 0 and cr.cluster_offset < file_size) {
+                                        return cr;
+                                    }
+                                }
+                            }
+                        }
+                    } else |_| {}
                 }
+            }
+            if (start_time > 0.0 and first_cluster_pos != null) {
+                return findClusterSeekPosition(r, &file_reader, first_cluster_pos.?, file_size, timestamp_scale, start_time, video_track_num);
             }
             return CueSeekResult{ .pts_sec = 0.0, .cluster_offset = first_cluster_pos.? };
         } else {
@@ -224,11 +343,24 @@ pub fn findCueSeekPosition(io: std.Io, file_path: []const u8, start_time: f64) !
     }
 
     if (cues_pos) |pos| {
-        file_reader.seekTo(pos) catch {};
-        const cue_elem = (try ebml.readElementHeader(r)) orelse return CueSeekResult{ .pts_sec = 0.0, .cluster_offset = first_cluster_pos orelse 0 };
-        if (cue_elem.id == ebml.ID_CUES) {
-            return parseCuesWithOffset(r, cue_elem, timestamp_scale, segment_data_pos, start_time, video_track_num);
+        if (pos < file_size) {
+            if (file_reader.seekTo(pos)) |_| {
+                if (ebml.readElementHeader(r) catch null) |cue_elem| {
+                    if (cue_elem.id == ebml.ID_CUES) {
+                        const cue_res = parseCuesWithOffset(r, cue_elem, timestamp_scale, segment_data_pos, start_time, video_track_num) catch null;
+                        if (cue_res) |cr| {
+                            if (cr.cluster_offset > 0 and cr.cluster_offset < file_size) {
+                                return cr;
+                            }
+                        }
+                    }
+                }
+            } else |_| {}
         }
+    }
+
+    if (start_time > 0.0 and first_cluster_pos != null) {
+        return findClusterSeekPosition(r, &file_reader, first_cluster_pos.?, file_size, timestamp_scale, start_time, video_track_num);
     }
 
     return CueSeekResult{ .pts_sec = 0.0, .cluster_offset = first_cluster_pos orelse 0 };

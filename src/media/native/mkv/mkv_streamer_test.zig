@@ -298,3 +298,67 @@ test "streamMkvGeneric on AV1 video track" {
     try out_writer.flush();
     try std.testing.expect(!has_error);
 }
+
+test "stream The Gentlemen at 0.0s" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const file_path = "testvideo/The.Gentlemen.S01E01.Refined.Aggression.1080p.NF.WEB-DL.H.265-EniaHD.mkv";
+
+    const in_file = std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only }) catch return;
+    in_file.close(io);
+
+    const out_file = std.Io.Dir.cwd().createFile(io, "tmp/gentlemen_test_0s.mp4", .{}) catch return;
+    defer out_file.close(io);
+    var out_buf: [65536]u8 = undefined;
+    var out_writer = out_file.writer(io, &out_buf);
+    var has_error = false;
+
+    try streamMkvGeneric(
+        allocator,
+        io,
+        file_path,
+        0.0,
+        -1,
+        &out_writer.interface,
+        &has_error,
+        3,
+        .native,
+    );
+    try out_writer.flush();
+    try std.testing.expect(!has_error);
+}
+
+test "stream The Gentlemen at 60.0s" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const file_path = "testvideo/The.Gentlemen.S01E01.Refined.Aggression.1080p.NF.WEB-DL.H.265-EniaHD.mkv";
+
+    const in_file = std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only }) catch return;
+    in_file.close(io);
+
+    const seek_pts = try cues.getKeyframePts(io, file_path, 60.0);
+    try std.testing.expect(seek_pts >= 50.0 and seek_pts <= 60.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 55.253), seek_pts, 0.01);
+
+    const out_file = std.Io.Dir.cwd().createFile(io, "tmp/gentlemen_test_60s.mp4", .{}) catch return;
+    defer out_file.close(io);
+    var out_buf: [65536]u8 = undefined;
+    var out_writer = out_file.writer(io, &out_buf);
+    var has_error = false;
+
+    try streamMkvGeneric(
+        allocator,
+        io,
+        file_path,
+        60.0,
+        -1,
+        &out_writer.interface,
+        &has_error,
+        3,
+        .native,
+    );
+    try out_writer.flush();
+    try std.testing.expect(!has_error);
+}
+
+
