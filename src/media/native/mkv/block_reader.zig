@@ -135,7 +135,7 @@ pub const BlockReader = struct {
         const is_keyframe = if (is_simple_block) (flags & 0x80) != 0 else false;
         const is_discardable = (flags & 0x01) != 0;
         const lacing_bits: u2 = @intCast((flags >> 1) & 0x03);
-        const lacing: MkvLacingType = @enumFromInt(lacing_bits);
+        const lacing: MkvLacingType = @fromBackingInt(@intCast(lacing_bits));
 
         const pts_calc = @as(i64, @intCast(self.current_cluster_timecode_ms)) + @as(i64, rel_tc);
         const pts_ms: u64 = if (pts_calc >= 0) @intCast(pts_calc) else 0;

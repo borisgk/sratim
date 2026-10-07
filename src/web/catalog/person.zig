@@ -376,7 +376,7 @@ pub fn generatePersonHtml(
             \\{s}
             \\    </div>
             \\</div>
-        , .{ library_cards_buf.items });
+        , .{library_cards_buf.items});
         defer allocator.free(sec_header);
         try library_section_buf.appendSlice(allocator, sec_header);
     }

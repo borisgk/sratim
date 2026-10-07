@@ -6,10 +6,3 @@ pub const AudioSpecificConfig = decoder.AudioSpecificConfig;
 pub const parseAudioSpecificConfig = decoder.parseAudioSpecificConfig;
 pub const tables = @import("aac/tables.zig");
 pub const huffman = @import("aac/huffman.zig");
-
-test "AacDecoder initialization and reset" {
-    var dec = AacDecoder.init();
-    try std.testing.expectEqual(@as(u32, 48000), dec.sample_rate);
-    try std.testing.expectEqual(@as(u32, 6), dec.channels);
-    dec.reset();
-}

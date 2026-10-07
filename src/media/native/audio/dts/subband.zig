@@ -368,10 +368,3 @@ pub const SubbandDecoderState = struct {
         sub_pos.* += nsamples;
     }
 };
-
-test "clip23 and fixed math sanity" {
-    try std.testing.expectEqual(@as(i32, 8388607), clip23(10000000));
-    try std.testing.expectEqual(@as(i32, -8388608), clip23(-10000000));
-    try std.testing.expectEqual(@as(i32, 100), clip23(100));
-    try std.testing.expectEqual(@as(i32, 2), norm__(16, 3));
-}

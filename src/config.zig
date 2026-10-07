@@ -30,7 +30,6 @@ pub const MediaEngineConfig = struct {
 };
 
 pub const Config = struct {
-
     port: u16,
     tmdb_access_token: ?[]const u8 = null,
     tmdb_proxy: ?[]const u8 = null,
@@ -52,7 +51,6 @@ pub const Config = struct {
         const proxy = if (parsed.value.tmdb_proxy) |p| try allocator.dupe(u8, p) else null;
 
         return .{
-
             .port = parsed.value.port,
             .tmdb_access_token = token,
             .tmdb_proxy = proxy,
@@ -61,7 +59,6 @@ pub const Config = struct {
     }
 
     pub fn deinit(self: *Config, allocator: std.mem.Allocator) void {
-
         if (self.tmdb_access_token) |t| allocator.free(t);
         if (self.tmdb_proxy) |p| allocator.free(p);
     }

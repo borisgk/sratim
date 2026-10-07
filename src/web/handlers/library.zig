@@ -46,7 +46,7 @@ pub fn handleLibraryAdd(request: *std.http.Server.Request, allocator: std.mem.Al
     }
 
     std.debug.print("RAW BODY: {s}\n", .{body_data.items});
-    std.debug.print("PARSED: name={?s}, path={?s}, type={?s}\n", .{name, path, type_str});
+    std.debug.print("PARSED: name={?s}, path={?s}, type={?s}\n", .{ name, path, type_str });
 
     if (name != null and path != null and type_str != null) {
         const lib_type = library_mod.LibraryType.fromString(type_str.?) orelse .Other;

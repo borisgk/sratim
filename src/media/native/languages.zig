@@ -183,15 +183,3 @@ pub fn getLanguageName(code: []const u8) ?[]const u8 {
 
     return lang_map.get(clean_code);
 }
-
-test "getLanguageName mapping" {
-    try std.testing.expectEqualStrings("English", getLanguageName("eng").?);
-    try std.testing.expectEqualStrings("English", getLanguageName("en").?);
-    try std.testing.expectEqualStrings("English", getLanguageName("en-US").?);
-    try std.testing.expectEqualStrings("Hebrew", getLanguageName("heb").?);
-    try std.testing.expectEqualStrings("Hebrew", getLanguageName("he").?);
-    try std.testing.expectEqualStrings("Spanish", getLanguageName("spa").?);
-    try std.testing.expectEqualStrings("Russian", getLanguageName("rus").?);
-    try std.testing.expectEqualStrings("Chinese (Simplified)", getLanguageName("zh-CN").?);
-    try std.testing.expect(getLanguageName("und") == null);
-}

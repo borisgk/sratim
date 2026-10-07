@@ -128,7 +128,7 @@ pub fn parseHeader(reader: *BitReader) !FrameHeader {
     if (audio_mode_raw >= 10) {
         return error.UnsupportedAudioMode;
     }
-    const audio_mode: AudioMode = @enumFromInt(audio_mode_raw);
+    const audio_mode: AudioMode = @fromBackingInt(@intCast(audio_mode_raw));
 
     const sr_code = try reader.readBits(u4, 4);
     const sample_rate: u32 = if (sr_code < tables.sample_rates.len) @intCast(tables.sample_rates[sr_code]) else 0;
@@ -260,24 +260,3 @@ pub fn parseHeader(reader: *BitReader) !FrameHeader {
         .scale_factor_adj = scale_factor_adj,
     };
 }
-
-test "parse header from test_dts_5s.dts" {
-    const file = std.Io.Dir.cwd().openFile(std.testing.io, "tests/test_dts_5s.dts", .{}) catch return;
-    defer file.close(std.testing.io);
-
-    var buf: [4096]u8 = undefined;
-    var reader_file = file.reader(std.testing.io, &buf);
-    const bytes_read = try reader_file.interface.readSliceShort(&buf);
-    try std.testing.expect(bytes_read > 200);
-
-    const sync_info = findSync(buf[0..bytes_read]) orelse return error.SyncNotFound;
-    try std.testing.expectEqual(@as(usize, 0), sync_info.offset);
-    try std.testing.expect(!sync_info.is_14bit);
-
-    var reader = BitReader.init(buf[sync_info.offset..bytes_read]);
-    const hdr = try parseHeader(&reader);
-    try std.testing.expect(hdr.sample_rate == 48000 or hdr.sample_rate == 44100);
-    try std.testing.expect(hdr.nchannels >= 2);
-    try std.testing.expect(hdr.frame_size >= 96);
-}
-

@@ -20,17 +20,24 @@ pub fn parseExponents(reader: *BitReader, expstr: u2, ngrps: usize, exponent_in:
         exponent = @intCast(e);
         switch (expstr) {
             tables.EXP_D45 => {
-                dest[dest_idx] = exponent; dest_idx += 1;
-                dest[dest_idx] = exponent; dest_idx += 1;
-                dest[dest_idx] = exponent; dest_idx += 1;
-                dest[dest_idx] = exponent; dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
             },
             tables.EXP_D25 => {
-                dest[dest_idx] = exponent; dest_idx += 1;
-                dest[dest_idx] = exponent; dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
             },
             tables.EXP_D15 => {
-                dest[dest_idx] = exponent; dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
             },
             else => unreachable,
         }
@@ -40,17 +47,24 @@ pub fn parseExponents(reader: *BitReader, expstr: u2, ngrps: usize, exponent_in:
         exponent = @intCast(e);
         switch (expstr) {
             tables.EXP_D45 => {
-                dest[dest_idx] = exponent; dest_idx += 1;
-                dest[dest_idx] = exponent; dest_idx += 1;
-                dest[dest_idx] = exponent; dest_idx += 1;
-                dest[dest_idx] = exponent; dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
             },
             tables.EXP_D25 => {
-                dest[dest_idx] = exponent; dest_idx += 1;
-                dest[dest_idx] = exponent; dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
             },
             tables.EXP_D15 => {
-                dest[dest_idx] = exponent; dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
             },
             else => unreachable,
         }
@@ -60,17 +74,24 @@ pub fn parseExponents(reader: *BitReader, expstr: u2, ngrps: usize, exponent_in:
         exponent = @intCast(e);
         switch (expstr) {
             tables.EXP_D45 => {
-                dest[dest_idx] = exponent; dest_idx += 1;
-                dest[dest_idx] = exponent; dest_idx += 1;
-                dest[dest_idx] = exponent; dest_idx += 1;
-                dest[dest_idx] = exponent; dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
             },
             tables.EXP_D25 => {
-                dest[dest_idx] = exponent; dest_idx += 1;
-                dest[dest_idx] = exponent; dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
             },
             tables.EXP_D15 => {
-                dest[dest_idx] = exponent; dest_idx += 1;
+                dest[dest_idx] = exponent;
+                dest_idx += 1;
             },
             else => unreachable,
         }
@@ -548,7 +569,10 @@ pub const Ac3Decoder = struct {
                 _ = try parseExponents(&reader, lfeexpstr, 2, self.lfe_exp[0], self.lfe_exp[1..]);
             }
 
-            if ((try reader.readBit()) == 1) { self.bai = try reader.readBits(u11, 11); do_bit_alloc = 0xFF; }
+            if ((try reader.readBit()) == 1) {
+                self.bai = try reader.readBits(u11, 11);
+                do_bit_alloc = 0xFF;
+            }
             if ((try reader.readBit()) == 1) {
                 self.csnroffst = try reader.readBits(u6, 6);
                 if (self.chincpl != 0) self.cpl_bai = try reader.readBits(u7, 7);

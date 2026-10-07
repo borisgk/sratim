@@ -37,7 +37,7 @@ pub fn appendMovieCard(
         try utils.escapeHtml(cards_buf, allocator, terms);
     }
     try cards_buf.appendSlice(allocator, "\">\n");
-    
+
     if (poster_path_opt != null and poster_path_opt.?.len > 0) {
         try cards_buf.appendSlice(allocator, "                <img class=\"poster-img\" loading=\"lazy\" alt=\"poster\" src=\"/images/posters/w185");
         try cards_buf.appendSlice(allocator, poster_path_opt.?);

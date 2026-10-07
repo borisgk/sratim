@@ -50,71 +50,68 @@ pub fn handleGetMovie(
     var tmdb_id_buf: [32]u8 = undefined;
     const tmdb_id = if (mov.tmdb_id) |tid| std.fmt.bufPrint(&tmdb_id_buf, "{d}", .{tid}) catch "" else "";
 
-        var runtime: u32 = 0;
-        var file_size: u64 = 0;
+    var runtime: u32 = 0;
+    var file_size: u64 = 0;
 
-        if (common.resolveMediaPath(database, allocator, .{ .library_id = library_id, .file_path = file_path }) catch null) |resolved| {
-            defer allocator.free(resolved.resolved_path);
-            const file = std.Io.Dir.cwd().openFile(io, resolved.resolved_path, .{ .mode = .read_only }) catch null;
-            if (file) |f| {
-                defer f.close(io);
-                if (f.stat(io) catch null) |st| {
-                    file_size = st.size;
+    if (common.resolveMediaPath(database, allocator, .{ .library_id = library_id, .file_path = file_path }) catch null) |resolved| {
+        defer allocator.free(resolved.resolved_path);
+        const file = std.Io.Dir.cwd().openFile(io, resolved.resolved_path, .{ .mode = .read_only }) catch null;
+        if (file) |f| {
+            defer f.close(io);
+            if (f.stat(io) catch null) |st| {
+                file_size = st.size;
+            }
+        }
+
+        const c_path = allocator.dupeSentinel(u8, resolved.resolved_path, 0) catch null;
+        if (c_path) |cp| {
+            defer allocator.free(cp);
+            if (streamer.getMediaInfo(allocator, io, cp, config.media_engine.metadata) catch null) |media_info| {
+                defer media_info.deinit(allocator);
+                if (media_info.duration > 0) {
+                    runtime = @as(u32, @intFromFloat(media_info.duration / 60.0));
                 }
             }
-
-            const c_path = allocator.dupeSentinel(u8, resolved.resolved_path, 0) catch null;
-            if (c_path) |cp| {
-                defer allocator.free(cp);
-                if (streamer.getMediaInfo(allocator, io, cp, config.media_engine.metadata) catch null) |media_info| {
-                    defer media_info.deinit(allocator);
-                    if (media_info.duration > 0) {
-                        runtime = @as(u32, @intFromFloat(media_info.duration / 60.0));
-                    }
-                }
-            }
         }
+    }
 
-        const display_title = if (title_opt) |t| t else clean_name;
+    const display_title = if (title_opt) |t| t else clean_name;
 
-        var escaped_title = std.ArrayList(u8).empty;
-        defer escaped_title.deinit(allocator);
-        for (display_title) |ch| {
-            switch (ch) {
-                '"' => try escaped_title.appendSlice(allocator, "\\\""),
-                '\\' => try escaped_title.appendSlice(allocator, "\\\\"),
-                '\n' => try escaped_title.appendSlice(allocator, "\\n"),
-                '\r' => try escaped_title.appendSlice(allocator, "\\r"),
-                '\t' => try escaped_title.appendSlice(allocator, "\\t"),
-                else => try escaped_title.append(allocator, ch),
-            }
+    var escaped_title = std.ArrayList(u8).empty;
+    defer escaped_title.deinit(allocator);
+    for (display_title) |ch| {
+        switch (ch) {
+            '"' => try escaped_title.appendSlice(allocator, "\\\""),
+            '\\' => try escaped_title.appendSlice(allocator, "\\\\"),
+            '\n' => try escaped_title.appendSlice(allocator, "\\n"),
+            '\r' => try escaped_title.appendSlice(allocator, "\\r"),
+            '\t' => try escaped_title.appendSlice(allocator, "\\t"),
+            else => try escaped_title.append(allocator, ch),
         }
-        
-        var escaped_overview = std.ArrayList(u8).empty;
-        defer escaped_overview.deinit(allocator);
-        for (overview) |ch| {
-            switch (ch) {
-                '"' => try escaped_overview.appendSlice(allocator, "\\\""),
-                '\\' => try escaped_overview.appendSlice(allocator, "\\\\"),
-                '\n' => try escaped_overview.appendSlice(allocator, "\\n"),
-                '\r' => try escaped_overview.appendSlice(allocator, "\\r"),
-                '\t' => try escaped_overview.appendSlice(allocator, "\\t"),
-                else => try escaped_overview.append(allocator, ch),
-            }
+    }
+
+    var escaped_overview = std.ArrayList(u8).empty;
+    defer escaped_overview.deinit(allocator);
+    for (overview) |ch| {
+        switch (ch) {
+            '"' => try escaped_overview.appendSlice(allocator, "\\\""),
+            '\\' => try escaped_overview.appendSlice(allocator, "\\\\"),
+            '\n' => try escaped_overview.appendSlice(allocator, "\\n"),
+            '\r' => try escaped_overview.appendSlice(allocator, "\\r"),
+            '\t' => try escaped_overview.appendSlice(allocator, "\\t"),
+            else => try escaped_overview.append(allocator, ch),
         }
+    }
 
-        const json = try std.fmt.allocPrint(allocator, 
-            "{{\"success\":true,\"movie\":{{\"id\":{d},\"library_id\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"release_date\":\"{s}\",\"tmdb_id\":\"{s}\",\"file_size\":{d},\"file_path\":\"{s}\",\"runtime\":{d}}}}}",
-            .{ id, library_id, escaped_title.items, escaped_overview.items, poster_path, backdrop_path, release_date, tmdb_id, file_size, file_path, runtime }
-        );
-        defer allocator.free(json);
+    const json = try std.fmt.allocPrint(allocator, "{{\"success\":true,\"movie\":{{\"id\":{d},\"library_id\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"release_date\":\"{s}\",\"tmdb_id\":\"{s}\",\"file_size\":{d},\"file_path\":\"{s}\",\"runtime\":{d}}}}}", .{ id, library_id, escaped_title.items, escaped_overview.items, poster_path, backdrop_path, release_date, tmdb_id, file_size, file_path, runtime });
+    defer allocator.free(json);
 
-        try request.respond(json, .{
-            .status = .ok,
-            .extra_headers = &.{
-                .{ .name = "content-type", .value = "application/json" },
-            },
-        });
+    try request.respond(json, .{
+        .status = .ok,
+        .extra_headers = &.{
+            .{ .name = "content-type", .value = "application/json" },
+        },
+    });
 }
 
 pub fn handleGetShow(
@@ -197,10 +194,7 @@ pub fn handleGetShow(
     defer json.deinit(allocator);
 
     try json.appendSlice(allocator, "{\"success\":true,\"show\":{");
-    const show_header = try std.fmt.allocPrint(allocator, 
-        "\"id\":{d},\"library_id\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"tmdb_id\":\"{s}\",\"episodes\":[",
-        .{ show_id, library_id, escaped_title.items, escaped_overview.items, poster_path, backdrop_path, tmdb_id }
-    );
+    const show_header = try std.fmt.allocPrint(allocator, "\"id\":{d},\"library_id\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"tmdb_id\":\"{s}\",\"episodes\":[", .{ show_id, library_id, escaped_title.items, escaped_overview.items, poster_path, backdrop_path, tmdb_id });
     defer allocator.free(show_header);
     try json.appendSlice(allocator, show_header);
 
@@ -275,10 +269,7 @@ pub fn handleGetShow(
             }
         }
 
-        const ep_json = try std.fmt.allocPrint(allocator,
-            "{{\"id\":{d},\"season\":{d},\"episode\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"still_path\":\"{s}\",\"file_size\":{d},\"runtime\":{d}}}",
-            .{ ep_id, season, episode, esc_ep_title.items, esc_ep_overview.items, still_path, ep_file_size, ep_runtime }
-        );
+        const ep_json = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"season\":{d},\"episode\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"still_path\":\"{s}\",\"file_size\":{d},\"runtime\":{d}}}", .{ ep_id, season, episode, esc_ep_title.items, esc_ep_overview.items, still_path, ep_file_size, ep_runtime });
         defer allocator.free(ep_json);
         try json.appendSlice(allocator, ep_json);
     }

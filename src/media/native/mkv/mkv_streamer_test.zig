@@ -360,5 +360,3 @@ test "stream The Gentlemen at 60.0s" {
     try out_writer.flush();
     try std.testing.expect(!has_error);
 }
-
-

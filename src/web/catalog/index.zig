@@ -46,7 +46,7 @@ pub fn generateHtml(
                 .Other => "/assets/other.png",
             };
 
-            const card_start = try std.fmt.allocPrint(allocator, "            <a href=\"/library?id={d}\" class=\"library-card\" style=\"background-image: linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.4) 50%, rgba(0,0,0,0.1) 100%), url('{s}');\">\n", .{lib.id, bg_image});
+            const card_start = try std.fmt.allocPrint(allocator, "            <a href=\"/library?id={d}\" class=\"library-card\" style=\"background-image: linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.4) 50%, rgba(0,0,0,0.1) 100%), url('{s}');\">\n", .{ lib.id, bg_image });
             defer allocator.free(card_start);
             try cards_buf.appendSlice(allocator, card_start);
 

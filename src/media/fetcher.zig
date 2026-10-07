@@ -32,10 +32,10 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
         for (missing) |movie| {
             // Process each movie
             std.debug.print("TMDB fetcher processing: {s}\n", .{movie.clean_name});
-            
+
             // Parse year and clean name
             const parsed_name = tmdb.parseYearAndCleanName(allocator, movie.clean_name) catch |err| {
-                std.debug.print("Error parsing name for {s}: {}\n", .{movie.clean_name, err});
+                std.debug.print("Error parsing name for {s}: {}\n", .{ movie.clean_name, err });
                 continue;
             };
             defer {
@@ -44,7 +44,7 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
             }
 
             const results = tmdb.searchMovie(allocator, io, parsed_name.clean, parsed_name.year, token, proxy_url) catch |err| {
-                std.debug.print("TMDB fetcher error searching for {s}: {}\n", .{movie.clean_name, err});
+                std.debug.print("TMDB fetcher error searching for {s}: {}\n", .{ movie.clean_name, err });
                 io.sleep(std.Io.Duration.fromSeconds(1), .awake) catch {};
                 continue;
             };
@@ -53,22 +53,13 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
             if (results.value.results.len > 0) {
                 const first = results.value.results[0];
                 std.debug.print("TMDB fetcher found match: {s}\n", .{first.title});
-                
+
                 tmdb.downloadImages(allocator, io, first.poster_path, first.backdrop_path, proxy_url) catch |err| {
-                    std.debug.print("TMDB fetcher error downloading images for {s}: {}\n", .{movie.clean_name, err});
+                    std.debug.print("TMDB fetcher error downloading images for {s}: {}\n", .{ movie.clean_name, err });
                 };
 
-                metadata_mod.saveMetadataById(
-                    database,
-                    movie.id,
-                    first.id,
-                    first.title,
-                    first.overview,
-                    first.poster_path,
-                    first.backdrop_path,
-                    first.release_date
-                ) catch |err| {
-                    std.debug.print("TMDB fetcher error saving metadata for {s}: {}\n", .{movie.clean_name, err});
+                metadata_mod.saveMetadataById(database, movie.id, first.id, first.title, first.overview, first.poster_path, first.backdrop_path, first.release_date) catch |err| {
+                    std.debug.print("TMDB fetcher error saving metadata for {s}: {}\n", .{ movie.clean_name, err });
                 };
 
                 // Fetch cast & directors
@@ -89,15 +80,15 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
                         }
                     }
                     metadata_mod.saveMovieCredits(database, movie.id, credits.cast, credits.crew) catch |err| {
-                        std.debug.print("TMDB fetcher error saving credits for {s}: {}\n", .{movie.clean_name, err});
+                        std.debug.print("TMDB fetcher error saving credits for {s}: {}\n", .{ movie.clean_name, err });
                     };
                 } else |err| {
-                    std.debug.print("TMDB fetcher error fetching credits for {s}: {}\n", .{movie.clean_name, err});
+                    std.debug.print("TMDB fetcher error fetching credits for {s}: {}\n", .{ movie.clean_name, err });
                 }
             } else {
                 std.debug.print("TMDB fetcher found NO MATCH for: {s}\n", .{movie.clean_name});
                 metadata_mod.markMetadataNotFound(database, movie.id) catch |err| {
-                    std.debug.print("TMDB fetcher error marking not found for {s}: {}\n", .{movie.clean_name, err});
+                    std.debug.print("TMDB fetcher error marking not found for {s}: {}\n", .{ movie.clean_name, err });
                 };
             }
 
@@ -123,9 +114,9 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
 
         for (missing_shows) |show| {
             std.debug.print("TMDB fetcher processing show: {s}\n", .{show.clean_name});
-            
+
             const parsed_name = tmdb.parseYearAndCleanName(allocator, show.clean_name) catch |err| {
-                std.debug.print("Error parsing name for show {s}: {}\n", .{show.clean_name, err});
+                std.debug.print("Error parsing name for show {s}: {}\n", .{ show.clean_name, err });
                 continue;
             };
             defer {
@@ -134,7 +125,7 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
             }
 
             const results = tmdb.searchShow(allocator, io, parsed_name.clean, parsed_name.year, token, proxy_url) catch |err| {
-                std.debug.print("TMDB fetcher error searching for show {s}: {}\n", .{show.clean_name, err});
+                std.debug.print("TMDB fetcher error searching for show {s}: {}\n", .{ show.clean_name, err });
                 io.sleep(std.Io.Duration.fromSeconds(1), .awake) catch {};
                 continue;
             };
@@ -143,27 +134,18 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
             if (results.value.results.len > 0) {
                 const first = results.value.results[0];
                 std.debug.print("TMDB fetcher found show match: {s}\n", .{first.name});
-                
+
                 tmdb.downloadImages(allocator, io, first.poster_path, first.backdrop_path, proxy_url) catch |err| {
-                    std.debug.print("TMDB fetcher error downloading images for show {s}: {}\n", .{show.clean_name, err});
+                    std.debug.print("TMDB fetcher error downloading images for show {s}: {}\n", .{ show.clean_name, err });
                 };
 
-                metadata_mod.saveShowMetadataById(
-                    database,
-                    show.id,
-                    first.id,
-                    first.name,
-                    first.overview,
-                    first.poster_path,
-                    first.backdrop_path,
-                    first.first_air_date
-                ) catch |err| {
-                    std.debug.print("TMDB fetcher error saving metadata for show {s}: {}\n", .{show.clean_name, err});
+                metadata_mod.saveShowMetadataById(database, show.id, first.id, first.name, first.overview, first.poster_path, first.backdrop_path, first.first_air_date) catch |err| {
+                    std.debug.print("TMDB fetcher error saving metadata for show {s}: {}\n", .{ show.clean_name, err });
                 };
             } else {
                 std.debug.print("TMDB fetcher found NO SHOW MATCH for: {s}\n", .{show.clean_name});
                 metadata_mod.markShowMetadataNotFound(database, show.id) catch |err| {
-                    std.debug.print("TMDB fetcher error marking show not found for {s}: {}\n", .{show.clean_name, err});
+                    std.debug.print("TMDB fetcher error marking show not found for {s}: {}\n", .{ show.clean_name, err });
                 };
             }
 
@@ -187,11 +169,11 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
         }
 
         for (missing_episodes) |ep| {
-            std.debug.print("TMDB fetcher processing episode: Show {d}, S{d}E{d}\n", .{ep.show_tmdb_id, ep.season, ep.episode});
-            
+            std.debug.print("TMDB fetcher processing episode: Show {d}, S{d}E{d}\n", .{ ep.show_tmdb_id, ep.season, ep.episode });
+
             const results = tmdb.fetchEpisode(allocator, io, ep.show_tmdb_id, ep.season, ep.episode, token, proxy_url) catch |err| {
                 if (err == error.NotFound) {
-                    std.debug.print("TMDB fetcher found NO EPISODE MATCH for: Show {d}, S{d}E{d}\n", .{ep.show_tmdb_id, ep.season, ep.episode});
+                    std.debug.print("TMDB fetcher found NO EPISODE MATCH for: Show {d}, S{d}E{d}\n", .{ ep.show_tmdb_id, ep.season, ep.episode });
                     metadata_mod.markEpisodeMetadataNotFound(database, ep.id) catch |e| {
                         std.debug.print("TMDB fetcher error marking episode not found: {}\n", .{e});
                     };
@@ -205,19 +187,12 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
 
             const episode_data = results.value;
             std.debug.print("TMDB fetcher found episode match: {s}\n", .{episode_data.name});
-            
+
             tmdb.downloadImages(allocator, io, null, episode_data.still_path, proxy_url) catch |err| {
                 std.debug.print("TMDB fetcher error downloading images for episode: {}\n", .{err});
             };
 
-            metadata_mod.saveEpisodeMetadataById(
-                database,
-                ep.id,
-                episode_data.id,
-                episode_data.name,
-                episode_data.overview,
-                episode_data.still_path
-            ) catch |err| {
+            metadata_mod.saveEpisodeMetadataById(database, ep.id, episode_data.id, episode_data.name, episode_data.overview, episode_data.still_path) catch |err| {
                 std.debug.print("TMDB fetcher error saving metadata for episode: {}\n", .{err});
             };
 
@@ -350,7 +325,6 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
             }
         }
 
-
         // Backfill / Refresh person details & filmography (30-day base TTL with jitter)
         const refresh_people = metadata_mod.getPeopleNeedingRefresh(database, allocator, 30 * 24 * 3600) catch |err| {
             std.debug.print("TMDB fetcher error querying person refresh candidates: {}\n", .{err});
@@ -379,7 +353,10 @@ fn fetcherLoop(allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Datab
 
                 std.debug.print("TMDB {s} person details [{d}/{d}]: {s} (ID {d})\n", .{
                     if (is_stale) "refreshing" else "backfilling",
-                    idx + 1, refresh_people.len, person.name, person.id,
+                    idx + 1,
+                    refresh_people.len,
+                    person.name,
+                    person.id,
                 });
 
                 if (tmdb.fetchPersonDetails(allocator, io, person.id, token, proxy_url)) |details_parsed| {

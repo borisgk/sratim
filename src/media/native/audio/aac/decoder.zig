@@ -13,7 +13,6 @@ pub const parseAudioSpecificConfig = config.parseAudioSpecificConfig;
 pub const IcsInfo = tns_mod.IcsInfo;
 pub const TnsData = tns_mod.TnsData;
 
-
 pub const AacDecoder = struct {
     sample_rate: u32 = 48000,
     sample_rate_idx: u4 = 3,
@@ -79,8 +78,6 @@ pub const AacDecoder = struct {
 
         var reader = BitReader.init(raw_bytes);
 
-
-
         // Buffers for 6 channels (1024 time samples each)
         // 0: Left, 1: Right, 2: Center, 3: Ls, 4: Rs, 5: LFE
         var ch_pcm: [6][1024]f32 = @splat(@splat(0.0));
@@ -88,9 +85,6 @@ pub const AacDecoder = struct {
 
         var sce_count: usize = 0;
         var cpe_count: usize = 0;
-
-
-
 
         while (reader.bitsLeft() >= 3) {
             const elem_type = reader.readBits(u3, 3) catch |err| {
@@ -559,7 +553,6 @@ pub const AacDecoder = struct {
     fn parseTnsData(reader: *BitReader, ics: *const IcsInfo, tns_data: *TnsData) !void {
         try tns_mod.parseTnsData(reader, ics, tns_data);
     }
-
 
     /// Synthesis windowing and IMDCT per ISO/IEC 14496-3 Subclause 4.5.2.8.2.
     fn applyImdctAndWindow(

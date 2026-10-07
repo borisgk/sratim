@@ -48,7 +48,7 @@ pub fn route(
             try request.respond("Internal Server Error", .{ .status = .internal_server_error });
             return true;
         };
-        
+
         try request.respond(html_content, .{
             .status = .ok,
             .extra_headers = &.{

@@ -63,7 +63,7 @@ pub const DtsDecoder = struct {
         var map: [10][MAX_CHANNELS]Speaker = undefined;
         for (0..10) |mode_idx| {
             for (0..MAX_CHANNELS) |ch| {
-                map[mode_idx][ch] = computeSpeaker(@enumFromInt(mode_idx), ch);
+                map[mode_idx][ch] = computeSpeaker(@fromBackingInt(@intCast(mode_idx)), ch);
             }
         }
         break :blk map;
@@ -120,7 +120,7 @@ pub const DtsDecoder = struct {
     }
 
     fn mapPrmChToSpeaker(mode: AudioMode, ch: usize) Speaker {
-        const mode_idx = @intFromEnum(mode);
+        const mode_idx = @backingInt(mode);
         if (mode_idx >= 10 or ch >= MAX_CHANNELS) return .none;
         return speaker_map[mode_idx][ch];
     }
@@ -213,7 +213,7 @@ pub const DtsDecoder = struct {
         for (0..hdr.nchannels) |ch| {
             const spkr = mapPrmChToSpeaker(hdr.audio_mode, ch);
             if (spkr != .none) {
-                const spkr_idx = @intFromEnum(spkr);
+                const spkr_idx = @backingInt(spkr);
                 self.subband_dsp[ch].interpolateSub32(
                     &self.subband_state.subband_samples[ch],
                     npcmblocks,
@@ -231,14 +231,14 @@ pub const DtsDecoder = struct {
                 &self.subband_state.lfe_samples,
                 npcmblocks,
                 dec_select,
-                self.channel_pcm[@intFromEnum(Speaker.lfe)][0..total_samples],
+                self.channel_pcm[@backingInt(Speaker.lfe)][0..total_samples],
             );
         }
 
         // Front sum/diff decoding
         if ((hdr.sumdiff_front and hdr.audio_mode != .mono) or hdr.audio_mode == .stereo_sumdiff) {
-            const l_idx = @intFromEnum(Speaker.left);
-            const r_idx = @intFromEnum(Speaker.right);
+            const l_idx = @backingInt(Speaker.left);
+            const r_idx = @backingInt(Speaker.right);
             for (0..total_samples) |n| {
                 const l = self.channel_pcm[l_idx][n];
                 const r = self.channel_pcm[r_idx][n];
@@ -248,9 +248,9 @@ pub const DtsDecoder = struct {
         }
 
         // Surround sum/diff decoding
-        if (hdr.sumdiff_surround and @intFromEnum(hdr.audio_mode) >= @intFromEnum(AudioMode.surround_2_2)) {
-            const ls_idx = @intFromEnum(Speaker.surround_left);
-            const rs_idx = @intFromEnum(Speaker.surround_right);
+        if (hdr.sumdiff_surround and @backingInt(hdr.audio_mode) >= @backingInt(AudioMode.surround_2_2)) {
+            const ls_idx = @backingInt(Speaker.surround_left);
+            const rs_idx = @backingInt(Speaker.surround_right);
             for (0..total_samples) |n| {
                 const ls = self.channel_pcm[ls_idx][n];
                 const rs = self.channel_pcm[rs_idx][n];
@@ -261,13 +261,13 @@ pub const DtsDecoder = struct {
 
         // Downmixing to stereo output using ITU-R BS.775 with LFE (-3dB)
         const INV_SQRT2: f32 = 0.70710678;
-        const c_idx = @intFromEnum(Speaker.center);
-        const l_idx = @intFromEnum(Speaker.left);
-        const r_idx = @intFromEnum(Speaker.right);
-        const ls_idx = @intFromEnum(Speaker.surround_left);
-        const rs_idx = @intFromEnum(Speaker.surround_right);
-        const cs_idx = @intFromEnum(Speaker.surround_center);
-        const lfe_idx = @intFromEnum(Speaker.lfe);
+        const c_idx = @backingInt(Speaker.center);
+        const l_idx = @backingInt(Speaker.left);
+        const r_idx = @backingInt(Speaker.right);
+        const ls_idx = @backingInt(Speaker.surround_left);
+        const rs_idx = @backingInt(Speaker.surround_right);
+        const cs_idx = @backingInt(Speaker.surround_center);
+        const lfe_idx = @backingInt(Speaker.lfe);
 
         switch (hdr.audio_mode) {
             .mono => {

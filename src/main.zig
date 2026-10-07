@@ -21,7 +21,7 @@ pub fn main() !void {
     // Initialize the thread-based asynchronous I/O backend (uses epoll/kqueue under the hood)
     var t = std.Io.Threaded.init(std.heap.c_allocator, .{});
     const io = t.io();
-    
+
     var config_path: [:0]const u8 = "config.json";
 
     if (std.Io.Dir.cwd().access(io, "config.json", .{})) |_| {
@@ -99,23 +99,23 @@ pub fn main() !void {
     var logs_database = db_mod.Database.forLogs(&logs_storage);
 
     try users_mod.ensureAdminExists(&database, io);
-    
+
     std.debug.print("Scanning libraries for files...\n", .{});
     scanner_mod.scanLibraryFiles(&database, std.heap.c_allocator, io) catch |err| {
         std.debug.print("Error scanning libraries: {}\n", .{err});
     };
     std.debug.print("Library scan complete.\n", .{});
-    
+
     fetcher.startFetcherThread(std.heap.c_allocator, io, &database, config.getTmdbToken(), config.tmdb_proxy) catch |err| {
         std.debug.print("Failed to start TMDB fetcher: {}\n", .{err});
     };
-    
+
     // Parse the loopback IP and start listening on port from config
     const addr = try std.Io.net.IpAddress.parseIp4("0.0.0.0", config.port);
     var srv = try std.Io.net.IpAddress.listen(&addr, io, .{ .reuse_address = true });
-    
+
     std.debug.print("Listening on http://0.0.0.0:{d}\n", .{config.port});
-    
+
     // Main server loop: accept connections forever
     while (true) {
         // Blocks until a new client connects
@@ -123,10 +123,10 @@ pub fn main() !void {
             std.debug.print("Accept error: {}\n", .{err});
             continue;
         };
-        
+
         // Spawn a brand new OS thread to handle the client
         const thread = try std.Thread.spawn(.{}, server.handleConnection, .{ stream, io, &config, &database, &logs_database });
-        
+
         // Detach the thread so it runs independently, allowing the main loop to instantly continue
         thread.detach();
     }
@@ -136,22 +136,76 @@ const build_options = @import("build_options");
 
 test {
     _ = @import("media/subtitles.zig");
+    _ = @import("media/subtitles_test.zig");
     _ = @import("media/metadata.zig");
+    _ = @import("media/metadata_test.zig");
+    _ = @import("media/tmdb.zig");
+    _ = @import("media/tmdb_test.zig");
     _ = @import("media/native/metadata.zig");
+    _ = @import("media/native/metadata_test.zig");
     _ = @import("media/native/detector.zig");
+    _ = @import("media/native/detector_test.zig");
     _ = @import("media/native/isobmff.zig");
+    _ = @import("media/native/isobmff_test.zig");
     _ = @import("media/native/fmp4_muxer.zig");
+    _ = @import("media/native/fmp4_muxer_test.zig");
     _ = @import("media/native/mp4_streamer.zig");
+    _ = @import("media/native/mp4_streamer_test.zig");
+    _ = @import("media/native/subtitles.zig");
+    _ = @import("media/native/subtitles_test.zig");
+    _ = @import("media/native/subtitles/vtt.zig");
+    _ = @import("media/native/subtitles/vtt_test.zig");
+    _ = @import("media/native/languages.zig");
+    _ = @import("media/native/languages_test.zig");
+    _ = @import("media/native/codecs.zig");
+    _ = @import("media/native/codecs_test.zig");
+    _ = @import("media/native/ebml.zig");
+    _ = @import("media/native/ebml_test.zig");
+    _ = @import("media/native/cues.zig");
+    _ = @import("media/native/cues_test.zig");
     _ = @import("media/native/mkv/track_parser.zig");
+    _ = @import("media/native/mkv/track_parser_test.zig");
     _ = @import("media/native/mkv/gop_builder.zig");
+    _ = @import("media/native/mkv/gop_builder_test.zig");
     _ = @import("media/native/mkv/mkv_streamer.zig");
     _ = @import("media/stream_audio_transcoder.zig");
+    _ = @import("media/stream_audio_transcoder_test.zig");
+    _ = @import("media/native/audio/mdct.zig");
+    _ = @import("media/native/audio/mdct_test.zig");
+    _ = @import("media/native/audio/imdct.zig");
+    _ = @import("media/native/audio/imdct_test.zig");
+    _ = @import("media/native/audio/dsp.zig");
+    _ = @import("media/native/audio/dsp_test.zig");
     _ = @import("media/native/audio/dts_dec.zig");
-    _ = @import("storage/test_storage.zig");
+    _ = @import("media/native/audio/dts_dec_test.zig");
+    _ = @import("media/native/audio/ac3_dec.zig");
+    _ = @import("media/native/audio/ac3_dec_test.zig");
+    _ = @import("media/native/audio/eac3_dec.zig");
+    _ = @import("media/native/audio/eac3_dec_test.zig");
+    _ = @import("media/native/audio/aac_dec.zig");
+    _ = @import("media/native/audio/aac_dec_test.zig");
+    _ = @import("media/native/audio/aac_enc.zig");
+    _ = @import("media/native/audio/aac_enc_test.zig");
+    _ = @import("media/native/audio/mp3_dec.zig");
+    _ = @import("media/native/audio/mp3_dec_test.zig");
+    _ = @import("media/native/audio/mp3/decoder_test.zig");
+    _ = @import("media/native/audio/fifo.zig");
+    _ = @import("media/native/audio/fifo_test.zig");
+    _ = @import("media/native/audio/aac/huffman_test.zig");
+    _ = @import("media/native/audio/dts/header_test.zig");
+    _ = @import("media/native/audio/dts/subband_test.zig");
+    _ = @import("media/native/audio/dts/synthesis_test.zig");
+    _ = @import("storage/storage_test.zig");
     _ = @import("db/analytics.zig");
+    _ = @import("db/analytics_test.zig");
     _ = @import("db/admin.zig");
+    _ = @import("db/admin_test.zig");
+    _ = @import("web/utils.zig");
+    _ = @import("web/utils_test.zig");
     _ = @import("web/handlers/analytics_admin.zig");
+    _ = @import("web/handlers/analytics_admin_test.zig");
     _ = @import("web/handlers/show.zig");
+    _ = @import("web/handlers/show_test.zig");
     if (build_options.test_audio) {
         _ = @import("media/native/audio/test_ac3_mkv.zig");
         _ = @import("media/native/audio/test_eac3_mkv.zig");

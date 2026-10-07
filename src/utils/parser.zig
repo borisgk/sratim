@@ -3,7 +3,7 @@ const std = @import("std");
 pub fn parseSeasonEpisode(filename: []const u8) struct { season: i32, episode: i32 } {
     var season: i32 = 0;
     var episode: i32 = 0;
-    
+
     for (0..filename.len) |i| {
         if (filename[i] == 'S' or filename[i] == 's') {
             var s_end = i + 1;
@@ -25,7 +25,7 @@ pub fn parseSeasonEpisode(filename: []const u8) struct { season: i32, episode: i
             }
         }
     }
-    
+
     for (0..filename.len) |i| {
         if (filename[i] == 'x' or filename[i] == 'X') {
             var s_start = i;
@@ -38,13 +38,13 @@ pub fn parseSeasonEpisode(filename: []const u8) struct { season: i32, episode: i
                     e_end += 1;
                 }
                 if (e_end > i + 1) {
-                    season = std.fmt.parseInt(i32, filename[s_start .. i], 10) catch 0;
+                    season = std.fmt.parseInt(i32, filename[s_start..i], 10) catch 0;
                     episode = std.fmt.parseInt(i32, filename[i + 1 .. e_end], 10) catch 0;
                     return .{ .season = season, .episode = episode };
                 }
             }
         }
     }
-    
+
     return .{ .season = 0, .episode = 0 };
 }

@@ -1120,4 +1120,3 @@ test "SratimStorage: getCreditsByPerson and getMoviePeopleNamesMap exclude absen
         try testing.expectEqual(@as(usize, 0), credits.len);
     }
 }
-

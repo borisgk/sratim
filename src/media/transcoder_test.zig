@@ -386,4 +386,3 @@ test {
     std.testing.refAllDecls(aac_enc);
     std.testing.refAllDecls(ac3_dec);
 }
-

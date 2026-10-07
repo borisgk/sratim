@@ -44,7 +44,7 @@ fn escapeHtml(list: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []c
             '>' => try list.appendSlice(allocator, "&gt;"),
             '&' => try list.appendSlice(allocator, "&amp;"),
             '"' => try list.appendSlice(allocator, "&quot;"),
-            '\''=> try list.appendSlice(allocator, "&#39;"),
+            '\'' => try list.appendSlice(allocator, "&#39;"),
             else => try list.append(allocator, ch),
         }
     }

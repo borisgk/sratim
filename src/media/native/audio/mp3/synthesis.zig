@@ -247,7 +247,7 @@ pub fn imdctShort(grbuf: []f32, overlap: []f32, nbands: usize) void {
         @memcpy(grbuf[gr_idx .. gr_idx + 6], overlap[ov_idx .. ov_idx + 6]);
         imdct12(tmp[0..], grbuf[gr_idx + 6 ..], overlap[ov_idx + 6 ..]);
         imdct12(tmp[1..], grbuf[gr_idx + 12 ..], overlap[ov_idx + 6 ..]);
-        imdct12(tmp[2..], overlap[ov_idx ..], overlap[ov_idx + 6 ..]);
+        imdct12(tmp[2..], overlap[ov_idx..], overlap[ov_idx + 6 ..]);
         gr_idx += 18;
         ov_idx += 9;
     }

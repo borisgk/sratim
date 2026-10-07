@@ -234,5 +234,3 @@ pub fn fetchShowCredits(
         },
     };
 }
-
-

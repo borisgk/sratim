@@ -89,7 +89,7 @@ pub fn verifyPassword(database: *db_mod.Database, allocator: std.mem.Allocator, 
     bytesToHex(&derived_hex, derived_key);
 
     if (user.password_hash.len != KEY_LEN * 2) return false;
-    return std.crypto.timing_safe.eql([KEY_LEN * 2]u8, derived_hex, user.password_hash[0..KEY_LEN * 2].*);
+    return std.crypto.timing_safe.eql([KEY_LEN * 2]u8, derived_hex, user.password_hash[0 .. KEY_LEN * 2].*);
 }
 
 /// Returns whether the given username is an admin.

@@ -291,29 +291,23 @@ fn dailyLessThan(_: void, a: DailyTrendPoint, b: DailyTrendPoint) bool {
     return a.day_epoch < b.day_epoch;
 }
 
-/// Computes a complete analytics report across catalog and telemetry storage.
-pub fn computeReport(
-    backing_allocator: std.mem.Allocator,
+const WatchTrendsResult = struct {
+    overview: AnalyticsOverview,
+    hourly_distribution: [24]u64,
+    daily_trend: []DailyTrendPoint,
+    movie_stats: std.AutoHashMap(i64, MediaAgg),
+    show_stats: std.AutoHashMap(i64, ShowAgg),
+    user_stats: std.StringHashMap(UserAgg),
+};
+
+fn computeWatchTrends(
+    aa: std.mem.Allocator,
     catalog: *engine.SratimStorage,
     logs: *logs_engine.LogsStorage,
     range: TimeRange,
-    sort_order: SortOrder,
-    limit: usize,
-) !AnalyticsReport {
-    var arena = std.heap.ArenaAllocator.init(backing_allocator);
-    errdefer arena.deinit();
-    const aa = arena.allocator();
-
-    // Acquire shared read locks on both stores
-    catalog.rwlock.lockSharedUncancelable(catalog.io);
-    defer catalog.rwlock.unlockShared(catalog.io);
-
-    logs.rwlock.lockSharedUncancelable(logs.io);
-    defer logs.rwlock.unlockShared(logs.io);
-
-    const now_ts = std.Io.Timestamp.now(logs.io, .real).toSeconds();
-    const start_ts = range.getStartTimestamp(now_ts);
-
+    start_ts: i64,
+    now_ts: i64,
+) !WatchTrendsResult {
     var overview = AnalyticsOverview{};
     var hourly_distribution: [24]u64 = @splat(0);
 
@@ -411,7 +405,6 @@ pub fn computeReport(
             u_entry.value_ptr.last_active = log.timestamp;
         }
 
-        // Identify show_id from catalog
         var show_id_opt: ?i64 = null;
         if (catalog.episodes.get(log.episode_id)) |ep| {
             show_id_opt = ep.show_id;
@@ -470,6 +463,31 @@ pub fn computeReport(
     }
     std.mem.sort(DailyTrendPoint, daily_list.items, {}, dailyLessThan);
 
+    return .{
+        .overview = overview,
+        .hourly_distribution = hourly_distribution,
+        .daily_trend = daily_list.items,
+        .movie_stats = movie_stats,
+        .show_stats = show_stats,
+        .user_stats = user_stats,
+    };
+}
+
+const LeaderboardsResult = struct {
+    top_movies: []WatchedMovieItem,
+    top_shows: []WatchedShowItem,
+    top_users: []UserActivityItem,
+};
+
+fn computeMediaLeaderboards(
+    aa: std.mem.Allocator,
+    catalog: *engine.SratimStorage,
+    movie_stats: *const std.AutoHashMap(i64, MediaAgg),
+    show_stats: *const std.AutoHashMap(i64, ShowAgg),
+    user_stats: *const std.StringHashMap(UserAgg),
+    sort_order: SortOrder,
+    limit: usize,
+) !LeaderboardsResult {
     // Build top movies list
     var movies_list = std.ArrayList(WatchedMovieItem).empty;
     var m_it = movie_stats.iterator();
@@ -498,7 +516,6 @@ pub fn computeReport(
     }
     std.mem.sort(WatchedMovieItem, movies_list.items, sort_order, movieLessThan);
     const movie_count = @min(limit, movies_list.items.len);
-    const top_movies = movies_list.items[0..movie_count];
 
     // Build top shows list
     var shows_list = std.ArrayList(WatchedShowItem).empty;
@@ -526,7 +543,6 @@ pub fn computeReport(
     }
     std.mem.sort(WatchedShowItem, shows_list.items, sort_order, showLessThan);
     const show_count = @min(limit, shows_list.items.len);
-    const top_shows = shows_list.items[0..show_count];
 
     // Build user activity list
     var users_list = std.ArrayList(UserActivityItem).empty;
@@ -541,9 +557,27 @@ pub fn computeReport(
     }
     std.mem.sort(UserActivityItem, users_list.items, {}, userLessThan);
     const user_count = @min(limit, users_list.items.len);
-    const top_users = users_list.items[0..user_count];
 
-    // 3. Build top actors and top directors lists
+    return .{
+        .top_movies = movies_list.items[0..movie_count],
+        .top_shows = shows_list.items[0..show_count],
+        .top_users = users_list.items[0..user_count],
+    };
+}
+
+const StarPowerResult = struct {
+    top_actors: []WatchedPersonItem,
+    top_directors: []WatchedPersonItem,
+};
+
+fn computeStarPower(
+    aa: std.mem.Allocator,
+    catalog: *engine.SratimStorage,
+    movie_stats: *const std.AutoHashMap(i64, MediaAgg),
+    show_stats: *const std.AutoHashMap(i64, ShowAgg),
+    sort_order: SortOrder,
+    limit: usize,
+) !StarPowerResult {
     const PersonAgg = struct {
         person_id: i64,
         name: []const u8,
@@ -720,7 +754,6 @@ pub fn computeReport(
     }
     std.mem.sort(WatchedPersonItem, actors_list.items, sort_order, personLessThan);
     const actor_count = @min(limit, actors_list.items.len);
-    const top_actors = actors_list.items[0..actor_count];
 
     var directors_list = std.ArrayList(WatchedPersonItem).empty;
     var dir_it = director_stats.valueIterator();
@@ -738,11 +771,19 @@ pub fn computeReport(
     }
     std.mem.sort(WatchedPersonItem, directors_list.items, sort_order, personLessThan);
     const director_count = @min(limit, directors_list.items.len);
-    const top_directors = directors_list.items[0..director_count];
 
-    // =========================================================================
-    // 4. Compute Library Intelligence & Trivia
-    // =========================================================================
+    return .{
+        .top_actors = actors_list.items[0..actor_count],
+        .top_directors = directors_list.items[0..director_count],
+    };
+}
+
+fn computeLibraryIntelligence(
+    aa: std.mem.Allocator,
+    catalog: *engine.SratimStorage,
+    movie_stats: *const std.AutoHashMap(i64, MediaAgg),
+    show_stats: *const std.AutoHashMap(i64, ShowAgg),
+) !AnalyticsTrivia {
     const TitleKey = struct {
         id: i64,
         is_show: bool,
@@ -1237,272 +1278,53 @@ pub fn computeReport(
         };
     }
 
-    const trivia = AnalyticsTrivia{
+    return .{
         .ubiquitous_actor = ubiquitous,
         .collaborators = collaborators,
         .crossover = crossover,
         .eras = era_slice,
     };
+}
+
+/// Computes a complete analytics report across catalog and telemetry storage.
+pub fn computeReport(
+    backing_allocator: std.mem.Allocator,
+    catalog: *engine.SratimStorage,
+    logs: *logs_engine.LogsStorage,
+    range: TimeRange,
+    sort_order: SortOrder,
+    limit: usize,
+) !AnalyticsReport {
+    var arena = std.heap.ArenaAllocator.init(backing_allocator);
+    errdefer arena.deinit();
+    const aa = arena.allocator();
+
+    // Acquire shared read locks on both stores
+    catalog.rwlock.lockSharedUncancelable(catalog.io);
+    defer catalog.rwlock.unlockShared(catalog.io);
+
+    logs.rwlock.lockSharedUncancelable(logs.io);
+    defer logs.rwlock.unlockShared(logs.io);
+
+    const now_ts = std.Io.Timestamp.now(logs.io, .real).toSeconds();
+    const start_ts = range.getStartTimestamp(now_ts);
+
+    const trends = try computeWatchTrends(aa, catalog, logs, range, start_ts, now_ts);
+    const leaderboards = try computeMediaLeaderboards(aa, catalog, &trends.movie_stats, &trends.show_stats, &trends.user_stats, sort_order, limit);
+    const star_power = try computeStarPower(aa, catalog, &trends.movie_stats, &trends.show_stats, sort_order, limit);
+    const trivia = try computeLibraryIntelligence(aa, catalog, &trends.movie_stats, &trends.show_stats);
 
     return .{
         .arena = arena,
         .range = range,
-        .overview = overview,
-        .daily_trend = daily_list.items,
-        .hourly_distribution = hourly_distribution,
-        .top_movies = top_movies,
-        .top_shows = top_shows,
-        .top_actors = top_actors,
-        .top_directors = top_directors,
+        .overview = trends.overview,
+        .daily_trend = trends.daily_trend,
+        .hourly_distribution = trends.hourly_distribution,
+        .top_movies = leaderboards.top_movies,
+        .top_shows = leaderboards.top_shows,
+        .top_actors = star_power.top_actors,
+        .top_directors = star_power.top_directors,
         .trivia = trivia,
-        .user_activity = top_users,
+        .user_activity = leaderboards.top_users,
     };
-}
-
-// =============================================================================
-// Unit Tests
-// =============================================================================
-
-test "analytics: empty logs report" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
-
-    var cat = engine.SratimStorage.init(allocator, io, "tmp/test_analytics_cat.json", "tmp/test_analytics_cat.wal", "tmp/test_analytics_cat_persons");
-    defer cat.deinit();
-
-    var logs = logs_engine.LogsStorage.init(allocator, io, "tmp/test_analytics_logs.json", "tmp/test_analytics_logs.wal");
-    defer logs.deinit();
-
-    var report = try computeReport(allocator, &cat, &logs, .d30, .watch_time, 10);
-    defer report.deinit();
-
-    try std.testing.expectEqual(@as(u64, 0), report.overview.total_watch_seconds);
-    try std.testing.expectEqual(@as(u64, 0), report.overview.total_plays);
-    try std.testing.expectEqual(@as(u64, 0), report.overview.active_viewers);
-    try std.testing.expectEqual(@as(usize, 0), report.top_movies.len);
-    try std.testing.expectEqual(@as(usize, 0), report.top_shows.len);
-    try std.testing.expectEqual(@as(usize, 0), report.user_activity.len);
-    try std.testing.expect(report.daily_trend.len >= 30);
-}
-
-test "analytics: watch time aggregation and leaderboard sorting" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
-
-    var cat = engine.SratimStorage.init(allocator, io, "tmp/test_analytics_cat2.json", "tmp/test_analytics_cat2.wal", "tmp/test_analytics_cat2_persons");
-    defer cat.deinit();
-
-    // Seed movies
-    _ = try cat.addOrUpdateMovie(.{
-        .id = 1,
-        .library_id = 1,
-        .file_path = "/path/movie1.mkv",
-        .clean_name = "Movie One",
-        .title = "Movie One",
-        .file_size = 1000,
-    });
-    _ = try cat.addOrUpdateMovie(.{
-        .id = 2,
-        .library_id = 1,
-        .file_path = "/path/movie2.mkv",
-        .clean_name = "Movie Two",
-        .title = "Movie Two",
-        .file_size = 2000,
-    });
-
-    // Seed show and episode
-    const show_id = try cat.addOrUpdateShow(.{
-        .id = 10,
-        .library_id = 2,
-        .path = "/path/Show",
-        .title = "Epic Series",
-    });
-    const ep_id = try cat.addOrUpdateEpisode(.{
-        .id = 101,
-        .show_id = show_id,
-        .file_path = "/path/Show/S01E01.mkv",
-        .season = 1,
-        .episode = 1,
-        .file_size = 500,
-    });
-
-    var logs = logs_engine.LogsStorage.init(allocator, io, "tmp/test_analytics_logs2.json", "tmp/test_analytics_logs2.wal");
-    defer logs.deinit();
-
-    // Alice watches Movie 1: 1 start, 5 progress (50s)
-    try logs.logPlaybackEvent("alice", 1, "start", 0.0);
-    var i: usize = 0;
-    while (i < 5) : (i += 1) {
-        try logs.logPlaybackEvent("alice", 1, "progress", @floatFromInt((i + 1) * 10));
-    }
-
-    // Bob watches Movie 1: 1 start, 3 progress (30s)
-    try logs.logPlaybackEvent("bob", 1, "start", 0.0);
-    i = 0;
-    while (i < 3) : (i += 1) {
-        try logs.logPlaybackEvent("bob", 1, "progress", @floatFromInt((i + 1) * 10));
-    }
-
-    // Alice watches Movie 2: 1 start, 10 progress (100s)
-    try logs.logPlaybackEvent("alice", 2, "start", 0.0);
-    i = 0;
-    while (i < 10) : (i += 1) {
-        try logs.logPlaybackEvent("alice", 2, "progress", @floatFromInt((i + 1) * 10));
-    }
-
-    // Charlie watches Show 1 episode 1: 1 start, 8 progress (80s)
-    try logs.logEpisodePlaybackEvent("charlie", ep_id, "start", 0.0);
-    i = 0;
-    while (i < 8) : (i += 1) {
-        try logs.logEpisodePlaybackEvent("charlie", ep_id, "progress", @floatFromInt((i + 1) * 10));
-    }
-
-    var report = try computeReport(allocator, &cat, &logs, .d30, .watch_time, 10);
-    defer report.deinit();
-
-    // Total watch seconds = 50 + 30 + 100 + 80 = 260
-    try std.testing.expectEqual(@as(u64, 260), report.overview.total_watch_seconds);
-    // Total plays = 1 + 1 + 1 + 1 = 4
-    try std.testing.expectEqual(@as(u64, 4), report.overview.total_plays);
-    // Active viewers = alice, bob, charlie = 3
-    try std.testing.expectEqual(@as(u64, 3), report.overview.active_viewers);
-
-    // Top movies: Movie 2 has 100s, Movie 1 has 80s
-    try std.testing.expectEqual(@as(usize, 2), report.top_movies.len);
-    try std.testing.expectEqual(@as(i64, 2), report.top_movies[0].movie_id);
-    try std.testing.expectEqual(@as(u64, 100), report.top_movies[0].seconds_watched);
-    try std.testing.expectEqual(@as(i64, 1), report.top_movies[1].movie_id);
-    try std.testing.expectEqual(@as(u64, 80), report.top_movies[1].seconds_watched);
-
-    // Top shows: Show 1 has 80s
-    try std.testing.expectEqual(@as(usize, 1), report.top_shows.len);
-    try std.testing.expectEqual(show_id, report.top_shows[0].show_id);
-    try std.testing.expectEqual(@as(u64, 80), report.top_shows[0].seconds_watched);
-
-    // Top users: Alice has 150s (50 + 100), Charlie has 80s, Bob has 30s
-    try std.testing.expectEqual(@as(usize, 3), report.user_activity.len);
-    try std.testing.expectEqualStrings("alice", report.user_activity[0].username);
-    try std.testing.expectEqual(@as(u64, 150), report.user_activity[0].seconds_watched);
-    try std.testing.expectEqualStrings("charlie", report.user_activity[1].username);
-    try std.testing.expectEqual(@as(u64, 80), report.user_activity[1].seconds_watched);
-    try std.testing.expectEqualStrings("bob", report.user_activity[2].username);
-    try std.testing.expectEqual(@as(u64, 30), report.user_activity[2].seconds_watched);
-}
-
-test "analytics: star power and library trivia computation" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
-
-    var cat = engine.SratimStorage.init(allocator, io, "tmp/test_analytics_cat3.json", "tmp/test_analytics_cat3.wal", "tmp/test_analytics_cat3_persons");
-    defer cat.deinit();
-
-    // 1. Seed people
-    try cat.addOrUpdatePerson(.{ .id = 1, .name = "Cillian Murphy", .known_for_department = "Acting" });
-    try cat.addOrUpdatePerson(.{ .id = 2, .name = "Christopher Nolan", .known_for_department = "Directing" });
-    try cat.addOrUpdatePerson(.{ .id = 3, .name = "Tom Hardy", .known_for_department = "Acting" });
-
-    // 2. Seed movies & show
-    const m1_id = try cat.addOrUpdateMovie(.{
-        .id = 1,
-        .library_id = 1,
-        .file_path = "/path/m1.mkv",
-        .clean_name = "Inception",
-        .title = "Inception",
-        .release_date = "2010-07-16",
-    });
-    const m2_id = try cat.addOrUpdateMovie(.{
-        .id = 2,
-        .library_id = 1,
-        .file_path = "/path/m2.mkv",
-        .clean_name = "Dunkirk",
-        .title = "Dunkirk",
-        .release_date = "2017-07-21",
-    });
-    const s1_id = try cat.addOrUpdateShow(.{
-        .id = 10,
-        .library_id = 2,
-        .path = "/path/Peaky Blinders (2013)",
-        .title = "Peaky Blinders (2013)",
-    });
-    const ep1_id = try cat.addOrUpdateEpisode(.{
-        .id = 101,
-        .show_id = s1_id,
-        .file_path = "/path/ep1.mkv",
-        .season = 1,
-        .episode = 1,
-    });
-
-    // 3. Seed credits
-    // Inception: Nolan directs, Cillian acts, Tom Hardy acts
-    _ = try cat.addMovieCredit(.{ .id = 1, .movie_id = m1_id, .person_id = 2, .name = "Christopher Nolan", .department = "Directing", .job = "Director", .is_cast = false });
-    _ = try cat.addMovieCredit(.{ .id = 2, .movie_id = m1_id, .person_id = 1, .name = "Cillian Murphy", .character = "Robert Fischer", .is_cast = true, .order = 1 });
-    _ = try cat.addMovieCredit(.{ .id = 3, .movie_id = m1_id, .person_id = 3, .name = "Tom Hardy", .character = "Eames", .is_cast = true, .order = 2 });
-
-    // Dunkirk: Nolan directs, Cillian acts, Tom Hardy acts
-    _ = try cat.addMovieCredit(.{ .id = 4, .movie_id = m2_id, .person_id = 2, .name = "Christopher Nolan", .department = "Directing", .job = "Director", .is_cast = false });
-    _ = try cat.addMovieCredit(.{ .id = 5, .movie_id = m2_id, .person_id = 1, .name = "Cillian Murphy", .character = "Shivering Soldier", .is_cast = true, .order = 1 });
-    _ = try cat.addMovieCredit(.{ .id = 6, .movie_id = m2_id, .person_id = 3, .name = "Tom Hardy", .character = "Farrier", .is_cast = true, .order = 2 });
-
-    // Peaky Blinders: Cillian Murphy stars, Tom Hardy guest stars
-    _ = try cat.addShowCredit(.{ .id = 7, .show_id = s1_id, .person_id = 1, .name = "Cillian Murphy", .character = "Thomas Shelby", .is_cast = true, .order = 0 });
-    _ = try cat.addShowCredit(.{ .id = 8, .show_id = s1_id, .person_id = 3, .name = "Tom Hardy", .character = "Alfie Solomons", .is_cast = true, .order = 1 });
-
-    // 4. Seed playback logs: Inception (50s), Dunkirk (30s), Peaky Blinders (40s)
-    var logs = logs_engine.LogsStorage.init(allocator, io, "tmp/test_analytics_logs3.json", "tmp/test_analytics_logs3.wal");
-    defer logs.deinit();
-
-    try logs.logPlaybackEvent("alice", m1_id, "start", 0.0);
-    var i: usize = 0;
-    while (i < 5) : (i += 1) {
-        try logs.logPlaybackEvent("alice", m1_id, "progress", @floatFromInt((i + 1) * 10));
-    }
-    try logs.logPlaybackEvent("alice", m2_id, "start", 0.0);
-    i = 0;
-    while (i < 3) : (i += 1) {
-        try logs.logPlaybackEvent("alice", m2_id, "progress", @floatFromInt((i + 1) * 10));
-    }
-    try logs.logEpisodePlaybackEvent("alice", ep1_id, "start", 0.0);
-    i = 0;
-    while (i < 4) : (i += 1) {
-        try logs.logEpisodePlaybackEvent("alice", ep1_id, "progress", @floatFromInt((i + 1) * 10));
-    }
-
-    var report = try computeReport(allocator, &cat, &logs, .d30, .watch_time, 10);
-    defer report.deinit();
-
-    // 5. Verify Star Power:
-    // Cillian Murphy watched in Inception (50s) + Dunkirk (30s) + Peaky (40s) = 120s
-    // Christopher Nolan watched in Inception (50s) + Dunkirk (30s) = 80s
-    try std.testing.expect(report.top_actors.len >= 2);
-    try std.testing.expectEqualStrings("Cillian Murphy", report.top_actors[0].name);
-    try std.testing.expectEqual(@as(u64, 120), report.top_actors[0].seconds_watched);
-    try std.testing.expectEqual(@as(usize, 3), report.top_actors[0].titles_count);
-
-    try std.testing.expect(report.top_directors.len >= 1);
-    try std.testing.expectEqualStrings("Christopher Nolan", report.top_directors[0].name);
-    try std.testing.expectEqual(@as(u64, 80), report.top_directors[0].seconds_watched);
-    try std.testing.expectEqual(@as(usize, 2), report.top_directors[0].titles_count);
-
-    // 6. Verify Trivia:
-    // Ubiquitous actor: Cillian Murphy or Tom Hardy appears in 3 titles (Inception, Dunkirk, Peaky)
-    try std.testing.expect(report.trivia.ubiquitous_actor != null);
-    try std.testing.expect(report.trivia.ubiquitous_actor.?.title_count >= 3);
-
-    // Title crossover: Inception & Dunkirk share 2 actors (Cillian Murphy, Tom Hardy)
-    try std.testing.expect(report.trivia.crossover != null);
-    try std.testing.expectEqual(@as(usize, 2), report.trivia.crossover.?.shared_actor_count);
-
-    // Dynamic duo: collaborators found with shared_title_count >= 2
-    try std.testing.expect(report.trivia.collaborators != null);
-    try std.testing.expect(report.trivia.collaborators.?.shared_title_count >= 2);
-
-    // Eras: 2010s has 100% of watch time (Inception 2010, Dunkirk 2017, Peaky 2013)
-    try std.testing.expectEqual(@as(usize, 7), report.trivia.eras.len);
-    for (report.trivia.eras) |era| {
-        if (era.decade == 2010) {
-            try std.testing.expectEqual(@as(u8, 100), era.percent);
-        } else {
-            try std.testing.expectEqual(@as(u8, 0), era.percent);
-        }
-    }
 }

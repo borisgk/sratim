@@ -8,7 +8,6 @@ pub fn handleRawPlay(
     request: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     database: *db_mod.Database,
-
     resp_buf: []u8,
     io: std.Io,
 ) !void {
@@ -99,11 +98,11 @@ pub fn handleRawPlay(
                     is_partial = true;
                     break;
                 }
-                
+
                 if (end_str.len > 0 and start_str.len > 0) {
                     range_end = std.fmt.parseInt(u64, end_str, 10) catch (file_size - 1);
                 }
-                
+
                 if (range_end >= file_size) {
                     range_end = file_size - 1;
                 }
@@ -171,12 +170,12 @@ pub fn handleRawPlay(
     var buffer: [32768]u8 = undefined;
     while (remaining > 0) {
         const to_read = @min(remaining, buffer.len);
-        
+
         // Use readPositionalAll which returns number of bytes read (or handles short reads)
         // Wait, readPositionalAll returns usize
         const bytes_read = file.readPositionalAll(io, buffer[0..to_read], current_offset) catch break;
         if (bytes_read == 0) break;
-        
+
         resp.writer.writeAll(buffer[0..bytes_read]) catch break;
         remaining -= bytes_read;
         current_offset += bytes_read;

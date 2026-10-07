@@ -90,31 +90,3 @@ pub fn parseYearAndCleanName(allocator: std.mem.Allocator, raw_name: []const u8)
         .year = null,
     };
 }
-
-test "parseYearAndCleanName tests" {
-    const allocator = std.testing.allocator;
-
-    {
-        const res = try parseYearAndCleanName(allocator, "Inception (2010)");
-        defer allocator.free(res.clean);
-        defer if (res.year) |y| allocator.free(y);
-        try std.testing.expectEqualStrings("Inception", res.clean);
-        try std.testing.expectEqualStrings("2010", res.year.?);
-    }
-
-    {
-        const res = try parseYearAndCleanName(allocator, "Inception.2010.1080p");
-        defer allocator.free(res.clean);
-        defer if (res.year) |y| allocator.free(y);
-        try std.testing.expectEqualStrings("Inception", res.clean);
-        try std.testing.expectEqualStrings("2010", res.year.?);
-    }
-
-    {
-        const res = try parseYearAndCleanName(allocator, "Inception");
-        defer allocator.free(res.clean);
-        defer if (res.year) |y| allocator.free(y);
-        try std.testing.expectEqualStrings("Inception", res.clean);
-        try std.testing.expect(res.year == null);
-    }
-}

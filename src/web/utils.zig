@@ -150,7 +150,16 @@ pub fn parseQueryString(allocator: std.mem.Allocator, target: []const u8, name: 
         if (std.mem.startsWith(u8, param, name) and param.len > name.len and param[name.len] == '=') {
             const raw = param[name.len + 1 ..];
             const decoded = allocator.dupe(u8, raw) catch return null;
-            return std.Uri.percentDecodeInPlace(decoded);
+            const res = std.Uri.percentDecodeInPlace(decoded);
+            if (res.len != decoded.len) {
+                const final = allocator.dupe(u8, res) catch {
+                    allocator.free(decoded);
+                    return null;
+                };
+                allocator.free(decoded);
+                return final;
+            }
+            return decoded;
         }
     }
     return null;
@@ -165,52 +174,4 @@ pub fn isValidRedirect(target: []const u8) bool {
     if (std.mem.indexOfScalar(u8, target, '\r') != null) return false;
     if (std.mem.indexOfScalar(u8, target, '\n') != null) return false;
     return true;
-}
-
-test "parseQueryString and isValidRedirect" {
-    const testing = std.testing;
-    const alloc = testing.allocator;
-
-    const query_target = "/login?redirect=%2Fdetails%3Fid%3D26";
-    const res = parseQueryString(alloc, query_target, "redirect");
-    try testing.expect(res != null);
-    defer alloc.free(res.?);
-    try testing.expectEqualStrings("/details?id=26", res.?);
-    try testing.expect(isValidRedirect(res.?));
-
-    try testing.expect(!isValidRedirect("https://evil.com"));
-    try testing.expect(!isValidRedirect("//evil.com"));
-    try testing.expect(!isValidRedirect("/\\evil.com"));
-    try testing.expect(!isValidRedirect(""));
-    try testing.expect(isValidRedirect("/"));
-    try testing.expect(isValidRedirect("/details?id=26"));
-}
-
-test "parseQueryInt robust parsing" {
-    const testing = std.testing;
-    try testing.expectEqual(@as(?i64, 2183), parseQueryInt(i64, "/details?id=2183%20Watch%20Fiddler%20on%20the%20Roof%20on%20Sratim", "id"));
-    try testing.expectEqual(@as(?i64, 2183), parseQueryInt(i64, "/details?id=2183", "id"));
-    try testing.expectEqual(@as(?i64, 2183), parseQueryInt(i64, "/details?id=2183&start=0", "id"));
-    try testing.expectEqual(@as(?i64, 2183), parseQueryInt(i64, "/details?id=2183#header", "id"));
-    try testing.expectEqual(@as(?i64, 2183), parseQueryInt(i64, "/details?id=+2183", "id"));
-    try testing.expectEqual(@as(?i64, -2183), parseQueryInt(i64, "/details?id=-2183", "id"));
-    try testing.expectEqual(@as(?i64, null), parseQueryInt(i64, "/details?id=abc", "id"));
-    try testing.expectEqual(@as(?f64, 42.5), parseQueryFloat("/watch?pos=42.5s", "pos"));
-}
-
-test "getLanIp does not crash" {
-    const testing = std.testing;
-    const ip = try getLanIp(testing.allocator);
-    if (ip) |val| {
-        defer testing.allocator.free(val);
-        try testing.expect(val.len > 0);
-        // Verify format is standard dotted IPv4
-        var it = std.mem.splitScalar(u8, val, '.');
-        var octets: usize = 0;
-        while (it.next()) |oct| {
-            _ = try std.fmt.parseInt(u8, oct, 10);
-            octets += 1;
-        }
-        try testing.expectEqual(@as(usize, 4), octets);
-    }
 }

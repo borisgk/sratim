@@ -69,14 +69,14 @@ pub fn generateDetailsHtml(
 
     const resume_pos = logging_mod.getPlaybackProgress(logs_database, username, movie_id) catch 0.0;
     if (resume_pos > 0.0) {
-        const resume_btn = try std.fmt.allocPrint(allocator, 
+        const resume_btn = try std.fmt.allocPrint(allocator,
             \\                    <a href="{s}" class="play-btn-large resume-btn">
             \\                        <svg viewBox="0 0 24 24" fill="currentColor" width="28" height="28">
             \\                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
             \\                        </svg>
             \\                        Resume
             \\                    </a>
-        , .{ play_url.items });
+        , .{play_url.items});
         defer allocator.free(resume_btn);
         try resume_btn_buf.appendSlice(allocator, resume_btn);
     }

@@ -597,5 +597,3 @@ pub fn getShowsByPerson(self: *SratimStorage, allocator: std.mem.Allocator, pers
 
     return shows.toOwnedSlice(allocator);
 }
-
-

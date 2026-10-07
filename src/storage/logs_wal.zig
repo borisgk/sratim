@@ -119,7 +119,7 @@ pub fn writeWalSavePlaybackProgress(self: *LogsStorage, username: []const u8, mo
     var buf: [256]u8 = undefined;
     const u_len: u16 = @intCast(@min(username.len, 200));
     var pos: usize = 0;
-    buf[pos] = @intFromEnum(WalOpcode.save_playback_progress);
+    buf[pos] = @backingInt(WalOpcode.save_playback_progress);
     pos += 1;
     std.mem.writeInt(u16, buf[pos..][0..2], u_len, .little);
     pos += 2;
@@ -140,7 +140,7 @@ pub fn writeWalSaveEpisodePlaybackProgress(self: *LogsStorage, username: []const
     var buf: [256]u8 = undefined;
     const u_len: u16 = @intCast(@min(username.len, 200));
     var pos: usize = 0;
-    buf[pos] = @intFromEnum(WalOpcode.save_episode_playback_progress);
+    buf[pos] = @backingInt(WalOpcode.save_episode_playback_progress);
     pos += 1;
     std.mem.writeInt(u16, buf[pos..][0..2], u_len, .little);
     pos += 2;
@@ -161,7 +161,7 @@ pub fn writeWalDeletePlaybackProgress(self: *LogsStorage, username: []const u8, 
     var buf: [256]u8 = undefined;
     const u_len: u16 = @intCast(@min(username.len, 200));
     var pos: usize = 0;
-    buf[pos] = @intFromEnum(WalOpcode.delete_playback_progress);
+    buf[pos] = @backingInt(WalOpcode.delete_playback_progress);
     pos += 1;
     std.mem.writeInt(u16, buf[pos..][0..2], u_len, .little);
     pos += 2;
@@ -176,7 +176,7 @@ pub fn writeWalDeleteEpisodePlaybackProgress(self: *LogsStorage, username: []con
     var buf: [256]u8 = undefined;
     const u_len: u16 = @intCast(@min(username.len, 200));
     var pos: usize = 0;
-    buf[pos] = @intFromEnum(WalOpcode.delete_episode_playback_progress);
+    buf[pos] = @backingInt(WalOpcode.delete_episode_playback_progress);
     pos += 1;
     std.mem.writeInt(u16, buf[pos..][0..2], u_len, .little);
     pos += 2;
@@ -192,7 +192,7 @@ pub fn writeWalLogPlaybackEvent(self: *LogsStorage, id: i64, username: []const u
     const u_len: u16 = @intCast(@min(username.len, 200));
     const ev_len: u16 = @intCast(@min(event_type.len, 100));
     var pos: usize = 0;
-    buf[pos] = @intFromEnum(WalOpcode.log_playback_event);
+    buf[pos] = @backingInt(WalOpcode.log_playback_event);
     pos += 1;
     std.mem.writeInt(i64, buf[pos..][0..8], id, .little);
     pos += 8;
@@ -218,7 +218,7 @@ pub fn writeWalLogEpisodePlaybackEvent(self: *LogsStorage, id: i64, username: []
     const u_len: u16 = @intCast(@min(username.len, 200));
     const ev_len: u16 = @intCast(@min(event_type.len, 100));
     var pos: usize = 0;
-    buf[pos] = @intFromEnum(WalOpcode.log_episode_playback_event);
+    buf[pos] = @backingInt(WalOpcode.log_episode_playback_event);
     pos += 1;
     std.mem.writeInt(i64, buf[pos..][0..8], id, .little);
     pos += 8;
@@ -245,7 +245,7 @@ pub fn writeWalLogLoginAttempt(self: *LogsStorage, id: i64, username: []const u8
     const st_len: u16 = @intCast(@min(status.len, 50));
     const ip_len: u16 = @intCast(@min(ip_address.len, 100));
     var pos: usize = 0;
-    buf[pos] = @intFromEnum(WalOpcode.log_login_attempt);
+    buf[pos] = @backingInt(WalOpcode.log_login_attempt);
     pos += 1;
     std.mem.writeInt(i64, buf[pos..][0..8], id, .little);
     pos += 8;
@@ -270,7 +270,7 @@ pub fn writeWalClearFailedLogins(self: *LogsStorage, username: []const u8) void 
     var buf: [256]u8 = undefined;
     const u_len: u16 = @intCast(@min(username.len, 200));
     var pos: usize = 0;
-    buf[pos] = @intFromEnum(WalOpcode.clear_failed_logins);
+    buf[pos] = @backingInt(WalOpcode.clear_failed_logins);
     pos += 1;
     std.mem.writeInt(u16, buf[pos..][0..2], u_len, .little);
     pos += 2;
@@ -282,7 +282,7 @@ pub fn writeWalClearFailedLogins(self: *LogsStorage, username: []const u8) void 
 pub fn applyWalPayload(self: *LogsStorage, payload: []const u8) !void {
     if (payload.len < 1) return;
     const raw_op = payload[0];
-    const op: WalOpcode = @enumFromInt(raw_op);
+    const op: WalOpcode = @fromBackingInt(@intCast(raw_op));
     switch (op) {
         .save_playback_progress => {
             if (payload.len < 3) return;

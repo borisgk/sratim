@@ -34,7 +34,7 @@ pub fn handleGetLibraries(
     try json.appendSlice(allocator, "{\"success\":true,\"libraries\":[");
     for (libraries, 0..) |lib, i| {
         if (i > 0) try json.appendSlice(allocator, ",");
-        
+
         var escaped_name = std.ArrayList(u8).empty;
         defer escaped_name.deinit(allocator);
         for (lib.name) |c| {
@@ -48,10 +48,7 @@ pub fn handleGetLibraries(
             }
         }
 
-        const lib_json = try std.fmt.allocPrint(allocator, 
-            "{{\"id\":{d},\"name\":\"{s}\",\"type\":\"{s}\"}}",
-            .{ lib.id, escaped_name.items, lib.lib_type.toString() }
-        );
+        const lib_json = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"name\":\"{s}\",\"type\":\"{s}\"}}", .{ lib.id, escaped_name.items, lib.lib_type.toString() });
         defer allocator.free(lib_json);
         try json.appendSlice(allocator, lib_json);
     }
@@ -137,10 +134,7 @@ pub fn handleGetLibraryItems(
                 }
             }
 
-            const item_json = try std.fmt.allocPrint(allocator, 
-                "{{\"id\":{d},\"title\":\"{s}\",\"poster_path\":\"{s}\",\"tmdb_id\":\"{s}\",\"type\":\"show\"}}",
-                .{ show_id, escaped_title.items, poster_path, tmdb_id_str }
-            );
+            const item_json = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"title\":\"{s}\",\"poster_path\":\"{s}\",\"tmdb_id\":\"{s}\",\"type\":\"show\"}}", .{ show_id, escaped_title.items, poster_path, tmdb_id_str });
             defer allocator.free(item_json);
             try json.appendSlice(allocator, item_json);
         }
@@ -177,10 +171,7 @@ pub fn handleGetLibraryItems(
                 }
             }
 
-            const item_json = try std.fmt.allocPrint(allocator, 
-                "{{\"id\":{d},\"title\":\"{s}\",\"poster_path\":\"{s}\",\"tmdb_id\":\"{s}\",\"type\":\"movie\"}}",
-                .{ movie_id, escaped_title.items, poster_path, tmdb_id_str }
-            );
+            const item_json = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"title\":\"{s}\",\"poster_path\":\"{s}\",\"tmdb_id\":\"{s}\",\"type\":\"movie\"}}", .{ movie_id, escaped_title.items, poster_path, tmdb_id_str });
             defer allocator.free(item_json);
             try json.appendSlice(allocator, item_json);
         }
