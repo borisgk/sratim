@@ -68,7 +68,9 @@ pub fn getLanIp(allocator: std.mem.Allocator) !?[]const u8 {
                 if ((flags & @as(c_uint, @intCast(c.IFF_UP))) == 0) continue;
 
                 const sin = @as(*const c.sockaddr_in, @ptrCast(@alignCast(addr)));
-                const bytes = @as([4]u8, @bitCast(sin.addr));
+                // sin.addr holds the address in network byte order; view its memory directly.
+                // (Zig 0.17 @bitCast to arrays is LSB-first, which would reverse octets on big-endian.)
+                const bytes: *const [4]u8 = @ptrCast(&sin.addr);
                 return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{
                     bytes[0], bytes[1], bytes[2], bytes[3],
                 });
@@ -99,7 +101,7 @@ pub fn writePercentEncoded(list: *std.ArrayList(u8), allocator: std.mem.Allocato
             '"' => try list.appendSlice(allocator, "%22"),
             '<' => try list.appendSlice(allocator, "%3C"),
             '>' => try list.appendSlice(allocator, "%3E"),
-            '\''=> try list.appendSlice(allocator, "%27"),
+            '\'' => try list.appendSlice(allocator, "%27"),
             else => try list.append(allocator, ch),
         }
     }
@@ -113,7 +115,7 @@ pub fn escapeHtml(list: *std.ArrayList(u8), allocator: std.mem.Allocator, input:
             '>' => try list.appendSlice(allocator, "&gt;"),
             '&' => try list.appendSlice(allocator, "&amp;"),
             '"' => try list.appendSlice(allocator, "&quot;"),
-            '\''=> try list.appendSlice(allocator, "&#39;"),
+            '\'' => try list.appendSlice(allocator, "&#39;"),
             else => try list.append(allocator, ch),
         }
     }
@@ -133,7 +135,7 @@ pub fn writePercentEncodedQueryParam(list: *std.ArrayList(u8), allocator: std.me
             '"' => try list.appendSlice(allocator, "%22"),
             '<' => try list.appendSlice(allocator, "%3C"),
             '>' => try list.appendSlice(allocator, "%3E"),
-            '\''=> try list.appendSlice(allocator, "%27"),
+            '\'' => try list.appendSlice(allocator, "%27"),
             else => try list.append(allocator, ch),
         }
     }
@@ -194,4 +196,21 @@ test "parseQueryInt robust parsing" {
     try testing.expectEqual(@as(?i64, -2183), parseQueryInt(i64, "/details?id=-2183", "id"));
     try testing.expectEqual(@as(?i64, null), parseQueryInt(i64, "/details?id=abc", "id"));
     try testing.expectEqual(@as(?f64, 42.5), parseQueryFloat("/watch?pos=42.5s", "pos"));
+}
+
+test "getLanIp does not crash" {
+    const testing = std.testing;
+    const ip = try getLanIp(testing.allocator);
+    if (ip) |val| {
+        defer testing.allocator.free(val);
+        try testing.expect(val.len > 0);
+        // Verify format is standard dotted IPv4
+        var it = std.mem.splitScalar(u8, val, '.');
+        var octets: usize = 0;
+        while (it.next()) |oct| {
+            _ = try std.fmt.parseInt(u8, oct, 10);
+            octets += 1;
+        }
+        try testing.expectEqual(@as(usize, 4), octets);
+    }
 }
