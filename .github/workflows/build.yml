@@ -52,7 +52,7 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v2.2.1
         with:
-          version: 0.16.0
+          version: 0.17.0
 
       - name: Cache Zig Build Artifacts
         uses: actions/cache@v6
@@ -72,9 +72,9 @@ jobs:
           default_bump: patch
           dry_run: true
 
-      - name: Build Binary (-Doptimize=ReleaseFast -Dcpu=${{ matrix.zig_cpu }})
+      - name: Build Binary (-Doptimize=fast -Dcpu=${{ matrix.zig_cpu }})
         run: |
-          zig build -Doptimize=ReleaseFast -Dcpu=${{ matrix.zig_cpu }} -Dversion=${{ steps.tag_version.outputs.new_tag }}
+          zig build -Doptimize=fast -Dcpu=${{ matrix.zig_cpu }} -Dversion=${{ steps.tag_version.outputs.new_tag }}
 
       - name: Rename Binary
         run: mv zig-out/bin/sratim zig-out/bin/${{ matrix.binary_name }}
