@@ -57,7 +57,7 @@ pub fn getKeyframePts(io: std.Io, file_path: []const u8, start_time: f64) !f64 {
     if (bytes_read >= 8 and isobmff.isMp4Container(magic_buf[0..bytes_read])) {
         // MP4 / MOV container: inspect video sync samples
         const allocator = std.heap.c_allocator;
-        const z_path = allocator.dupeZ(u8, file_path) catch return start_time;
+        const z_path = allocator.dupeSentinel(u8, file_path, 0) catch return start_time;
         defer allocator.free(z_path);
 
         var media = isobmff.parseMp4Media(allocator, io, z_path) catch return start_time;
@@ -426,11 +426,11 @@ fn getMatroskaMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0
                                 }
                                 defer if (free_label) allocator.free(label);
 
-                                const is_forced = (flag_forced != 0) or (std.ascii.indexOfIgnoreCase(label, "forced") != null);
+                                const is_forced = (flag_forced != 0) or (std.ascii.findIgnoreCase(label, "forced") != null);
                                 var final_label: []const u8 = label;
                                 var free_final = false;
 
-                                if (is_forced and std.ascii.indexOfIgnoreCase(label, "forced") == null) {
+                                if (is_forced and std.ascii.findIgnoreCase(label, "forced") == null) {
                                     final_label = try std.fmt.allocPrint(allocator, "{s} (Forced)", .{label});
                                     free_final = true;
                                 }

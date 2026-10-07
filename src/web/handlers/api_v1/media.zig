@@ -63,7 +63,7 @@ pub fn handleGetMovie(
                 }
             }
 
-            const c_path = allocator.dupeZ(u8, resolved.resolved_path) catch null;
+            const c_path = allocator.dupeSentinel(u8, resolved.resolved_path, 0) catch null;
             if (c_path) |cp| {
                 defer allocator.free(cp);
                 if (streamer.getMediaInfo(allocator, io, cp, config.media_engine.metadata) catch null) |media_info| {
@@ -232,7 +232,7 @@ pub fn handleGetShow(
                 }
             }
 
-            const c_path = allocator.dupeZ(u8, resolved.resolved_path) catch null;
+            const c_path = allocator.dupeSentinel(u8, resolved.resolved_path, 0) catch null;
             if (c_path) |cp| {
                 defer allocator.free(cp);
                 if (streamer.getMediaInfo(allocator, io, cp, config.media_engine.metadata) catch null) |media_info| {

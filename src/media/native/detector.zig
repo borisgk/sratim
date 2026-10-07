@@ -196,7 +196,7 @@ pub fn detectLanguage(raw_text: []const u8) ?LanguageInfo {
     var best_lang: ?LanguageInfo = null;
 
     for (LATIN_KEYWORDS) |kw| {
-        if (std.ascii.indexOfIgnoreCase(raw_text, kw.word) != null) {
+        if (std.ascii.findIgnoreCase(raw_text, kw.word) != null) {
             const score = kw.weight + @as(u32, @intCast(kw.word.len * 5));
             if (score > best_score) {
                 best_score = score;

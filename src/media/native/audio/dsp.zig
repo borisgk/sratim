@@ -205,7 +205,7 @@ pub const HermiteResampler = struct {
     out_rate: u32,
     ratio: f64,
     phase: f64 = 0.0,
-    tail: [16]f32 = [_]f32{0.0} ** 16,
+    tail: [16]f32 = @splat(0.0),
     tail_len: usize = 0,
     prev_sample: f32 = 0.0,
     has_prev: bool = false,
@@ -216,7 +216,7 @@ pub const HermiteResampler = struct {
             .out_rate = out_rate,
             .ratio = @as(f64, @floatFromInt(in_rate)) / @as(f64, @floatFromInt(out_rate)),
             .phase = 0.0,
-            .tail = [_]f32{0.0} ** 16,
+            .tail = @splat(0.0),
             .tail_len = 0,
             .prev_sample = 0.0,
             .has_prev = false,
@@ -225,7 +225,7 @@ pub const HermiteResampler = struct {
 
     pub fn reset(self: *HermiteResampler) void {
         self.phase = 0.0;
-        self.tail = [_]f32{0.0} ** 16;
+        self.tail = @splat(0.0);
         self.tail_len = 0;
         self.prev_sample = 0.0;
         self.has_prev = false;
@@ -301,12 +301,12 @@ pub const HermiteResampler = struct {
 };
 
 test "downmixPlanarToStereo 5.1 surround ITU-R BS.775" {
-    var l = [_]f32{1.0} ** 8;
-    var r = [_]f32{1.0} ** 8;
-    var c = [_]f32{1.0} ** 8;
-    var lfe = [_]f32{0.5} ** 8;
-    var ls = [_]f32{1.0} ** 8;
-    var rs = [_]f32{1.0} ** 8;
+    var l: [8]f32 = @splat(1.0);
+    var r: [8]f32 = @splat(1.0);
+    var c: [8]f32 = @splat(1.0);
+    var lfe: [8]f32 = @splat(0.5);
+    var ls: [8]f32 = @splat(1.0);
+    var rs: [8]f32 = @splat(1.0);
 
     const channels = [_][]const f32{ &l, &r, &c, &lfe, &ls, &rs };
 

@@ -45,7 +45,7 @@ pub fn buildInitSegment(
     var mvhd_payload = std.ArrayList(u8).empty;
     defer mvhd_payload.deinit(allocator);
 
-    var mvhd_hdr: [100]u8 = [_]u8{0} ** 100;
+    var mvhd_hdr: [100]u8 = @splat(0);
     // version = 0, flags = 0
     std.mem.writeInt(u32, mvhd_hdr[12..16], 1000, .big); // timescale = 1000
     std.mem.writeInt(u32, mvhd_hdr[16..20], 0, .big); // duration = 0 (fragmented)
@@ -61,14 +61,14 @@ pub fn buildInitSegment(
     defer mvex_buf.deinit(allocator);
 
     // TREX for Video
-    var trex_video: [24]u8 = [_]u8{0} ** 24;
+    var trex_video: [24]u8 = @splat(0);
     std.mem.writeInt(u32, trex_video[4..8], video_track.track_id, .big);
     std.mem.writeInt(u32, trex_video[8..12], 1, .big); // default sample description index = 1
     try appendBox(&mvex_buf, allocator, "trex", &trex_video);
 
     // TREX for Audio
     if (audio_track_opt) |at| {
-        var trex_audio: [24]u8 = [_]u8{0} ** 24;
+        var trex_audio: [24]u8 = @splat(0);
         std.mem.writeInt(u32, trex_audio[4..8], at.track_id, .big);
         std.mem.writeInt(u32, trex_audio[8..12], 1, .big);
         try appendBox(&mvex_buf, allocator, "trex", &trex_audio);
@@ -101,7 +101,7 @@ fn buildTrakBox(
     defer trak_buf.deinit(allocator);
 
     // TKHD
-    var tkhd_payload: [84]u8 = [_]u8{0} ** 84;
+    var tkhd_payload: [84]u8 = @splat(0);
     tkhd_payload[3] = 0x07; // flags = Track_enabled | Track_in_movie | Track_in_preview
     std.mem.writeInt(u32, tkhd_payload[12..16], track.track_id, .big);
     std.mem.writeInt(u32, tkhd_payload[20..24], 0, .big); // duration = 0
@@ -120,14 +120,14 @@ fn buildTrakBox(
     defer mdia_buf.deinit(allocator);
 
     // MDHD
-    var mdhd_payload: [24]u8 = [_]u8{0} ** 24;
+    var mdhd_payload: [24]u8 = @splat(0);
     std.mem.writeInt(u32, mdhd_payload[12..16], track.timescale, .big);
     std.mem.writeInt(u32, mdhd_payload[16..20], 0, .big); // duration = 0
     std.mem.writeInt(u16, mdhd_payload[20..22], 0x55C4, .big); // language = und
     try appendBox(&mdia_buf, allocator, "mdhd", &mdhd_payload);
 
     // HDLR
-    var hdlr_payload: [33]u8 = [_]u8{0} ** 33;
+    var hdlr_payload: [33]u8 = @splat(0);
     if (is_video) {
         @memcpy(hdlr_payload[8..12], "vide");
         @memcpy(hdlr_payload[24..33], "Video\x00\x00\x00\x00");
@@ -142,11 +142,11 @@ fn buildTrakBox(
     defer minf_buf.deinit(allocator);
 
     if (is_video) {
-        var vmhd_payload: [12]u8 = [_]u8{0} ** 12;
+        var vmhd_payload: [12]u8 = @splat(0);
         vmhd_payload[3] = 0x01; // flags = 1
         try appendBox(&minf_buf, allocator, "vmhd", &vmhd_payload);
     } else {
-        var smhd_payload: [8]u8 = [_]u8{0} ** 8;
+        var smhd_payload: [8]u8 = @splat(0);
         try appendBox(&minf_buf, allocator, "smhd", &smhd_payload);
     }
 
@@ -154,7 +154,7 @@ fn buildTrakBox(
     var dref_payload = std.ArrayList(u8).empty;
     defer dref_payload.deinit(allocator);
 
-    var dref_hdr: [8]u8 = [_]u8{0} ** 8;
+    var dref_hdr: [8]u8 = @splat(0);
     std.mem.writeInt(u32, dref_hdr[4..8], 1, .big); // entry count = 1
     try dref_payload.appendSlice(allocator, &dref_hdr);
 
@@ -174,10 +174,10 @@ fn buildTrakBox(
     try stbl_buf.appendSlice(allocator, track.stsd_raw);
 
     // Empty STTS, STSC, STSZ, STCO
-    const empty_table: [8]u8 = [_]u8{0} ** 8;
+    const empty_table: [8]u8 = @splat(0);
     try appendBox(&stbl_buf, allocator, "stts", &empty_table);
     try appendBox(&stbl_buf, allocator, "stsc", &empty_table);
-    var empty_stsz: [12]u8 = [_]u8{0} ** 12;
+    var empty_stsz: [12]u8 = @splat(0);
     try appendBox(&stbl_buf, allocator, "stsz", &empty_stsz);
     try appendBox(&stbl_buf, allocator, "stco", &empty_table);
 
@@ -268,7 +268,7 @@ fn buildMoofBox(
     defer moof_buf.deinit(allocator);
 
     // MFHD Box
-    var mfhd_payload: [8]u8 = [_]u8{0} ** 8;
+    var mfhd_payload: [8]u8 = @splat(0);
     std.mem.writeInt(u32, mfhd_payload[4..8], seq_num, .big);
     try appendBox(&moof_buf, allocator, "mfhd", &mfhd_payload);
 

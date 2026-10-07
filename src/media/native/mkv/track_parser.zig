@@ -332,7 +332,7 @@ pub fn buildAacStsd(
     var mp4a_buf = std.ArrayList(u8).empty;
     defer mp4a_buf.deinit(allocator);
 
-    var mp4a_hdr: [36]u8 = [_]u8{0} ** 36;
+    var mp4a_hdr: [36]u8 = @splat(0);
     std.mem.writeInt(u32, mp4a_hdr[0..4], mp4a_size, .big);
     @memcpy(mp4a_hdr[4..8], "mp4a");
     std.mem.writeInt(u16, mp4a_hdr[14..16], 1, .big); // data_reference_index = 1

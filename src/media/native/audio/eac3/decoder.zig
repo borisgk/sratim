@@ -16,7 +16,7 @@ pub const Eac3Decoder = struct {
     num_blocks: usize = 6,
 
     // Overlap-add delay buffers for up to 6 channels (L, C, R, Ls, Rs, LFE)
-    delay: [6][256]f32 = [_][256]f32{[_]f32{0.0} ** 256} ** 6,
+    delay: [6][256]f32 = @splat(@splat(0.0)),
     lfsr_state: u32 = 1,
 
     // Coupling state per frame
@@ -28,28 +28,28 @@ pub const Eac3Decoder = struct {
     cplendmant: usize = 0,
     cplbndstrc: u32 = 0,
     ncplbnd: usize = 0,
-    cplco: [5][18]f32 = [_][18]f32{[_]f32{0.0} ** 18} ** 5,
+    cplco: [5][18]f32 = @splat(@splat(0.0)),
 
     // Exponents & bounds
-    endmant: [5]usize = [_]usize{0} ** 5,
-    cpl_exp: [256]u8 = [_]u8{0} ** 256,
-    fbw_exp: [5][256]u8 = [_][256]u8{[_]u8{0} ** 256} ** 5,
-    lfe_exp: [256]u8 = [_]u8{0} ** 256,
+    endmant: [5]usize = @splat(0),
+    cpl_exp: [256]u8 = @splat(0),
+    fbw_exp: [5][256]u8 = @splat(@splat(0)),
+    lfe_exp: [256]u8 = @splat(0),
 
     // Bit allocation state
     bai: u32 = 0,
-    snr_offset: [7]i32 = [_]i32{0} ** 7,
-    fast_gain: [7]u3 = [_]u3{4} ** 7,
+    snr_offset: [7]i32 = @splat(0),
+    fast_gain: [7]u3 = @splat(4),
     cplfleak: i32 = 0,
     cplsleak: i32 = 0,
 
-    cpl_bap: [256]i8 = [_]i8{0} ** 256,
-    fbw_bap: [5][256]i8 = [_][256]i8{[_]i8{0} ** 256} ** 5,
-    lfe_bap: [256]i8 = [_]i8{0} ** 256,
+    cpl_bap: [256]i8 = @splat(0),
+    fbw_bap: [5][256]i8 = @splat(@splat(0)),
+    lfe_bap: [256]i8 = @splat(0),
     rematflg: u32 = 0,
     phsflginu: bool = false,
-    phase_flags: [18]bool = [_]bool{false} ** 18,
-    cpl_band_sizes: [18]u8 = [_]u8{0} ** 18,
+    phase_flags: [18]bool = @splat(false),
+    cpl_band_sizes: [18]u8 = @splat(0),
 
     pub fn init() Eac3Decoder {
         return .{};
@@ -217,8 +217,8 @@ pub const Eac3Decoder = struct {
         const parse_spx_atten_data = (try reader.readBit()) == 1;
 
         // Coupling strategy occurrence per block
-        var cpl_strategy_exists: [6]bool = [_]bool{false} ** 6;
-        var cpl_in_use: [6]bool = [_]bool{false} ** 6;
+        var cpl_strategy_exists: [6]bool = @splat(false);
+        var cpl_in_use: [6]bool = @splat(false);
         var num_cpl_blocks: usize = 0;
         if (self.acmod > 1) {
             for (0..self.num_blocks) |blk| {
@@ -233,7 +233,7 @@ pub const Eac3Decoder = struct {
         }
 
         // Exponent strategies for each block
-        var exp_strategy: [6][7]u2 = [_][7]u2{[_]u2{tables.EXP_REUSE} ** 7} ** 6;
+        var exp_strategy: [6][7]u2 = @splat(@splat(tables.EXP_REUSE));
         if (ac3_exponent_strategy == 1) {
             for (0..self.num_blocks) |blk| {
                 const start_ch: usize = if (cpl_in_use[blk]) 0 else 1;
@@ -318,16 +318,16 @@ pub const Eac3Decoder = struct {
             self.bai = (2 << 9) | (1 << 7) | (1 << 5) | (2 << 3) | 7;
         }
 
-        var first_cpl_coords: [5]bool = [_]bool{true} ** 5;
+        var first_cpl_coords: [5]bool = @splat(true);
 
         // --- Process Audio Blocks ---
         for (0..self.num_blocks) |blk| {
-            var blksw: [5]u1 = [_]u1{0} ** 5;
+            var blksw: [5]u1 = @splat(0);
             if (block_switch_syntax) {
                 for (0..nfchans) |i| blksw[i] = try reader.readBit();
             }
 
-            var dithflag: [5]bool = [_]bool{true} ** 5;
+            var dithflag: [5]bool = @splat(true);
             if (dither_flag_syntax) {
                 for (0..nfchans) |i| dithflag[i] = (try reader.readBit()) == 1;
             }
@@ -552,8 +552,8 @@ pub const Eac3Decoder = struct {
             }
 
             // Delta bit allocation
-            var deltba: [5][50]i8 = [_][50]i8{[_]i8{0} ** 50} ** 5;
-            var cpldeltba: [50]i8 = [_]i8{0} ** 50;
+            var deltba: [5][50]i8 = @splat(@splat(0));
+            var cpldeltba: [50]i8 = @splat(0);
             var cpl_deltbae: usize = tables.DELTA_BIT_NONE;
             if (dba_syntax) {
                 if (cpl_in_use[blk]) {
@@ -632,7 +632,7 @@ pub const Eac3Decoder = struct {
             }
 
             // Transform coefficients
-            var block_samples: [6][256]f32 = [_][256]f32{[_]f32{0.0} ** 256} ** 6;
+            var block_samples: [6][256]f32 = @splat(@splat(0.0));
             var quantizer = ac3_dec.Quantizer{};
             quantizer.reset();
 
@@ -642,7 +642,7 @@ pub const Eac3Decoder = struct {
                 if (cpl_in_use[blk] and ((self.chincpl >> @intCast(i)) & 1) != 0) {
                     if (!done_cpl) {
                         done_cpl = true;
-                        const coeff_scale: [5]f32 = [_]f32{1.0} ** 5;
+                        const coeff_scale: [5]f32 = @splat(1.0);
                         try ac3_dec.coeffGetCoupling(&reader, nfchans, &coeff_scale, &block_samples, &quantizer, &dithflag, self.chincpl, self.cplbndstrc, self.cplstrtmant, self.cplendmant, &self.cplco, &self.cpl_exp, &self.cpl_bap, &self.lfsr_state);
                     }
                 }

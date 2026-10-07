@@ -102,7 +102,7 @@ pub fn handleSubtitles(
         }
     }
 
-    const c_full_path = try allocator.dupeZ(u8, resolved.?.resolved_path);
+    const c_full_path = try allocator.dupeSentinel(u8, resolved.?.resolved_path, 0);
     defer allocator.free(c_full_path);
 
     const resp_buf = try allocator.alloc(u8, 8192);

@@ -79,7 +79,7 @@ pub fn runAacTest(
                 if (first_err == null) first_err = err;
                 failed_frames += 1;
                 // Pad with zeros to maintain time synchronization with reference
-                const zero_pcm = [_]f32{0.0} ** 2048;
+                const zero_pcm: [2048]f32 = @splat(0.0);
                 try native_pcm.appendSlice(allocator, &zero_pcm);
             }
         }

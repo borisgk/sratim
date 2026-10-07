@@ -173,47 +173,47 @@ pub fn parseHeader(reader: *BitReader) !FrameHeader {
     }
     const nchannels: u8 = nchannels_raw;
 
-    var nsubbands: [8]u8 = [_]u8{0} ** 8;
+    var nsubbands: [8]u8 = @splat(0);
     for (0..nchannels) |ch| {
         nsubbands[ch] = @as(u8, try reader.readBits(u5, 5)) + 2;
         if (nsubbands[ch] > 32) return error.InvalidSubbandCount;
     }
 
-    var subband_vq_start: [8]u8 = [_]u8{0} ** 8;
+    var subband_vq_start: [8]u8 = @splat(0);
     for (0..nchannels) |ch| {
         subband_vq_start[ch] = @as(u8, try reader.readBits(u5, 5)) + 1;
     }
 
-    var joint_intensity_index: [8]u8 = [_]u8{0} ** 8;
+    var joint_intensity_index: [8]u8 = @splat(0);
     for (0..nchannels) |ch| {
         joint_intensity_index[ch] = @intCast(try reader.readBits(u3, 3));
     }
 
-    var transition_mode_sel: [8]u2 = [_]u2{0} ** 8;
+    var transition_mode_sel: [8]u2 = @splat(0);
     for (0..nchannels) |ch| {
         transition_mode_sel[ch] = try reader.readBits(u2, 2);
     }
 
-    var scale_factor_sel: [8]u3 = [_]u3{0} ** 8;
+    var scale_factor_sel: [8]u3 = @splat(0);
     for (0..nchannels) |ch| {
         scale_factor_sel[ch] = try reader.readBits(u3, 3);
         if (scale_factor_sel[ch] == 7) return error.InvalidScaleFactorSel;
     }
 
-    var bit_allocation_sel: [8]u3 = [_]u3{0} ** 8;
+    var bit_allocation_sel: [8]u3 = @splat(0);
     for (0..nchannels) |ch| {
         bit_allocation_sel[ch] = try reader.readBits(u3, 3);
         if (bit_allocation_sel[ch] == 7) return error.InvalidBitAllocationSel;
     }
 
-    var quant_index_sel: [8][10]u8 = [_][10]u8{[_]u8{0} ** 10} ** 8;
+    var quant_index_sel: [8][10]u8 = @splat(@splat(0));
     for (0..10) |n| {
         for (0..nchannels) |ch| {
             quant_index_sel[ch][n] = @intCast(try reader.readBits(u3, tables.quant_index_sel_nbits[n]));
         }
     }
 
-    var scale_factor_adj: [8][10]i32 = [_][10]i32{[_]i32{1 << 22} ** 10} ** 8;
+    var scale_factor_adj: [8][10]i32 = @splat(@splat(1 << 22));
     for (0..10) |n| {
         for (0..nchannels) |ch| {
             if (quant_index_sel[ch][n] < tables.quant_index_group_size[n]) {

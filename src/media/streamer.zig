@@ -67,7 +67,7 @@ pub fn streamMedia(
     var file_reader = file.reader(io, &file_buf);
     var magic_buf: [16]u8 = undefined;
     const bytes_read = file_reader.interface.readSliceShort(&magic_buf) catch 0;
-    const z_path = try allocator.dupeZ(u8, file_path);
+    const z_path = try allocator.dupeSentinel(u8, file_path, 0);
     defer allocator.free(z_path);
 
     if (bytes_read >= 8 and isobmff.isMp4Container(magic_buf[0..bytes_read])) {

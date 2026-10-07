@@ -315,7 +315,7 @@ pub fn computeReport(
     const start_ts = range.getStartTimestamp(now_ts);
 
     var overview = AnalyticsOverview{};
-    var hourly_distribution: [24]u64 = [_]u64{0} ** 24;
+    var hourly_distribution: [24]u64 = @splat(0);
 
     var active_viewers_set = std.StringHashMap(void).init(aa);
     var movie_stats = std.AutoHashMap(i64, MediaAgg).init(aa);

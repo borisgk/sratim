@@ -8,7 +8,7 @@ pub const TrieNode = struct {
 
 pub fn buildTrie(comptime codes: []const u32, comptime bits: []const u5) [1024]TrieNode {
     @setEvalBranchQuota(50000);
-    var trie: [1024]TrieNode = [_]TrieNode{.{}} ** 1024;
+    var trie: [1024]TrieNode = @splat(.{});
     var next_node: u16 = 1;
 
     for (codes, bits, 0..) |code, len, sym| {

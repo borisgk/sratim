@@ -304,7 +304,7 @@ test "Verify MdctEngine against ISO AAC MDCT direct formula" {
 test "Verify MdctEngine.imdct against direct ISO AAC IMDCT formula" {
     const N = 1024;
     const TWO_N = 2048;
-    var spec: [N]f32 = [_]f32{0.0} ** N;
+    var spec: [N]f32 = @splat(0.0);
     spec[1] = 1.0;
 
     var imdct_out: [TWO_N]f32 = undefined;
@@ -324,7 +324,7 @@ test "Verify MdctEngine.imdct against direct ISO AAC IMDCT formula" {
 test "Verify MdctEngine.imdct(128) against direct ISO AAC IMDCT formula" {
     const N = 128;
     const TWO_N = 256;
-    var spec: [N]f32 = [_]f32{0.0} ** N;
+    var spec: [N]f32 = @splat(0.0);
     spec[1] = 1.0;
 
     var imdct_out: [TWO_N]f32 = undefined;

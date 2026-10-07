@@ -9,16 +9,16 @@ pub const IcsInfo = struct {
     max_sfb: usize = 0,
     num_windows: usize = 1,
     num_window_groups: usize = 1,
-    group_len: [8]usize = [_]usize{1} ** 8,
+    group_len: [8]usize = @splat(1),
 };
 
 pub const TnsData = struct {
     present: bool = false,
-    n_filt: [8]usize = [_]usize{0} ** 8,
-    length: [8][4]usize = [_][4]usize{[_]usize{0} ** 4} ** 8,
-    direction: [8][4]u1 = [_][4]u1{[_]u1{0} ** 4} ** 8,
-    order: [8][4]usize = [_][4]usize{[_]usize{0} ** 4} ** 8,
-    coef: [8][4][12]f32 = [_][4][12]f32{[_][12]f32{[_]f32{0.0} ** 12} ** 4} ** 8,
+    n_filt: [8]usize = @splat(0),
+    length: [8][4]usize = @splat(@splat(0)),
+    direction: [8][4]u1 = @splat(@splat(0)),
+    order: [8][4]usize = @splat(@splat(0)),
+    coef: [8][4][12]f32 = @splat(@splat(@splat(0.0))),
 };
 
 pub fn computeLpcCoefs(autoc: []const f32, order: usize, lpc: []f32) void {

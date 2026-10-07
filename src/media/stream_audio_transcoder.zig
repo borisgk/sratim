@@ -224,8 +224,8 @@ pub const StreamAudioTranscoder = struct {
         comptime count: usize,
         out_frames: *std.ArrayList(EncodedAacFrame),
     ) !void {
-        var silence_l: [count]f32 = [_]f32{0.0} ** count;
-        var silence_r: [count]f32 = [_]f32{0.0} ** count;
+        var silence_l: [count]f32 = @splat(0.0);
+        var silence_r: [count]f32 = @splat(0.0);
 
         // If FIFO has preceding samples, smoothly ramp down over up to 32 samples to prevent clicks
         if (self.native_fifo.size() > 0) {
@@ -291,7 +291,7 @@ pub const StreamAudioTranscoder = struct {
         sample_count: usize,
         out_frames: *std.ArrayList(EncodedAacFrame),
     ) !void {
-        const silence_zeros: [1024]f32 = [_]f32{0.0} ** 1024;
+        const silence_zeros: [1024]f32 = @splat(0.0);
         var rem = sample_count;
         while (rem > 0) {
             const chunk = @min(rem, 1024);

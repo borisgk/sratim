@@ -15,10 +15,10 @@ pub fn render(allocator: std.mem.Allocator, template_str: []const u8, replacemen
     var i: usize = 0;
     while (i < template_str.len) {
         var replaced = false;
-        inline for (info.@"struct".fields) |field| {
-            const placeholder = comptime "__" ++ field.name ++ "__";
+        inline for (info.@"struct".field_names) |field_name| {
+            const placeholder = comptime "__" ++ field_name ++ "__";
             if (std.mem.startsWith(u8, template_str[i..], placeholder)) {
-                const value = @field(replacements, field.name);
+                const value = @field(replacements, field_name);
                 switch (@typeInfo(@TypeOf(value))) {
                     .pointer => |p| {
                         if (p.size == .slice and p.child == u8) {

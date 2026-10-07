@@ -65,7 +65,7 @@ pub fn handleStream(
     const audio_idx = utils.parseQueryInt(c_int, target, "audio") orelse -1;
 
     // Validate that media container and selected streams can be natively parsed and streamed
-    const z_path = try allocator.dupeZ(u8, res_media.resolved_path);
+    const z_path = try allocator.dupeSentinel(u8, res_media.resolved_path, 0);
     defer allocator.free(z_path);
 
     var is_supported = false;

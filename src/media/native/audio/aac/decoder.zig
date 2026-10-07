@@ -23,9 +23,9 @@ pub const AacDecoder = struct {
 
     // Overlap-add delay buffers for up to 6 channels:
     // 0: Left, 1: Right, 2: Center, 3: Ls, 4: Rs, 5: LFE
-    delay: [6][1024]f32 = [_][1024]f32{[_]f32{0.0} ** 1024} ** 6,
-    last_ch_pcm: [6][1024]f32 = [_][1024]f32{[_]f32{0.0} ** 1024} ** 6,
-    prev_window_shape: [6]u1 = [_]u1{0} ** 6,
+    delay: [6][1024]f32 = @splat(@splat(0.0)),
+    last_ch_pcm: [6][1024]f32 = @splat(@splat(0.0)),
+    prev_window_shape: [6]u1 = @splat(0),
     seed: u32 = 0x31415926,
     lcg_state: u32 = 0x38181449,
     frame_count: usize = 0,
@@ -83,8 +83,8 @@ pub const AacDecoder = struct {
 
         // Buffers for 6 channels (1024 time samples each)
         // 0: Left, 1: Right, 2: Center, 3: Ls, 4: Rs, 5: LFE
-        var ch_pcm: [6][1024]f32 = [_][1024]f32{[_]f32{0.0} ** 1024} ** 6;
-        var has_ch: [6]bool = [_]bool{false} ** 6;
+        var ch_pcm: [6][1024]f32 = @splat(@splat(0.0));
+        var has_ch: [6]bool = @splat(false);
 
         var sce_count: usize = 0;
         var cpe_count: usize = 0;
@@ -304,7 +304,7 @@ pub const AacDecoder = struct {
         const global_gain = try reader.readBits(u8, 8);
         try decodeIcsInfo(reader, &ics);
 
-        var spectrum: [1024]f32 = [_]f32{0.0} ** 1024;
+        var spectrum: [1024]f32 = @splat(0.0);
         var tns = TnsData{};
         try self.decodeIcsPayload(reader, &ics, global_gain, &spectrum, &tns, null, null);
         self.applyTns(&spectrum, &ics, &tns);
@@ -324,7 +324,7 @@ pub const AacDecoder = struct {
         var ics_l = IcsInfo{};
         var ics_r = IcsInfo{};
 
-        var ms_mask: [8][64]bool = [_][64]bool{[_]bool{false} ** 64} ** 8;
+        var ms_mask: [8][64]bool = @splat(@splat(false));
 
         if (common_window) {
             try decodeIcsInfo(reader, &ics_l);
@@ -350,7 +350,7 @@ pub const AacDecoder = struct {
         if (!common_window) {
             try decodeIcsInfo(reader, &ics_l);
         }
-        var spec_l: [1024]f32 = [_]f32{0.0} ** 1024;
+        var spec_l: [1024]f32 = @splat(0.0);
         var tns_l = TnsData{};
         try self.decodeIcsPayload(reader, &ics_l, global_gain_l, &spec_l, &tns_l, null, null);
 
@@ -358,7 +358,7 @@ pub const AacDecoder = struct {
         if (!common_window) {
             try decodeIcsInfo(reader, &ics_r);
         }
-        var spec_r: [1024]f32 = [_]f32{0.0} ** 1024;
+        var spec_r: [1024]f32 = @splat(0.0);
         var tns_r = TnsData{};
         var sfb_cb_r: [8][64]u4 = undefined;
         var sfb_sf_r: [8][64]i32 = undefined;
@@ -420,8 +420,8 @@ pub const AacDecoder = struct {
         out_cb: ?*[8][64]u4,
         out_sf: ?*[8][64]i32,
     ) !void {
-        var sfb_cb: [8][64]u4 = [_][64]u4{[_]u4{0} ** 64} ** 8;
-        var sfb_sf: [8][64]i32 = [_][64]i32{[_]i32{0} ** 64} ** 8;
+        var sfb_cb: [8][64]u4 = @splat(@splat(0));
+        var sfb_sf: [8][64]i32 = @splat(@splat(0));
 
         const bits_len: usize = if (ics.window_sequence == 2) 3 else 5;
         const max_incr: usize = (@as(usize, 1) << @as(u5, @intCast(bits_len))) - 1;
@@ -508,7 +508,7 @@ pub const AacDecoder = struct {
         const swb_offset = if (ics.window_sequence == 2) tables.SWB_OFFSETS_128[self.sample_rate_idx] else tables.SWB_OFFSETS_1024[self.sample_rate_idx];
         const win_len: usize = 1024 / ics.num_windows;
         var g_win_start: usize = 0;
-        var q_buf: [1024]i32 = [_]i32{0} ** 1024;
+        var q_buf: [1024]i32 = @splat(0);
 
         for (0..ics.num_window_groups) |g| {
             for (0..ics.max_sfb) |sfb| {
@@ -616,7 +616,7 @@ pub const AacDecoder = struct {
                 }
             },
             2 => { // EIGHT_SHORT_SEQUENCE
-                var short_buf: [2048]f32 = [_]f32{0.0} ** 2048;
+                var short_buf: [2048]f32 = @splat(0.0);
 
                 for (0..8) |w| {
                     var time_256: [256]f32 = undefined;

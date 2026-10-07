@@ -323,7 +323,7 @@ pub const Ac3Decoder = struct {
     acmod: u3 = 7,
     lfeon: u1 = 1,
 
-    delay: [6][256]f32 = [_][256]f32{[_]f32{0.0} ** 256} ** 6,
+    delay: [6][256]f32 = @splat(@splat(0.0)),
     lfsr_state: u32 = 1,
 
     chincpl: u8 = 0,
@@ -334,24 +334,24 @@ pub const Ac3Decoder = struct {
     cplendmant: usize = 0,
     cplbndstrc: u32 = 0,
     ncplbnd: usize = 0,
-    cplco: [5][18]f32 = [_][18]f32{[_]f32{0.0} ** 18} ** 5,
+    cplco: [5][18]f32 = @splat(@splat(0.0)),
 
-    endmant: [5]usize = [_]usize{0} ** 5,
-    cpl_exp: [256]u8 = [_]u8{0} ** 256,
-    fbw_exp: [5][256]u8 = [_][256]u8{[_]u8{0} ** 256} ** 5,
-    lfe_exp: [256]u8 = [_]u8{0} ** 256,
+    endmant: [5]usize = @splat(0),
+    cpl_exp: [256]u8 = @splat(0),
+    fbw_exp: [5][256]u8 = @splat(@splat(0)),
+    lfe_exp: [256]u8 = @splat(0),
 
     bai: u32 = 0,
     csnroffst: u32 = 0,
     cpl_bai: u32 = 0,
-    fbw_bai: [5]u32 = [_]u32{0} ** 5,
+    fbw_bai: [5]u32 = @splat(0),
     lfe_bai: u32 = 0,
     cplfleak: i32 = 0,
     cplsleak: i32 = 0,
 
-    cpl_bap: [256]i8 = [_]i8{0} ** 256,
-    fbw_bap: [5][256]i8 = [_][256]i8{[_]i8{0} ** 256} ** 5,
-    lfe_bap: [256]i8 = [_]i8{0} ** 256,
+    cpl_bap: [256]i8 = @splat(0),
+    fbw_bap: [5][256]i8 = @splat(@splat(0)),
+    lfe_bap: [256]i8 = @splat(0),
     rematflg: u32 = 0,
 
     pub fn init() Ac3Decoder {
@@ -596,7 +596,7 @@ pub const Ac3Decoder = struct {
             }
 
             var quantizer = Quantizer{};
-            var block_samples: [6][256]f32 = [_][256]f32{[_]f32{0.0} ** 256} ** 6;
+            var block_samples: [6][256]f32 = @splat(@splat(0.0));
 
             var done_cpl = false;
             for (0..nfchans) |i| {
@@ -604,7 +604,7 @@ pub const Ac3Decoder = struct {
                 if (((self.chincpl >> @intCast(i)) & 1) != 0) {
                     if (!done_cpl) {
                         done_cpl = true;
-                        const coeff_scale: [5]f32 = [_]f32{1.0} ** 5;
+                        const coeff_scale: [5]f32 = @splat(1.0);
                         try coeffGetCoupling(&reader, nfchans, &coeff_scale, &block_samples, &quantizer, &dithflag, self.chincpl, self.cplbndstrc, self.cplstrtmant, self.cplendmant, &self.cplco, &self.cpl_exp, &self.cpl_bap, &self.lfsr_state);
                     }
                 }

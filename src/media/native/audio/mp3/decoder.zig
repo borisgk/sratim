@@ -83,8 +83,8 @@ pub const Mp3Decoder = struct {
     qmf_state: [15 * 2 * 32]f32 = std.mem.zeroes([15 * 2 * 32]f32),
     reserv: usize = 0,
     free_format_bytes: usize = 0,
-    header: [4]u8 = [_]u8{0} ** 4,
-    reserv_buf: [511]u8 = [_]u8{0} ** 511,
+    header: [4]u8 = @splat(0),
+    reserv_buf: [511]u8 = @splat(0),
 
     pub fn init() Mp3Decoder {
         return .{};
@@ -132,7 +132,7 @@ pub const Mp3Decoder = struct {
             _ = bs_frame.getBits(16);
         }
 
-        var gr_info: [4]L3GrInfo = [_]L3GrInfo{.{}} ** 4;
+        var gr_info: [4]L3GrInfo = @splat(.{});
         const mdb_opt = readSideInfo(&bs_frame, &gr_info, hdr);
         if (mdb_opt == null or bs_frame.pos > bs_frame.limit) {
             self.reset();

@@ -67,7 +67,7 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("httpx", httpx_dep.module("httpx"));
     exe.root_module.addOptions("build_options", options);
 
-    if (optimize != .Debug) {
+    if (optimize != .debug) {
         exe.root_module.strip = true;
     }
 
@@ -101,9 +101,7 @@ pub fn build(b: *std.Build) void {
 
     // This allows the user to pass arguments to the application in the build
     // command itself, like this: `zig build run -- arg1 arg2 etc`
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    run_cmd.addPassthruArgs();
 
 
     const test_filter = b.option([]const u8, "test-filter", "Filter tests to run");

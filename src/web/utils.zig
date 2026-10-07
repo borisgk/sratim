@@ -61,20 +61,17 @@ pub fn getLanIp(allocator: std.mem.Allocator) !?[]const u8 {
 
     var curr = ifap;
     while (curr) |ifa| : (curr = ifa.ifa_next) {
-        if (ifa.ifa_addr == null) continue;
-        const family = ifa.ifa_addr.*.sa_family;
-        if (family == c.AF_INET) {
-            const flags = ifa.ifa_flags;
-            if ((flags & @as(c_uint, @intCast(c.IFF_LOOPBACK))) != 0) continue;
-            if ((flags & @as(c_uint, @intCast(c.IFF_UP))) == 0) continue;
+        if (ifa.ifa_addr) |addr| {
+            if (addr.family == c.AF_INET) {
+                const flags = ifa.ifa_flags;
+                if ((flags & @as(c_uint, @intCast(c.IFF_LOOPBACK))) != 0) continue;
+                if ((flags & @as(c_uint, @intCast(c.IFF_UP))) == 0) continue;
 
-            const sin = @as(*const c.sockaddr_in, @ptrCast(@alignCast(ifa.ifa_addr)));
-            var buf: [c.INET_ADDRSTRLEN]u8 = undefined;
-            if (c.inet_ntop(c.AF_INET, &sin.sin_addr, &buf, @intCast(buf.len))) |str| {
-                const len = std.mem.sliceTo(str, 0).len;
-                if (len > 0) {
-                    return try allocator.dupe(u8, str[0..len]);
-                }
+                const sin = @as(*const c.sockaddr_in, @ptrCast(@alignCast(addr)));
+                const bytes = @as([4]u8, @bitCast(sin.addr));
+                return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{
+                    bytes[0], bytes[1], bytes[2], bytes[3],
+                });
             }
         }
     }

@@ -42,7 +42,7 @@ pub const Idct32 = struct {
     };
 
     const permute: [16]usize = blk: {
-        var res: [16]usize = [_]usize{0} ** 16;
+        var res: [16]usize = @splat(0);
         var i: usize = 1;
         while (i < 15) : (i += 1) {
             var k: usize = 0;
@@ -176,7 +176,7 @@ pub const SubbandDsp = struct {
 
     pub fn init() SubbandDsp {
         return .{
-            .history = [_]f64{0.0} ** SUBBAND_HISTORY_SIZE,
+            .history = @splat(0.0),
         };
     }
 
@@ -281,7 +281,7 @@ pub const LfeDsp = struct {
 
     pub fn init() LfeDsp {
         return .{
-            .history = [_]i32{0} ** MAX_LFE_HISTORY,
+            .history = @splat(0),
         };
     }
 
@@ -353,7 +353,7 @@ pub const LfeDsp = struct {
 };
 
 test "Idct32 impulse response" {
-    var in = [_]f64{0.0} ** 32;
+    var in: [32]f64 = @splat(0.0);
     in[0] = 1.0;
     var out: [32]f64 = undefined;
     Idct32.idct(&in, &out);

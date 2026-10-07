@@ -175,7 +175,7 @@ pub const BlockReader = struct {
         const num_frames = @as(usize, num_frames_buf[0]) + 1;
         if (num_frames > 64) return error.TooManyLacedFrames;
 
-        var frame_sizes: [64]u32 = [_]u32{0} ** 64;
+        var frame_sizes: [64]u32 = @splat(0);
 
         if (lacing == .Fixed) {
             const total_frames_bytes = payload_size - 1;

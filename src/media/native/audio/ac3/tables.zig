@@ -261,4 +261,4 @@ pub const SLOW_GAIN: [4]i32 = .{ 0x540, 0x4d8, 0x478, 0x410 };
 pub const DBPB_TAB: [4]i32 = .{ 0xc00, 0x500, 0x300, 0x100 };
 pub const FLOOR_TAB: [8]i32 = .{ 0x910, 0x950, 0x990, 0x9d0, 0xa10, 0xa90, 0xb10, 0x1400 };
 
-pub const ZERO_DELTBA: [50]i8 = [_]i8{0} ** 50;
+pub const ZERO_DELTBA: [50]i8 = @splat(0);

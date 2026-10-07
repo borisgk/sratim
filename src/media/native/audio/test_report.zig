@@ -187,7 +187,7 @@ pub fn printTerminalReport(
             @min(40, @as(usize, @intFromFloat((s.correlation - 0.99) * 4000.0)))
         else
             0;
-        var bar: [40]u8 = [_]u8{' '} ** 40;
+        var bar: [40]u8 = @splat(' ');
         @memset(bar[0..bar_len], '#');
         std.debug.print("Seg {d:>2} [{d:>4.1}s]: |{s}| r = {d:.6}\n", .{
             idx + 1,
@@ -202,8 +202,8 @@ pub fn printTerminalReport(
     for (segments, 0..) |s, idx| {
         const z_len: usize = @min(30, @as(usize, @intFromFloat(s.rms_native * 240.0)));
         const f_len: usize = @min(30, @as(usize, @intFromFloat(s.rms_ffmpeg * 240.0)));
-        var z_bar: [30]u8 = [_]u8{' '} ** 30;
-        var f_bar: [30]u8 = [_]u8{' '} ** 30;
+        var z_bar: [30]u8 = @splat(' ');
+        var f_bar: [30]u8 = @splat(' ');
         @memset(z_bar[0..z_len], '=');
         @memset(f_bar[0..f_len], '=');
         std.debug.print("Seg {d:>2} [{d:>4.1}s]: Zig:[{s}] FFmpeg:[{s}]\n", .{

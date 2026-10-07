@@ -47,7 +47,7 @@ pub fn handlePlayer(
     var res_media = resolved.?;
     defer res_media.deinit(allocator);
 
-    const c_full_path = try allocator.dupeZ(u8, resolved.?.resolved_path);
+    const c_full_path = try allocator.dupeSentinel(u8, resolved.?.resolved_path, 0);
     defer allocator.free(c_full_path);
 
     const media_info = streamer.getMediaInfo(allocator, io, c_full_path, config.media_engine.metadata) catch streamer.MediaInfo{

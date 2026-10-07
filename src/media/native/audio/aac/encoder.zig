@@ -8,8 +8,8 @@ pub const BitWriter = bit_writer.BitWriter;
 /// Pure Zig AAC-LC stereo audio encoder.
 /// Converts 1024-sample stereo 48kHz float PCM into raw AAC frames (ISO/IEC 14496-3).
 pub const AacEncoder = struct {
-    prev_samples_l: [1024]f32 = [_]f32{0.0} ** 1024,
-    prev_samples_r: [1024]f32 = [_]f32{0.0} ** 1024,
+    prev_samples_l: [1024]f32 = @splat(0.0),
+    prev_samples_r: [1024]f32 = @splat(0.0),
     sample_rate: u32 = 48000,
     bitrate: u32 = 192000,
 
@@ -17,14 +17,14 @@ pub const AacEncoder = struct {
         return .{
             .sample_rate = sample_rate,
             .bitrate = bitrate,
-            .prev_samples_l = [_]f32{0.0} ** 1024,
-            .prev_samples_r = [_]f32{0.0} ** 1024,
+            .prev_samples_l = @splat(0.0),
+            .prev_samples_r = @splat(0.0),
         };
     }
 
     pub fn reset(self: *AacEncoder) void {
-        self.prev_samples_l = [_]f32{0.0} ** 1024;
-        self.prev_samples_r = [_]f32{0.0} ** 1024;
+        self.prev_samples_l = @splat(0.0);
+        self.prev_samples_r = @splat(0.0);
     }
 
     /// Encodes a 1024-sample stereo frame into raw AAC frame bytes.
