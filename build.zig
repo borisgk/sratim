@@ -65,6 +65,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe.root_module.addImport("httpx", httpx_dep.module("httpx"));
+
+    const zembed_dep = b.dependency("zembed", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("zembed", zembed_dep.module("zembed"));
+
     exe.root_module.addOptions("build_options", options);
 
     if (optimize != .debug) {
@@ -134,8 +141,25 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     audio_test_mod.addImport("httpx", httpx_dep.module("httpx"));
+    audio_test_mod.addImport("zembed", zembed_dep.module("zembed"));
     audio_test_mod.addOptions("build_options", audio_options);
     audio_test_mod.link_libc = true;
+
+    // Standard test step for storage and embedded database engine tests
+    const storage_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/storage/storage_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    storage_test_mod.addImport("zembed", zembed_dep.module("zembed"));
+    const storage_tests = b.addTest(.{
+        .root_module = storage_test_mod,
+    });
+    const run_storage_tests = b.addRunArtifact(storage_tests);
+    test_step.dependOn(&run_storage_tests.step);
+
+    const test_storage_step = b.step("test-storage", "Run storage and database tests");
+    test_storage_step.dependOn(&run_storage_tests.step);
 
     // Dedicated test step for standalone AC-3 decoding validation with visual reporting
     const ac3_tests = b.addTest(.{
