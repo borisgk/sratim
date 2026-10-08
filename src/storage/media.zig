@@ -8,6 +8,7 @@ pub const getLibraries = library.getLibraries;
 pub const getLibraryById = library.getLibraryById;
 pub const countLibraries = library.countLibraries;
 pub const updateLibraryScanTime = library.updateLibraryScanTime;
+pub const renameLibrary = library.renameLibrary;
 pub const deleteLibrary = library.deleteLibrary;
 pub const markAllMoviesAbsent = library.markAllMoviesAbsent;
 pub const markAllShowsAbsent = library.markAllShowsAbsent;

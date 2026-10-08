@@ -186,3 +186,119 @@ pub fn handleGetLibraryItems(
         },
     });
 }
+
+const RenameLibraryPayload = struct {
+    library_id: i64,
+    name: []const u8,
+};
+
+pub fn handleRenameLibrary(
+    request: *std.http.Server.Request,
+    allocator: std.mem.Allocator,
+    database: *db_mod.Database,
+    is_admin: bool,
+    body_buf: *[8192]u8,
+) !void {
+    if (request.head.method != .POST and request.head.method != .PATCH) {
+        try request.respond("{\"success\":false,\"error\":\"Method not allowed\"}", .{ .status = .method_not_allowed });
+        return;
+    }
+
+    if (!is_admin) {
+        try request.respond("{\"success\":false,\"error\":\"Forbidden: Admin access required\"}", .{
+            .status = .forbidden,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "application/json" },
+            },
+        });
+        return;
+    }
+
+    var reader = request.readerExpectNone(body_buf);
+    var body_data = std.ArrayList(u8).empty;
+    defer body_data.deinit(allocator);
+
+    var chunk_buf: [4096]u8 = undefined;
+    while (true) {
+        const n = reader.readSliceShort(&chunk_buf) catch break;
+        if (n == 0) break;
+        try body_data.appendSlice(allocator, chunk_buf[0..n]);
+    }
+
+    const parsed = std.json.parseFromSlice(RenameLibraryPayload, allocator, body_data.items, .{
+        .ignore_unknown_fields = true,
+    }) catch {
+        try request.respond("{\"success\":false,\"error\":\"Invalid JSON body\"}", .{
+            .status = .bad_request,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "application/json" },
+            },
+        });
+        return;
+    };
+    defer parsed.deinit();
+
+    const trimmed = std.mem.trim(u8, parsed.value.name, " \t\r\n");
+    if (trimmed.len == 0) {
+        try request.respond("{\"success\":false,\"error\":\"Library name cannot be empty\"}", .{
+            .status = .bad_request,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "application/json" },
+            },
+        });
+        return;
+    }
+
+    library_mod.renameLibrary(database, parsed.value.library_id, trimmed) catch |err| switch (err) {
+        error.LibraryNotFound => {
+            try request.respond("{\"success\":false,\"error\":\"Library not found\"}", .{
+                .status = .not_found,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "application/json" },
+                },
+            });
+            return;
+        },
+        error.EmptyLibraryName => {
+            try request.respond("{\"success\":false,\"error\":\"Library name cannot be empty\"}", .{
+                .status = .bad_request,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "application/json" },
+                },
+            });
+            return;
+        },
+        else => {
+            try request.respond("{\"success\":false,\"error\":\"Internal Server Error\"}", .{
+                .status = .internal_server_error,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "application/json" },
+                },
+            });
+            return;
+        },
+    };
+
+    var escaped_name = std.ArrayList(u8).empty;
+    defer escaped_name.deinit(allocator);
+    for (trimmed) |ch| {
+        switch (ch) {
+            '"' => try escaped_name.appendSlice(allocator, "\\\""),
+            '\\' => try escaped_name.appendSlice(allocator, "\\\\"),
+            '\n' => try escaped_name.appendSlice(allocator, "\\n"),
+            '\r' => try escaped_name.appendSlice(allocator, "\\r"),
+            '\t' => try escaped_name.appendSlice(allocator, "\\t"),
+            else => try escaped_name.append(allocator, ch),
+        }
+    }
+
+    const resp_json = try std.fmt.allocPrint(allocator, "{{\"success\":true,\"library\":{{\"id\":{d},\"name\":\"{s}\"}}}}", .{ parsed.value.library_id, escaped_name.items });
+    defer allocator.free(resp_json);
+
+    try request.respond(resp_json, .{
+        .status = .ok,
+        .extra_headers = &.{
+            .{ .name = "content-type", .value = "application/json" },
+        },
+    });
+}

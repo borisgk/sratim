@@ -1,6 +1,8 @@
 const std = @import("std");
 const db_mod = @import("../../db/db.zig");
 const admin_db = @import("../../db/admin.zig");
+const library_mod = @import("../../db/library.zig");
+const utils = @import("../utils.zig");
 const template_engine = @import("../../core/template.zig");
 const global_css: []const u8 = @embedFile("../style.css");
 
@@ -35,6 +37,58 @@ pub fn serveAdminPage(request: *std.http.Server.Request, allocator: std.mem.Allo
     const storage_str = try admin_db.formatBytes(allocator, stats.total_storage_bytes);
     defer allocator.free(storage_str);
 
+    const libraries = try library_mod.getLibraries(database, allocator);
+    defer {
+        for (libraries) |lib| {
+            allocator.free(lib.name);
+            allocator.free(lib.path);
+            allocator.free(lib.metadata_language);
+            if (lib.ignore_patterns) |pat| allocator.free(pat);
+        }
+        allocator.free(libraries);
+    }
+
+    var rows_buf = std.ArrayList(u8).empty;
+    defer rows_buf.deinit(allocator);
+
+    if (libraries.len == 0) {
+        try rows_buf.appendSlice(allocator, "<tr><td colspan=\"4\" style=\"text-align: center; color: #9ca3af; padding: 24px;\">No libraries configured.</td></tr>");
+    } else {
+        for (libraries) |lib| {
+            var escaped_name = std.ArrayList(u8).empty;
+            defer escaped_name.deinit(allocator);
+            try utils.escapeHtml(&escaped_name, allocator, lib.name);
+
+            var escaped_path = std.ArrayList(u8).empty;
+            defer escaped_path.deinit(allocator);
+            try utils.escapeHtml(&escaped_path, allocator, lib.path);
+
+            const row = try std.fmt.allocPrint(allocator,
+                \\<tr>
+                \\    <td>
+                \\        <span class="user-name" id="lib-name-{d}">{s}</span>
+                \\    </td>
+                \\    <td>
+                \\        <span class="role-badge user">{s}</span>
+                \\    </td>
+                \\    <td style="color: #9ca3af; font-family: monospace; font-size: 0.85rem; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                \\        {s}
+                \\    </td>
+                \\    <td style="text-align: right; white-space: nowrap;">
+                \\        <button type="button" class="admin-rename-btn" data-id="{d}" style="padding: 6px 14px; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 10px; color: #c084fc; cursor: pointer; font-size: 0.85rem; margin-right: 8px;">
+                \\            Rename
+                \\        </button>
+                \\        <a href="/library?id={d}" style="display: inline-block; padding: 6px 14px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 10px; color: #d1d5db; text-decoration: none; font-size: 0.85rem;">
+                \\            Browse
+                \\        </a>
+                \\    </td>
+                \\</tr>
+            , .{ lib.id, escaped_name.items, lib.lib_type.toString(), escaped_path.items, lib.id, lib.id });
+            defer allocator.free(row);
+            try rows_buf.appendSlice(allocator, row);
+        }
+    }
+
     const html_content = try template_engine.render(allocator, @embedFile("../templates/admin.html"), .{
         .INLINE_CSS = global_css,
         .TOTAL_MOVIES = movies_str,
@@ -46,6 +100,7 @@ pub fn serveAdminPage(request: *std.http.Server.Request, allocator: std.mem.Allo
         .TOTAL_USERS = users_str,
         .TOTAL_UNMATCHED = unmatched_str,
         .TOTAL_STORAGE = storage_str,
+        .LIBRARY_ROWS = rows_buf.items,
     });
 
     request.respond(html_content, .{

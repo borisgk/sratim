@@ -88,6 +88,58 @@ test "SratimStorage: CRUD, concurrency, and snapshot roundtrip" {
     try testing.expectEqualStrings("The Matrix", restored_movie.title.?);
 }
 
+test "SratimStorage: renameLibrary updates name, preserves snapshot, and validates inputs" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_rename_lib.json";
+    const wal_path = "tmp/test_rename_lib.wal";
+    const persons_dir = "tmp/test_rename_lib_persons";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
+
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
+    defer storage.deinit();
+
+    const lib = try storage.addLibrary("Old Name", "/path/to/media", .Movies);
+    try testing.expectEqualStrings("Old Name", lib.name);
+
+    // Error on empty or whitespace name
+    try testing.expectError(error.EmptyLibraryName, storage.renameLibrary(lib.id, ""));
+    try testing.expectError(error.EmptyLibraryName, storage.renameLibrary(lib.id, "   \t \n "));
+
+    // Error on non-existent ID
+    try testing.expectError(error.LibraryNotFound, storage.renameLibrary(9999, "New Name"));
+
+    // Success rename
+    try storage.renameLibrary(lib.id, "  New Blockbusters  ");
+
+    const fetched = (try storage.getLibraryById(allocator, lib.id)).?;
+    defer {
+        var f = fetched;
+        f.deinit(allocator);
+    }
+    try testing.expectEqualStrings("New Blockbusters", fetched.name);
+    try testing.expect(fetched.updated_at >= lib.updated_at);
+
+    // Test snapshot persistence roundtrip
+    try storage.snapshot();
+
+    var restored = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
+    defer restored.deinit();
+
+    const loaded = try restored.load();
+    try testing.expect(loaded);
+
+    const restored_lib = (try restored.getLibraryById(allocator, lib.id)).?;
+    defer {
+        var rl = restored_lib;
+        rl.deinit(allocator);
+    }
+    try testing.expectEqualStrings("New Blockbusters", restored_lib.name);
+}
+
 test "SratimStorage: Credits, Persons, and filmography lookups" {
     const testing = std.testing;
     const allocator = testing.allocator;

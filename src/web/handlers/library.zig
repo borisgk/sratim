@@ -107,6 +107,74 @@ pub fn handleLibraryRescan(request: *std.http.Server.Request, allocator: std.mem
     request.respond("OK", .{ .status = .ok }) catch return;
 }
 
+const LibraryRenamePayload = struct {
+    library_id: i64,
+    name: []const u8,
+};
+
+/// Handles POST /api/library/rename — renames an existing library (admin only).
+pub fn handleLibraryRename(
+    request: *std.http.Server.Request,
+    allocator: std.mem.Allocator,
+    database: *db_mod.Database,
+    is_admin: bool,
+    body_buf: *[8192]u8,
+) !void {
+    if (!is_admin) {
+        request.respond("Forbidden: Admin access required", .{ .status = .forbidden }) catch return;
+        return;
+    }
+
+    var reader = request.readerExpectNone(body_buf);
+    var body_data = std.ArrayList(u8).empty;
+    defer body_data.deinit(allocator);
+
+    var chunk_buf: [4096]u8 = undefined;
+    while (true) {
+        const n = reader.readSliceShort(&chunk_buf) catch break;
+        if (n == 0) break;
+        try body_data.appendSlice(allocator, chunk_buf[0..n]);
+    }
+
+    const parsed = std.json.parseFromSlice(LibraryRenamePayload, allocator, body_data.items, .{
+        .ignore_unknown_fields = true,
+    }) catch |err| {
+        std.debug.print("Failed to parse library rename JSON: {any}\n", .{err});
+        request.respond("Bad Request: Invalid JSON body", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    defer parsed.deinit();
+
+    const trimmed_name = std.mem.trim(u8, parsed.value.name, " \t\r\n");
+    if (trimmed_name.len == 0) {
+        request.respond("Bad Request: Library name cannot be empty", .{ .status = .bad_request }) catch return;
+        return;
+    }
+
+    library_mod.renameLibrary(database, parsed.value.library_id, trimmed_name) catch |err| switch (err) {
+        error.LibraryNotFound => {
+            request.respond("Not Found: Library not found", .{ .status = .not_found }) catch return;
+            return;
+        },
+        error.EmptyLibraryName => {
+            request.respond("Bad Request: Library name cannot be empty", .{ .status = .bad_request }) catch return;
+            return;
+        },
+        else => {
+            std.debug.print("Failed to rename library {d}: {}\n", .{ parsed.value.library_id, err });
+            request.respond("Error renaming library.", .{ .status = .internal_server_error }) catch return;
+            return;
+        },
+    };
+
+    request.respond("{\"success\":true}", .{
+        .status = .ok,
+        .extra_headers = &.{
+            .{ .name = "content-type", .value = "application/json" },
+        },
+    }) catch return;
+}
+
 /// Handles GET /api/library/updates — returns JSON diff of items and remaining pending count for library.
 pub fn handleApiLibraryUpdates(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database) !void {
     const lib_id = utils.parseQueryInt(i64, request.head.target, "id") orelse {

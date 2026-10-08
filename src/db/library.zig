@@ -23,3 +23,10 @@ pub fn getLibraryById(database: *db_mod.Database, allocator: std.mem.Allocator, 
     const cat = database.catalog orelse return error.CatalogNotConfigured;
     return cat.getLibraryById(allocator, id);
 }
+
+/// Renames a library and snapshots the changes to disk.
+pub fn renameLibrary(database: *db_mod.Database, id: i64, new_name: []const u8) !void {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    try cat.renameLibrary(id, new_name);
+    cat.snapshot() catch {};
+}

@@ -152,6 +152,7 @@ pub const SratimStorage = struct {
     pub const getLibraryById = media_mod.getLibraryById;
     pub const countLibraries = media_mod.countLibraries;
     pub const updateLibraryScanTime = media_mod.updateLibraryScanTime;
+    pub const renameLibrary = media_mod.renameLibrary;
     pub const deleteLibrary = media_mod.deleteLibrary;
     pub const markAllMoviesAbsent = media_mod.markAllMoviesAbsent;
     pub const markAllShowsAbsent = media_mod.markAllShowsAbsent;

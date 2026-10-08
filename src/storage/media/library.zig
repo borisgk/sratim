@@ -91,6 +91,23 @@ pub fn updateLibraryScanTime(self: *SratimStorage, id: i64, timestamp: i64) void
     }
 }
 
+pub fn renameLibrary(self: *SratimStorage, id: i64, new_name: []const u8) !void {
+    self.writeLock();
+    defer self.writeUnlock();
+
+    const trimmed = std.mem.trim(u8, new_name, " \t\r\n");
+    if (trimmed.len == 0) return error.EmptyLibraryName;
+
+    if (self.libraries.getPtr(id)) |ptr| {
+        const old_name = ptr.name;
+        ptr.name = try self.allocator.dupe(u8, trimmed);
+        self.allocator.free(old_name);
+        ptr.updated_at = self.now();
+    } else {
+        return error.LibraryNotFound;
+    }
+}
+
 pub fn deleteLibrary(self: *SratimStorage, id: i64) void {
     self.writeLock();
     defer self.writeUnlock();

@@ -42,6 +42,19 @@ pub fn generateLibraryContentHtml(
         "";
     defer if (is_admin) allocator.free(rescan_btn_html);
 
+    const rename_btn_html = if (is_admin)
+        try std.fmt.allocPrint(allocator,
+            \\<button id="open-rename-lib-btn" class="rename-lib-btn" data-id="{d}" title="Rename Library" aria-label="Rename Library">
+            \\    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            \\        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            \\        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            \\    </svg>
+            \\</button>
+        , .{lib.id})
+    else
+        "";
+    defer if (is_admin) allocator.free(rename_btn_html);
+
     const progress_list = logging_mod.getProgressForUser(logs_database, allocator, username) catch &[_]logging_mod.ProgressInfo{};
     defer allocator.free(progress_list);
 
@@ -150,5 +163,6 @@ pub fn generateLibraryContentHtml(
         .RECENTLY_ADDED_SECTION = recently_added_section_buf.items,
         .MOVIE_CARDS = cards_buf.items,
         .RESCAN_BTN = rescan_btn_html,
+        .RENAME_BTN = rename_btn_html,
     });
 }

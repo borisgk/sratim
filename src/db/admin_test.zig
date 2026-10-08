@@ -96,3 +96,46 @@ test "getAdminStats: counts movies, directors, and actors accurately" {
     try testing.expectEqual(@as(i64, 2), stats.total_actors);
     try testing.expectEqual(@as(u64, 3000), stats.total_storage_bytes);
 }
+
+test "library_mod: renameLibrary via Database layer updates name and snapshot" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_db_rename_lib.json";
+    const wal_path = "tmp/test_db_rename_lib.wal";
+    const persons_dir = "tmp/test_db_rename_lib_persons";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
+
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
+    defer storage.deinit();
+
+    var db = db_mod.Database.forCatalog(&storage);
+
+    const library_mod = @import("library.zig");
+    try library_mod.addLibrary(&db, "Original Name", "/path/to/media", .Movies);
+
+    const libs = try library_mod.getLibraries(&db, allocator);
+    defer {
+        for (libs) |l| {
+            allocator.free(l.name);
+            allocator.free(l.path);
+            allocator.free(l.metadata_language);
+            if (l.ignore_patterns) |p| allocator.free(p);
+        }
+        allocator.free(libs);
+    }
+    try testing.expectEqual(@as(usize, 1), libs.len);
+    const lib_id = libs[0].id;
+
+    // Test rename
+    try library_mod.renameLibrary(&db, lib_id, "Renamed Name");
+
+    const fetched = (try library_mod.getLibraryById(&db, allocator, lib_id)).?;
+    defer {
+        var f = fetched;
+        f.deinit(allocator);
+    }
+    try testing.expectEqualStrings("Renamed Name", fetched.name);
+}
