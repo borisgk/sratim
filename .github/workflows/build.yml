@@ -92,6 +92,7 @@ jobs:
     runs-on: ubuntu-latest 
     outputs:
       new_tag: ${{ steps.tag_version.outputs.new_tag }}
+      previous_tag: ${{ steps.tag_version.outputs.previous_tag }}
       changelog: ${{ steps.release_notes.outputs.changelog }}
     
     steps:
@@ -114,13 +115,9 @@ jobs:
           TAG: ${{ steps.tag_version.outputs.new_tag }}
           REPO: ${{ github.repository }}
         run: |
-          CHANGELOG=$(node scripts/generate-release-notes.js)
-          if [ -z "$CHANGELOG" ]; then
-            CHANGELOG="${{ steps.tag_version.outputs.changelog }}"
-          fi
           {
             echo "changelog<<EOF"
-            echo "$CHANGELOG"
+            node scripts/release-notes.js
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -186,21 +183,23 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Send Telegram Notification
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TAG: ${{ needs.release.outputs.new_tag }}
-          CHANGELOG: ${{ needs.release.outputs.changelog }}
+          PREV_TAG: ${{ needs.release.outputs.previous_tag }}
           REPO: ${{ github.repository }}
         run: |
           if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "Telegram secrets (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID) not configured. Skipping notification."
+            echo "Telegram secrets not configured. Skipping notification."
             exit 0
           fi
 
-          TEXT=$(node scripts/format-telegram-release.js)
+          TEXT=$(node scripts/release-notes.js --telegram)
 
           PAYLOAD=$(jq -n \
             --arg chat_id "$TELEGRAM_CHAT_ID" \
