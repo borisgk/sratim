@@ -43,17 +43,28 @@ pub fn Table(comptime T: type, comptime options: TableOptions) type {
 
         fn freeItem(self: *Self, item_ptr: *T) void {
             if (comptime @hasDecl(T, "deinit")) {
-                item_ptr.deinit(self.allocator);
+                const DeinitFn = @TypeOf(@field(T, "deinit"));
+                const params_len = @typeInfo(DeinitFn).@"fn".param_types.len;
+                if (params_len == 2) {
+                    item_ptr.deinit(self.allocator);
+                } else {
+                    item_ptr.deinit();
+                }
             }
         }
 
         fn cloneItem(self: *const Self, item: T, allocator: std.mem.Allocator) !T {
             _ = self;
             if (comptime @hasDecl(T, "clone")) {
-                return try item.clone(allocator);
-            } else {
-                return item;
+                const CloneFn = @TypeOf(@field(T, "clone"));
+                const params_len = @typeInfo(CloneFn).@"fn".param_types.len;
+                if (params_len == 2) {
+                    return try item.clone(allocator);
+                } else {
+                    return try item.clone();
+                }
             }
+            return item;
         }
 
         /// Inserts or replaces an item. If auto-increment is enabled and key is 0, generates next key.
@@ -84,8 +95,56 @@ pub fn Table(comptime T: type, comptime options: TableOptions) type {
             return key;
         }
 
+        pub const MapType = if (is_string_key) std.StringHashMap(T) else std.AutoHashMap(PkType, T);
+        pub const Iterator = MapType.Iterator;
+        pub const ValueIterator = MapType.ValueIterator;
+        pub const KeyIterator = MapType.KeyIterator;
+        pub const Entry = MapType.Entry;
+        pub const KV = MapType.KV;
+
+        pub fn iterator(self: *const Self) Iterator {
+            return self.map.iterator();
+        }
+
+        pub fn valueIterator(self: *const Self) ValueIterator {
+            return self.map.valueIterator();
+        }
+
+        pub fn keyIterator(self: *const Self) KeyIterator {
+            return self.map.keyIterator();
+        }
+
+        /// Puts an item into the table, taking ownership.
+        /// If an item already exists with that key, frees the old item.
+        pub fn put(self: *Self, key: PkType, val: T) !void {
+            const key_to_insert = if (comptime is_string_key) @field(val, PkField) else key;
+            if (self.map.fetchRemove(key)) |old_kv| {
+                var old_val = old_kv.value;
+                self.freeItem(&old_val);
+            }
+            try self.map.put(key_to_insert, val);
+            if (comptime is_int_key and options.auto_increment) {
+                if (key >= self.next_id) {
+                    self.next_id = key + 1;
+                }
+                if (key_to_insert >= self.next_id) {
+                    self.next_id = key_to_insert + 1;
+                }
+            }
+        }
+
+        /// Removes an item by key and returns the key-value pair without freeing.
+        pub fn fetchRemove(self: *Self, key: PkType) ?KV {
+            return self.map.fetchRemove(key);
+        }
+
+        /// Gets a direct copy of the item in the table without cloning.
+        pub fn get(self: *const Self, key: PkType) ?T {
+            return self.map.get(key);
+        }
+
         /// Gets an item cloned with the caller's allocator.
-        pub fn get(self: *const Self, allocator: std.mem.Allocator, key: PkType) !?T {
+        pub fn getCloned(self: *const Self, allocator: std.mem.Allocator, key: PkType) !?T {
             if (self.map.get(key)) |item| {
                 return try self.cloneItem(item, allocator);
             }

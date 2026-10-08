@@ -2,6 +2,7 @@ const std = @import("std");
 const schema = @import("schema.zig");
 const engine = @import("engine.zig");
 const SratimStorage = engine.SratimStorage;
+const core = engine.core;
 
 pub const SnapshotPerson = struct {
     id: i64,
@@ -129,19 +130,7 @@ pub fn snapshot(self: *SratimStorage) !void {
     defer self.allocator.free(json_str);
 
     // Write atomically to temporary file, then rename
-    const tmp_path = try std.fmt.allocPrint(self.allocator, "{s}.tmp", .{self.file_path});
-    defer self.allocator.free(tmp_path);
-
-    const file = try std.Io.Dir.cwd().createFile(self.io, tmp_path, .{});
-    defer file.close(self.io);
-
-    var file_buf: [65536]u8 = undefined;
-    var f_writer = file.writer(self.io, &file_buf);
-    try f_writer.interface.writeAll(json_str);
-    try f_writer.interface.flush();
-
-    // Atomic replace
-    try std.Io.Dir.cwd().rename(tmp_path, std.Io.Dir.cwd(), self.file_path, self.io);
+    try core.snapshot.saveAtomic(self.allocator, self.io, self.file_path, json_str);
 
     // Reset WAL file since all state is snapshotted
     const wal_file = std.Io.Dir.cwd().createFile(self.io, self.wal_path, .{}) catch return;

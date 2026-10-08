@@ -4,6 +4,7 @@ pub const snapshot_mod = @import("snapshot.zig");
 pub const users_mod = @import("users.zig");
 pub const media_mod = @import("media.zig");
 pub const credits_mod = @import("credits.zig");
+pub const core = @import("core/mod.zig");
 
 pub const SratimStorage = struct {
     allocator: std.mem.Allocator,
@@ -13,15 +14,15 @@ pub const SratimStorage = struct {
     persons_dir: []const u8,
     rwlock: std.Io.RwLock = .init,
 
-    users: std.StringHashMap(schema.User),
-    sessions: std.StringHashMap(schema.Session),
-    libraries: std.AutoHashMap(i64, schema.Library),
-    movies: std.AutoHashMap(i64, schema.Movie),
-    shows: std.AutoHashMap(i64, schema.Show),
-    episodes: std.AutoHashMap(i64, schema.Episode),
-    people: std.AutoHashMap(i64, schema.Person),
-    movie_credits: std.AutoHashMap(i64, schema.MovieCredit),
-    show_credits: std.AutoHashMap(i64, schema.ShowCredit),
+    users: core.Table(schema.User, .{ .primary_key = "username" }),
+    sessions: core.Table(schema.Session, .{ .primary_key = "token" }),
+    libraries: core.Table(schema.Library, .{ .primary_key = "id", .auto_increment = true }),
+    movies: core.Table(schema.Movie, .{ .primary_key = "id", .auto_increment = true }),
+    shows: core.Table(schema.Show, .{ .primary_key = "id", .auto_increment = true }),
+    episodes: core.Table(schema.Episode, .{ .primary_key = "id", .auto_increment = true }),
+    people: core.Table(schema.Person, .{ .primary_key = "id", .auto_increment = false }),
+    movie_credits: core.Table(schema.MovieCredit, .{ .primary_key = "id", .auto_increment = true }),
+    show_credits: core.Table(schema.ShowCredit, .{ .primary_key = "id", .auto_increment = true }),
 
     next_user_id: i64 = 1,
     next_library_id: i64 = 1,
@@ -54,15 +55,15 @@ pub const SratimStorage = struct {
             .file_path = file_path,
             .wal_path = wal_path,
             .persons_dir = persons_dir,
-            .users = std.StringHashMap(schema.User).init(allocator),
-            .sessions = std.StringHashMap(schema.Session).init(allocator),
-            .libraries = std.AutoHashMap(i64, schema.Library).init(allocator),
-            .movies = std.AutoHashMap(i64, schema.Movie).init(allocator),
-            .shows = std.AutoHashMap(i64, schema.Show).init(allocator),
-            .episodes = std.AutoHashMap(i64, schema.Episode).init(allocator),
-            .people = std.AutoHashMap(i64, schema.Person).init(allocator),
-            .movie_credits = std.AutoHashMap(i64, schema.MovieCredit).init(allocator),
-            .show_credits = std.AutoHashMap(i64, schema.ShowCredit).init(allocator),
+            .users = core.Table(schema.User, .{ .primary_key = "username" }).init(allocator),
+            .sessions = core.Table(schema.Session, .{ .primary_key = "token" }).init(allocator),
+            .libraries = core.Table(schema.Library, .{ .primary_key = "id", .auto_increment = true }).init(allocator),
+            .movies = core.Table(schema.Movie, .{ .primary_key = "id", .auto_increment = true }).init(allocator),
+            .shows = core.Table(schema.Show, .{ .primary_key = "id", .auto_increment = true }).init(allocator),
+            .episodes = core.Table(schema.Episode, .{ .primary_key = "id", .auto_increment = true }).init(allocator),
+            .people = core.Table(schema.Person, .{ .primary_key = "id", .auto_increment = false }).init(allocator),
+            .movie_credits = core.Table(schema.MovieCredit, .{ .primary_key = "id", .auto_increment = true }).init(allocator),
+            .show_credits = core.Table(schema.ShowCredit, .{ .primary_key = "id", .auto_increment = true }).init(allocator),
         };
     }
 
@@ -70,58 +71,14 @@ pub const SratimStorage = struct {
         self.writeLock();
         defer self.writeUnlock();
 
-        var u_iter = self.users.iterator();
-        while (u_iter.next()) |entry| {
-            entry.value_ptr.deinit(self.allocator);
-        }
         self.users.deinit();
-
-        var s_iter = self.sessions.iterator();
-        while (s_iter.next()) |entry| {
-            entry.value_ptr.deinit(self.allocator);
-        }
         self.sessions.deinit();
-
-        var l_iter = self.libraries.iterator();
-        while (l_iter.next()) |entry| {
-            entry.value_ptr.deinit(self.allocator);
-        }
         self.libraries.deinit();
-
-        var m_iter = self.movies.iterator();
-        while (m_iter.next()) |entry| {
-            entry.value_ptr.deinit(self.allocator);
-        }
         self.movies.deinit();
-
-        var sh_iter = self.shows.iterator();
-        while (sh_iter.next()) |entry| {
-            entry.value_ptr.deinit(self.allocator);
-        }
         self.shows.deinit();
-
-        var ep_iter = self.episodes.iterator();
-        while (ep_iter.next()) |entry| {
-            entry.value_ptr.deinit(self.allocator);
-        }
         self.episodes.deinit();
-
-        var p_iter = self.people.iterator();
-        while (p_iter.next()) |entry| {
-            entry.value_ptr.deinit(self.allocator);
-        }
         self.people.deinit();
-
-        var cr_iter = self.movie_credits.iterator();
-        while (cr_iter.next()) |entry| {
-            entry.value_ptr.deinit(self.allocator);
-        }
         self.movie_credits.deinit();
-
-        var sh_cr_iter = self.show_credits.iterator();
-        while (sh_cr_iter.next()) |entry| {
-            entry.value_ptr.deinit(self.allocator);
-        }
         self.show_credits.deinit();
     }
 

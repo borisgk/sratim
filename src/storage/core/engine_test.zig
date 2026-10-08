@@ -74,16 +74,21 @@ test "Universal Engine: Table with integer auto-increment primary key" {
     try testing.expectEqual(@as(usize, 2), users.count());
 
     // 2. Lookup
-    const alice_opt = try users.get(allocator, id1);
+    const alice_opt = try users.getCloned(allocator, id1);
     try testing.expect(alice_opt != null);
     var alice = alice_opt.?;
     defer alice.deinit(allocator);
     try testing.expectEqualStrings("alice", alice.username);
     try testing.expectEqualStrings("alice@example.com", alice.email);
 
+    // Direct get
+    const alice_direct = users.get(id1);
+    try testing.expect(alice_direct != null);
+    try testing.expectEqualStrings("alice", alice_direct.?.username);
+
     // 3. Update
     _ = try users.insert(.{ .id = id1, .username = "alice_updated", .email = "alice2@example.com" });
-    const alice_upd = (try users.get(allocator, id1)).?;
+    const alice_upd = (try users.getCloned(allocator, id1)).?;
     defer {
         var m = alice_upd;
         m.deinit(allocator);
@@ -120,7 +125,7 @@ test "Universal Engine: Table with string primary key" {
     try testing.expect(products.contains("SKU-200"));
     try testing.expect(!products.contains("SKU-999"));
 
-    const item = (try products.get(allocator, "SKU-200")).?;
+    const item = (try products.getCloned(allocator, "SKU-200")).?;
     defer {
         var m = item;
         m.deinit(allocator);
@@ -144,8 +149,8 @@ test "Universal Engine: Stream append-only log with capacity limit" {
     // 3rd item should evict the oldest "first"
     try stream.append(.{ .timestamp = 300, .event = "third" });
     try testing.expectEqual(@as(usize, 2), stream.count());
-    try testing.expectEqualStrings("second", stream.items()[0].event);
-    try testing.expectEqualStrings("third", stream.items()[1].event);
+    try testing.expectEqualStrings("second", stream.items[0].event);
+    try testing.expectEqualStrings("third", stream.slice()[1].event);
 }
 
 test "Universal Engine: WAL frame writer, CRC verification, and replay" {

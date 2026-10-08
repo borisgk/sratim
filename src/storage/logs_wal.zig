@@ -53,18 +53,7 @@ pub fn snapshotLocked(self: *LogsStorage) !void {
     const json_str = try std.json.Stringify.valueAlloc(self.allocator, snap, .{ .whitespace = .indent_2 });
     defer self.allocator.free(json_str);
 
-    const tmp_path = try std.fmt.allocPrint(self.allocator, "{s}.tmp", .{self.file_path});
-    defer self.allocator.free(tmp_path);
-
-    const file = try std.Io.Dir.cwd().createFile(self.io, tmp_path, .{});
-    defer file.close(self.io);
-
-    var file_buf: [65536]u8 = undefined;
-    var f_writer = file.writer(self.io, &file_buf);
-    try f_writer.interface.writeAll(json_str);
-    try f_writer.interface.flush();
-
-    try std.Io.Dir.cwd().rename(tmp_path, std.Io.Dir.cwd(), self.file_path, self.io);
+    try logs_engine.core.snapshot.saveAtomic(self.allocator, self.io, self.file_path, json_str);
 
     // Reset WAL file since all state is snapshotted
     const wal_file = std.Io.Dir.cwd().createFile(self.io, self.wal_path, .{}) catch return;
@@ -406,7 +395,7 @@ pub fn applyWalPayload(self: *LogsStorage, payload: []const u8) !void {
                 .position = position,
                 .timestamp = timestamp,
             };
-            try self.playback_logs.append(self.allocator, log);
+            try self.playback_logs.appendOwned(log);
         },
         .log_episode_playback_event => {
             if (payload.len < 1 + 8 + 2) return;
@@ -438,7 +427,7 @@ pub fn applyWalPayload(self: *LogsStorage, payload: []const u8) !void {
                 .position = position,
                 .timestamp = timestamp,
             };
-            try self.episode_playback_logs.append(self.allocator, log);
+            try self.episode_playback_logs.appendOwned(log);
         },
         .log_login_attempt => {
             if (payload.len < 1 + 8 + 2) return;
@@ -470,7 +459,7 @@ pub fn applyWalPayload(self: *LogsStorage, payload: []const u8) !void {
                 .ip_address = try self.allocator.dupe(u8, ip_address),
                 .timestamp = timestamp,
             };
-            try self.login_logs.append(self.allocator, log);
+            try self.login_logs.appendOwned(log);
         },
         .clear_failed_logins => {
             if (payload.len < 3) return;
@@ -480,10 +469,10 @@ pub fn applyWalPayload(self: *LogsStorage, payload: []const u8) !void {
 
             var i: usize = 0;
             while (i < self.login_logs.items.len) {
-                const ll = &self.login_logs.items[i];
+                const ll = &self.login_logs.mutableSlice()[i];
                 if (std.mem.eql(u8, ll.username, username) and std.mem.eql(u8, ll.status, "failed")) {
-                    ll.deinit(self.allocator);
-                    _ = self.login_logs.orderedRemove(i);
+                    var removed = self.login_logs.orderedRemove(i);
+                    removed.deinit(self.allocator);
                 } else {
                     i += 1;
                 }
@@ -571,15 +560,15 @@ pub fn loadSnapshot(self: *LogsStorage) !bool {
     }
 
     for (val.playback_logs) |pl| {
-        try self.playback_logs.append(self.allocator, try pl.clone(self.allocator));
+        try self.playback_logs.append(pl);
     }
 
     for (val.episode_playback_logs) |epl| {
-        try self.episode_playback_logs.append(self.allocator, try epl.clone(self.allocator));
+        try self.episode_playback_logs.append(epl);
     }
 
     for (val.login_logs) |ll| {
-        try self.login_logs.append(self.allocator, try ll.clone(self.allocator));
+        try self.login_logs.append(ll);
     }
 
     return true;

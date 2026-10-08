@@ -1,6 +1,7 @@
 const std = @import("std");
 const schema = @import("schema.zig");
 pub const logs_wal = @import("logs_wal.zig");
+pub const core = @import("core/mod.zig");
 
 pub const WalOpcode = logs_wal.WalOpcode;
 pub const SnapshotData = logs_wal.SnapshotData;
@@ -14,9 +15,9 @@ pub const LogsStorage = struct {
 
     playback_progress: std.StringHashMap(schema.PlaybackProgress),
     episode_playback_progress: std.StringHashMap(schema.EpisodePlaybackProgress),
-    playback_logs: std.ArrayList(schema.PlaybackLog),
-    episode_playback_logs: std.ArrayList(schema.EpisodePlaybackLog),
-    login_logs: std.ArrayList(schema.LoginLog),
+    playback_logs: core.Stream(schema.PlaybackLog),
+    episode_playback_logs: core.Stream(schema.EpisodePlaybackLog),
+    login_logs: core.Stream(schema.LoginLog),
 
     next_playback_log_id: i64 = 1,
     next_episode_log_id: i64 = 1,
@@ -50,9 +51,9 @@ pub const LogsStorage = struct {
             .uncompacted_wal_records = 0,
             .playback_progress = std.StringHashMap(schema.PlaybackProgress).init(allocator),
             .episode_playback_progress = std.StringHashMap(schema.EpisodePlaybackProgress).init(allocator),
-            .playback_logs = std.ArrayList(schema.PlaybackLog).empty,
-            .episode_playback_logs = std.ArrayList(schema.EpisodePlaybackLog).empty,
-            .login_logs = std.ArrayList(schema.LoginLog).empty,
+            .playback_logs = core.Stream(schema.PlaybackLog).init(allocator, null),
+            .episode_playback_logs = core.Stream(schema.EpisodePlaybackLog).init(allocator, null),
+            .login_logs = core.Stream(schema.LoginLog).init(allocator, null),
         };
     }
 
@@ -71,14 +72,9 @@ pub const LogsStorage = struct {
         }
         self.episode_playback_progress.deinit();
 
-        for (self.playback_logs.items) |*pl| pl.deinit(self.allocator);
-        self.playback_logs.deinit(self.allocator);
-
-        for (self.episode_playback_logs.items) |*epl| epl.deinit(self.allocator);
-        self.episode_playback_logs.deinit(self.allocator);
-
-        for (self.login_logs.items) |*ll| ll.deinit(self.allocator);
-        self.login_logs.deinit(self.allocator);
+        self.playback_logs.deinit();
+        self.episode_playback_logs.deinit();
+        self.login_logs.deinit();
     }
 
     pub fn deinit(self: *LogsStorage) void {
@@ -132,7 +128,7 @@ pub const LogsStorage = struct {
             .ip_address = try self.allocator.dupe(u8, ip_address),
             .timestamp = self.now(),
         };
-        try self.login_logs.append(self.allocator, log);
+        try self.login_logs.appendOwned(log);
         self.writeWalLogLoginAttempt(id, username, status, ip_address, log.timestamp);
     }
 
@@ -156,10 +152,10 @@ pub const LogsStorage = struct {
 
         var i: usize = 0;
         while (i < self.login_logs.items.len) {
-            const ll = &self.login_logs.items[i];
+            const ll = &self.login_logs.mutableSlice()[i];
             if (std.mem.eql(u8, ll.username, username) and std.mem.eql(u8, ll.status, "failed")) {
-                ll.deinit(self.allocator);
-                _ = self.login_logs.orderedRemove(i);
+                var removed = self.login_logs.orderedRemove(i);
+                removed.deinit(self.allocator);
             } else {
                 i += 1;
             }
@@ -186,7 +182,7 @@ pub const LogsStorage = struct {
             .position = position,
             .timestamp = self.now(),
         };
-        try self.playback_logs.append(self.allocator, log);
+        try self.playback_logs.appendOwned(log);
         self.writeWalLogPlaybackEvent(id, username, movie_id, event_type, position, log.timestamp);
     }
 
@@ -279,7 +275,7 @@ pub const LogsStorage = struct {
             .position = position,
             .timestamp = self.now(),
         };
-        try self.episode_playback_logs.append(self.allocator, log);
+        try self.episode_playback_logs.appendOwned(log);
         self.writeWalLogEpisodePlaybackEvent(id, username, episode_id, event_type, position, log.timestamp);
     }
 
