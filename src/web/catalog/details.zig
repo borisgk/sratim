@@ -109,7 +109,11 @@ pub fn generateDetailsHtml(
             } else {
                 try directors_buf.appendSlice(allocator, ", ");
             }
-            const dir_html = try std.fmt.allocPrint(allocator, "<a href=\"/person?id={d}\" class=\"director-link\">{s}</a>", .{ c.person_id, c.name });
+            var escaped_dir_name = std.ArrayList(u8).empty;
+            defer escaped_dir_name.deinit(allocator);
+            try utils.escapeHtml(&escaped_dir_name, allocator, c.name);
+
+            const dir_html = try std.fmt.allocPrint(allocator, "<a href=\"/person?id={d}\" class=\"director-link\">{s}</a>", .{ c.person_id, escaped_dir_name.items });
             defer allocator.free(dir_html);
             try directors_buf.appendSlice(allocator, dir_html);
         }
@@ -142,6 +146,14 @@ pub fn generateDetailsHtml(
                 }
             }
 
+            var escaped_cast_name = std.ArrayList(u8).empty;
+            defer escaped_cast_name.deinit(allocator);
+            try utils.escapeHtml(&escaped_cast_name, allocator, c.name);
+
+            var escaped_char = std.ArrayList(u8).empty;
+            defer escaped_char.deinit(allocator);
+            try utils.escapeHtml(&escaped_char, allocator, char_str);
+
             if (profile_path) |p| {
                 const card_html = try std.fmt.allocPrint(allocator,
                     \\        <a href="/person?id={d}" class="cast-card">
@@ -157,7 +169,7 @@ pub fn generateDetailsHtml(
                     \\            <div class="cast-name">{s}</div>
                     \\            <div class="cast-character">{s}</div>
                     \\        </a>
-                , .{ c.person_id, p, c.name, p, p, c.name, char_str });
+                , .{ c.person_id, p, escaped_cast_name.items, p, p, escaped_cast_name.items, escaped_char.items });
                 defer allocator.free(card_html);
                 try cast_section_buf.appendSlice(allocator, card_html);
             } else {
@@ -174,7 +186,7 @@ pub fn generateDetailsHtml(
                     \\            <div class="cast-name">{s}</div>
                     \\            <div class="cast-character">{s}</div>
                     \\        </a>
-                , .{ c.person_id, c.name, char_str });
+                , .{ c.person_id, escaped_cast_name.items, escaped_char.items });
                 defer allocator.free(card_html);
                 try cast_section_buf.appendSlice(allocator, card_html);
             }
@@ -186,6 +198,14 @@ pub fn generateDetailsHtml(
         );
     }
 
+    var escaped_title = std.ArrayList(u8).empty;
+    defer escaped_title.deinit(allocator);
+    try utils.escapeHtml(&escaped_title, allocator, title);
+
+    var escaped_overview = std.ArrayList(u8).empty;
+    defer escaped_overview.deinit(allocator);
+    try utils.escapeHtml(&escaped_overview, allocator, overview);
+
     var html = std.ArrayList(u8).empty;
     defer html.deinit(allocator);
     try html.appendSlice(allocator, template);
@@ -193,8 +213,8 @@ pub fn generateDetailsHtml(
     // Replace placeholders
     const replacements = &[_][2][]const u8{
         .{ "__INLINE_CSS__", global_css },
-        .{ "__TITLE__", title },
-        .{ "__OVERVIEW__", overview },
+        .{ "__TITLE__", escaped_title.items },
+        .{ "__OVERVIEW__", escaped_overview.items },
         .{ "__RELEASE_DATE__", release_date },
         .{ "__DIRECTORS_HTML__", directors_buf.items },
         .{ "__CAST_SECTION_HTML__", cast_section_buf.items },

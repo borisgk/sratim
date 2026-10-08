@@ -62,8 +62,8 @@ pub fn snapshotLocked(self: *LogsStorage) !void {
 }
 
 pub fn snapshot(self: *LogsStorage) !void {
-    self.readLock();
-    defer self.readUnlock();
+    self.writeLock();
+    defer self.writeUnlock();
     try self.snapshotLocked();
 }
 

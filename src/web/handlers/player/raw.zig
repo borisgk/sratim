@@ -71,6 +71,47 @@ pub fn handleRawPlay(
     };
     const file_size = stat.size;
 
+    const ext = std.fs.path.extension(file_path);
+    var content_type: []const u8 = "video/mp4";
+    if (std.ascii.eqlIgnoreCase(ext, ".mkv")) {
+        content_type = "video/x-matroska";
+    } else if (std.ascii.eqlIgnoreCase(ext, ".webm")) {
+        content_type = "video/webm";
+    } else if (std.ascii.eqlIgnoreCase(ext, ".avi")) {
+        content_type = "video/x-msvideo";
+    }
+
+    if (file_size == 0) {
+        var has_range = false;
+        var headers_iter = request.iterateHeaders();
+        while (headers_iter.next()) |header| {
+            if (std.ascii.eqlIgnoreCase(header.name, "range")) {
+                has_range = true;
+                break;
+            }
+        }
+        if (has_range) {
+            try request.respond("Requested Range Not Satisfiable", .{
+                .status = .range_not_satisfiable,
+                .extra_headers = &.{
+                    .{ .name = "content-range", .value = "bytes */0" },
+                    .{ .name = "access-control-allow-origin", .value = "*" },
+                },
+            });
+        } else {
+            try request.respond("", .{
+                .status = .ok,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = content_type },
+                    .{ .name = "accept-ranges", .value = "bytes" },
+                    .{ .name = "access-control-allow-origin", .value = "*" },
+                    .{ .name = "content-length", .value = "0" },
+                },
+            });
+        }
+        return;
+    }
+
     var range_start: u64 = 0;
     var range_end: u64 = file_size - 1;
     var is_partial = false;
@@ -122,16 +163,6 @@ pub fn handleRawPlay(
     }
 
     const chunk_size = range_end - range_start + 1;
-
-    const ext = std.fs.path.extension(file_path);
-    var content_type: []const u8 = "video/mp4";
-    if (std.ascii.eqlIgnoreCase(ext, ".mkv")) {
-        content_type = "video/x-matroska";
-    } else if (std.ascii.eqlIgnoreCase(ext, ".webm")) {
-        content_type = "video/webm";
-    } else if (std.ascii.eqlIgnoreCase(ext, ".avi")) {
-        content_type = "video/x-msvideo";
-    }
 
     const content_range = try std.fmt.allocPrint(allocator, "bytes {d}-{d}/{d}", .{ range_start, range_end, file_size });
     const content_length_str = try std.fmt.allocPrint(allocator, "{d}", .{chunk_size});

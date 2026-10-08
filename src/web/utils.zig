@@ -173,5 +173,12 @@ pub fn isValidRedirect(target: []const u8) bool {
     if (std.mem.indexOfScalar(u8, target, '\\') != null) return false;
     if (std.mem.indexOfScalar(u8, target, '\r') != null) return false;
     if (std.mem.indexOfScalar(u8, target, '\n') != null) return false;
+    if (std.mem.indexOfScalar(u8, target, '"') != null) return false;
+    if (std.mem.indexOfScalar(u8, target, '\'') != null) return false;
+    if (std.mem.indexOfScalar(u8, target, '<') != null) return false;
+    if (std.mem.indexOfScalar(u8, target, '>') != null) return false;
+    for (target) |ch| {
+        if (ch <= 32 or ch >= 127) return false;
+    }
     return true;
 }

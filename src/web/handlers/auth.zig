@@ -32,11 +32,20 @@ pub fn serveLoginPageWithRedirect(request: *std.http.Server.Request, allocator: 
         }
     }
 
+    var escaped_redirect: ?[]const u8 = null;
+    defer if (escaped_redirect) |er| allocator.free(er);
+    if (redirect_val.len > 0) {
+        var list = std.ArrayList(u8).empty;
+        defer list.deinit(allocator);
+        try utils.escapeHtml(&list, allocator, redirect_val);
+        escaped_redirect = try list.toOwnedSlice(allocator);
+    }
+
     const html_content = try template_engine.render(allocator, @embedFile("../templates/login.html"), .{
         .INLINE_CSS = global_css,
         .ERROR_DISPLAY = show_error,
         .ERROR_MESSAGE = msg,
-        .REDIRECT = redirect_val,
+        .REDIRECT = escaped_redirect orelse "",
     });
 
     request.respond(html_content, .{

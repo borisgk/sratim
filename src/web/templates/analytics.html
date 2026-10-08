@@ -684,6 +684,16 @@
             let currentContentType = 'movies';
             let currentSort = 'time';
 
+            function escapeHtml(str) {
+                if (!str) return '';
+                return String(str)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+
             function formatDuration(seconds) {
                 if (seconds >= 3600) {
                     const h = Math.floor(seconds / 3600);
@@ -961,11 +971,12 @@
 
                     const epSub = isShows && item.episodes_played ? `<span>• ${item.episodes_played} ep</span>` : '';
 
+                    const titleText = escapeHtml(item.title || '');
                     card.innerHTML = `
                         <div class="rank-badge ${rankClass}">#${rank}</div>
                         ${posterImg}
                         <div class="media-meta-col">
-                            <div class="media-title-text" title="${item.title}">${item.title}</div>
+                            <div class="media-title-text" title="${titleText}">${titleText}</div>
                             <div class="media-sub-text">
                                 <span class="stat-pill-sm">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
@@ -1005,20 +1016,21 @@
                     }
 
                     const profileUrl = getPosterUrl(item.profile_path);
-                    const initial = item.name && item.name.length > 0 ? item.name[0].toUpperCase() : '?';
+                    const nameText = escapeHtml(item.name || '');
+                    const initial = item.name && item.name.length > 0 ? escapeHtml(item.name[0].toUpperCase()) : '?';
                     const fallbackAvatar = `<div class="person-avatar-thumb" style="display:${profileUrl ? 'none' : 'flex'};align-items:center;justify-content:center;color:#ffffff;background:linear-gradient(135deg, ${isDirectors ? '#0ea5e9, #6366f1' : '#8b5cf6, #ec4899'});font-weight:700;font-size:1.1rem;">${initial}</div>`;
                     const profileImg = profileUrl
-                        ? `<img src="${profileUrl}" class="person-avatar-thumb" alt="${item.name}" loading="lazy" onerror="this.style.display='none';if(this.nextElementSibling)this.nextElementSibling.style.display='flex';">${fallbackAvatar}`
+                        ? `<img src="${profileUrl}" class="person-avatar-thumb" alt="${nameText}" loading="lazy" onerror="this.style.display='none';if(this.nextElementSibling)this.nextElementSibling.style.display='flex';">${fallbackAvatar}`
                         : fallbackAvatar;
 
                     const titlesText = item.titles_count ? `<span>• ${item.titles_count} ${item.titles_count === 1 ? 'title' : 'titles'}</span>` : '';
-                    const roleText = item.top_role ? `<span>• ${item.top_role}</span>` : '';
+                    const roleText = item.top_role ? `<span>• ${escapeHtml(item.top_role)}</span>` : '';
 
                     card.innerHTML = `
                         <div class="rank-badge ${rankClass}">#${rank}</div>
                         ${profileImg}
                         <div class="media-meta-col">
-                            <div class="media-title-text" title="${item.name}">${item.name}</div>
+                            <div class="media-title-text" title="${nameText}">${nameText}</div>
                             <div class="media-sub-text">
                                 <span class="stat-pill-sm">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
@@ -1026,6 +1038,7 @@
                                 </span>
                                 <span>• ${item.plays} plays</span>
                                 ${titlesText}
+                                ${roleText}
                             </div>
                         </div>
                     `;
@@ -1262,13 +1275,14 @@
 
                 users.forEach((u, i) => {
                     const tr = document.createElement('tr');
-                    const initial = u.username.length > 0 ? u.username[0].toUpperCase() : '?';
+                    const userName = escapeHtml(u.username || '');
+                    const initial = u.username && u.username.length > 0 ? escapeHtml(u.username[0].toUpperCase()) : '?';
                     tr.innerHTML = `
                         <td style="color: #6b7280; font-weight: 700;">#${i + 1}</td>
                         <td>
                             <div style="display: flex; align-items: center; gap: 10px;">
                                 <div class="user-avatar-initial">${initial}</div>
-                                <span style="font-weight: 600; color: #f3f4f6;">${u.username}</span>
+                                <span style="font-weight: 600; color: #f3f4f6;">${userName}</span>
                             </div>
                         </td>
                         <td style="font-weight: 600; color: #38bdf8;">${formatDuration(u.seconds)}</td>

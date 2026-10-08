@@ -6,7 +6,8 @@ pub fn createClient(allocator: std.mem.Allocator, proxy_url: ?[]const u8) !httpx
     if (proxy_url) |p_url| {
         if (p_url.len > 0) {
             const uri = try std.Uri.parse(p_url);
-            const host_bytes = switch (uri.host.?) {
+            const host_component = uri.host orelse return error.InvalidProxyUrl;
+            const host_bytes = switch (host_component) {
                 .raw => |r| r,
                 .percent_encoded => |p| p,
             };

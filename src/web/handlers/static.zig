@@ -112,7 +112,26 @@ pub fn serveStaticAsset(request: *std.http.Server.Request, allocator: std.mem.Al
     if (std.mem.startsWith(u8, target, "/images/")) {
         const query_idx = std.mem.indexOf(u8, target, "?");
         const clean_target = if (query_idx) |idx| target[0..idx] else target;
-        const rel_path = clean_target["/images/".len..];
+        const raw_rel_path = clean_target["/images/".len..];
+
+        const decoded = allocator.dupe(u8, raw_rel_path) catch {
+            try request.respond("Internal Server Error", .{ .status = .internal_server_error });
+            return true;
+        };
+        defer allocator.free(decoded);
+        const rel_path = std.Uri.percentDecodeInPlace(decoded);
+
+        // Disallow path traversal, absolute paths, backslashes, and null bytes
+        if (rel_path.len == 0 or
+            rel_path[0] == '/' or
+            rel_path[0] == '\\' or
+            std.mem.indexOf(u8, rel_path, "..") != null or
+            std.mem.indexOfScalar(u8, rel_path, '\\') != null or
+            std.mem.indexOfScalar(u8, rel_path, 0) != null)
+        {
+            try request.respond("Invalid path", .{ .status = .bad_request });
+            return true;
+        }
 
         const file_path = try std.fmt.allocPrint(allocator, "images/{s}", .{rel_path});
         defer allocator.free(file_path);

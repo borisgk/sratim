@@ -112,6 +112,10 @@ pub fn generatePersonHtml(
         }
     }
 
+    var escaped_person_name = std.ArrayList(u8).empty;
+    defer escaped_person_name.deinit(allocator);
+    try utils.escapeHtml(&escaped_person_name, allocator, person.name);
+
     // Avatar HTML
     var avatar_buf = std.ArrayList(u8).empty;
     defer avatar_buf.deinit(allocator);
@@ -125,7 +129,7 @@ pub fn generatePersonHtml(
             \\        <circle cx="12" cy="7" r="4"></circle>
             \\    </svg>
             \\</div>
-        , .{ p, person.name, p, p });
+        , .{ p, escaped_person_name.items, p, p });
         defer allocator.free(av_html);
         try avatar_buf.appendSlice(allocator, av_html);
     } else {
@@ -551,7 +555,7 @@ pub fn generatePersonHtml(
     // Replacements
     const replacements = &[_][2][]const u8{
         .{ "__INLINE_CSS__", global_css },
-        .{ "__PERSON_NAME__", person.name },
+        .{ "__PERSON_NAME__", escaped_person_name.items },
         .{ "__PERSON_AVATAR_HTML__", avatar_buf.items },
         .{ "__PERSON_ROLE__", role_str },
         .{ "__MOVIES_COUNT__", count_str },

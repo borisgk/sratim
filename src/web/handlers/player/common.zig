@@ -44,8 +44,14 @@ pub fn resolveMediaPath(
     const abs_base = try std.fs.path.resolve(allocator, &[_][]const u8{base_path});
     defer allocator.free(abs_base);
 
-    if (!std.mem.startsWith(u8, resolved_path, abs_base)) {
-        allocator.free(resolved_path);
+    const is_within = if (std.mem.startsWith(u8, resolved_path, abs_base)) blk: {
+        if (resolved_path.len == abs_base.len) break :blk true;
+        if (abs_base.len > 0 and abs_base[abs_base.len - 1] == std.fs.path.sep) break :blk true;
+        if (resolved_path[abs_base.len] == std.fs.path.sep) break :blk true;
+        break :blk false;
+    } else false;
+
+    if (!is_within) {
         return error.PathTraversal;
     }
 

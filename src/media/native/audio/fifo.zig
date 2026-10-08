@@ -55,7 +55,9 @@ pub const AudioFifo = struct {
         if (l.len == 0) return;
 
         self.compactIfNeeded();
+        const old_len = self.left.items.len;
         try self.left.appendSlice(self.allocator, l);
+        errdefer self.left.shrinkRetainingCapacity(old_len);
         try self.right.appendSlice(self.allocator, r);
     }
 
@@ -68,6 +70,7 @@ pub const AudioFifo = struct {
 
         const old_len = self.left.items.len;
         try self.left.resize(self.allocator, old_len + n_samples);
+        errdefer self.left.shrinkRetainingCapacity(old_len);
         try self.right.resize(self.allocator, old_len + n_samples);
 
         for (0..n_samples) |i| {

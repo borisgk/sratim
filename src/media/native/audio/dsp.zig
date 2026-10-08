@@ -33,7 +33,7 @@ pub fn downmixPlanarToStereo(
     out_r: []f32,
 ) void {
     const num_samples = @min(out_l.len, out_r.len);
-    if (num_samples == 0) return;
+    if (num_samples == 0 or in_channels.len == 0) return;
 
     switch (layout) {
         .mono => {
@@ -45,6 +45,9 @@ pub fn downmixPlanarToStereo(
             }
         },
         .stereo => {
+            if (in_channels.len < 2) {
+                return downmixPlanarToStereo(in_channels, .mono, out_l, out_r);
+            }
             const l = in_channels[0];
             const r = in_channels[1];
             const count = @min(num_samples, @min(l.len, r.len));
@@ -52,6 +55,9 @@ pub fn downmixPlanarToStereo(
             @memcpy(out_r[0..count], r[0..count]);
         },
         .layout_2_1 => {
+            if (in_channels.len < 2) {
+                return downmixPlanarToStereo(in_channels, .mono, out_l, out_r);
+            }
             // L, R, LFE
             const l = in_channels[0];
             const r = in_channels[1];
@@ -60,6 +66,9 @@ pub fn downmixPlanarToStereo(
             @memcpy(out_r[0..count], r[0..count]);
         },
         .layout_3_0 => {
+            if (in_channels.len < 3) {
+                return downmixPlanarToStereo(in_channels, if (in_channels.len >= 2) .stereo else .mono, out_l, out_r);
+            }
             // L, R, C
             const l = in_channels[0];
             const r = in_channels[1];
@@ -72,6 +81,9 @@ pub fn downmixPlanarToStereo(
             }
         },
         .surround_5_1 => {
+            if (in_channels.len < 6) {
+                return downmixPlanarToStereo(in_channels, if (in_channels.len >= 3) .layout_3_0 else if (in_channels.len >= 2) .stereo else .mono, out_l, out_r);
+            }
             // Standard 5.1 SMPTE / Film order:
             // 0: L, 1: R, 2: C, 3: LFE, 4: Ls, 5: Rs
             const l = in_channels[0];
@@ -106,6 +118,9 @@ pub fn downmixPlanarToStereo(
             }
         },
         .surround_7_1 => {
+            if (in_channels.len < 8) {
+                return downmixPlanarToStereo(in_channels, if (in_channels.len >= 6) .surround_5_1 else if (in_channels.len >= 3) .layout_3_0 else if (in_channels.len >= 2) .stereo else .mono, out_l, out_r);
+            }
             // 0: L, 1: R, 2: C, 3: LFE, 4: Ls, 5: Rs, 6: Rls, 7: Rrs
             const l = in_channels[0];
             const r = in_channels[1];
@@ -134,10 +149,28 @@ pub fn downmixInterleavedToStereo(
     out_l: []f32,
     out_r: []f32,
 ) void {
+    if (channels == 0) return;
     const total_frames = @min(interleaved.len / channels, @min(out_l.len, out_r.len));
     if (total_frames == 0) return;
 
+    var effective_layout = layout;
     switch (layout) {
+        .surround_7_1 => if (channels < 8) {
+            effective_layout = if (channels >= 6) .surround_5_1 else if (channels >= 3) .layout_3_0 else if (channels >= 2) .stereo else .mono;
+        },
+        .surround_5_1 => if (channels < 6) {
+            effective_layout = if (channels >= 3) .layout_3_0 else if (channels >= 2) .stereo else .mono;
+        },
+        .layout_3_0 => if (channels < 3) {
+            effective_layout = if (channels >= 2) .stereo else .mono;
+        },
+        .layout_2_1, .stereo => if (channels < 2) {
+            effective_layout = .mono;
+        },
+        .mono => {},
+    }
+
+    switch (effective_layout) {
         .mono => {
             for (0..total_frames) |i| {
                 const s = interleaved[i * channels];
@@ -145,13 +178,7 @@ pub fn downmixInterleavedToStereo(
                 out_r[i] = s;
             }
         },
-        .stereo => {
-            for (0..total_frames) |i| {
-                out_l[i] = interleaved[i * channels];
-                out_r[i] = interleaved[i * channels + 1];
-            }
-        },
-        .layout_2_1 => {
+        .stereo, .layout_2_1 => {
             for (0..total_frames) |i| {
                 out_l[i] = interleaved[i * channels];
                 out_r[i] = interleaved[i * channels + 1];
