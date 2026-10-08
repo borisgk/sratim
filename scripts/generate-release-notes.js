@@ -99,7 +99,7 @@ function categorizeCommit(subject) {
     else if (rawType === 'build') type = 'build';
     else if (rawType === 'revert') type = 'revert';
 
-    return { type, scope, message };
+    return { type, scope, message: sanitizeMentions(message) };
   }
 
   // Fallback heuristic classification based on title prefix
@@ -125,7 +125,13 @@ function categorizeCommit(subject) {
     type = 'build';
   }
 
-  return { type, scope, message };
+  return { type, scope, message: sanitizeMentions(message) };
+}
+
+function sanitizeMentions(text) {
+  // Wrap un-backticked @identifier (e.g. Zig built-in functions like @typeInfo) in backticks
+  // so GitHub does not treat them as user mentions or list them as contributors.
+  return text.replace(/(^|[^`\w])@([a-zA-Z_][a-zA-Z0-9_]*)(?!`)/g, '$1`@$2`');
 }
 
 function parseBodyItems(body) {
@@ -141,7 +147,7 @@ function parseBodyItems(body) {
       line = line.substring(2).trim();
     }
     if (line) {
-      items.push(line);
+      items.push(sanitizeMentions(line));
     }
   }
 
