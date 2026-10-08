@@ -37,13 +37,14 @@
             .hash = "httpx-0.1.2-8qj2euWvDwBMDjAcqpg5eiiOAOSLRwEfTR7L1xx1-8J5",
         },
         .zembed = .{
-            .path = "../zembed",
+            .path = "packages/zembed",
         },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
+        "packages",
         // For example...
         //"LICENSE",
         //"README.md",
