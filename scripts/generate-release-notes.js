@@ -20,15 +20,41 @@ function resolvePrevTag(prevTag, targetRef) {
 }
 
 function getGitLog(prevTag, targetRef) {
-  const resolvedPrev = resolvePrevTag(prevTag, targetRef);
-  const range = resolvedPrev ? `${resolvedPrev}..${targetRef}` : targetRef;
+  // If targetRef is a newly minted tag that hasn't been fetched locally, fall back to HEAD
+  let ref = targetRef;
   try {
-    // Delimit fields with Record Separator (\x1e) and Unit Separator (\x1f)
+    execSync(`git rev-parse --verify "${ref}"`, { stdio: 'ignore' });
+  } catch {
+    ref = 'HEAD';
+  }
+
+  let resolvedPrev = resolvePrevTag(prevTag, ref);
+  if (resolvedPrev) {
+    try {
+      execSync(`git rev-parse --verify "${resolvedPrev}"`, { stdio: 'ignore' });
+    } catch {
+      try {
+        execSync('git fetch --tags origin', { stdio: 'ignore' });
+      } catch {}
+      resolvedPrev = resolvePrevTag(prevTag, ref);
+    }
+  }
+
+  const range = resolvedPrev ? `${resolvedPrev}..${ref}` : ref;
+  try {
     const raw = execSync(`git log "${range}" --format="%H%x1f%s%x1f%b%x1e"`, {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'ignore'],
     });
-    return raw;
+    if (raw && raw.trim()) return raw;
+  } catch {}
+
+  // Fallback: log the latest commit HEAD
+  try {
+    return execSync(`git log -n 1 HEAD --format="%H%x1f%s%x1f%b%x1e"`, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'ignore'],
+    });
   } catch {
     return '';
   }
