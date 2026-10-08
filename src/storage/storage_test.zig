@@ -2,6 +2,10 @@ const std = @import("std");
 const schema = @import("schema.zig");
 const engine = @import("engine.zig");
 const logs_engine = @import("logs_engine.zig");
+pub const core_tests = @import("core/engine_test.zig");
+comptime {
+    std.testing.refAllDecls(core_tests);
+}
 
 test "SratimStorage: CRUD, concurrency, and snapshot roundtrip" {
     const testing = std.testing;

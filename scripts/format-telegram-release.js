@@ -35,8 +35,8 @@ function buildTelegramMessage(rawChangelog, tag, repo) {
   const lines = (rawChangelog || '').split('\n');
   const items = [];
 
-  for (let line of lines) {
-    line = line.trim();
+  for (let rawLine of lines) {
+    const line = rawLine.trim();
     if (!line) continue;
     // Skip version header line (e.g. ### [1.19.6](...) (2026-10-02))
     if (/^###\s+\[?\d+\.\d+\.\d+/.test(line)) continue;
@@ -48,6 +48,8 @@ function buildTelegramMessage(rawChangelog, tag, repo) {
       items.push(`\n${emoji} <b>${escapeHtml(title)}</b>`);
       continue;
     }
+
+    const isSubItem = /^\s+[\*\-]/.test(rawLine);
 
     // Bullet point (* **scope:** message ([hash](url)))
     if (line.startsWith('* ') || line.startsWith('- ')) {
@@ -71,7 +73,8 @@ function buildTelegramMessage(rawChangelog, tag, repo) {
         content = scopeMatch[2];
       }
 
-      items.push(`• ${scopeHtml}${formatInline(content)}${commitHtml}`);
+      const bulletPrefix = isSubItem ? '  ▫️ ' : '• ';
+      items.push(`${bulletPrefix}${scopeHtml}${formatInline(content)}${commitHtml}`);
       continue;
     }
 

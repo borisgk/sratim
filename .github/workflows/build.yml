@@ -92,7 +92,7 @@ jobs:
     runs-on: ubuntu-latest 
     outputs:
       new_tag: ${{ steps.tag_version.outputs.new_tag }}
-      changelog: ${{ steps.tag_version.outputs.changelog }}
+      changelog: ${{ steps.release_notes.outputs.changelog }}
     
     steps:
       - name: Checkout Repository
@@ -106,6 +106,23 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           default_bump: patch 
+
+      - name: Generate Release Notes
+        id: release_notes
+        env:
+          PREV_TAG: ${{ steps.tag_version.outputs.previous_tag }}
+          TAG: ${{ steps.tag_version.outputs.new_tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          CHANGELOG=$(node scripts/generate-release-notes.js)
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="${{ steps.tag_version.outputs.changelog }}"
+          fi
+          {
+            echo "changelog<<EOF"
+            echo "$CHANGELOG"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Download All Artifacts
         uses: actions/download-artifact@v7
@@ -122,7 +139,7 @@ jobs:
         with:
           tag_name: ${{ steps.tag_version.outputs.new_tag }}
           name: Release ${{ steps.tag_version.outputs.new_tag }}
-          body: ${{ steps.tag_version.outputs.changelog }}
+          body: ${{ steps.release_notes.outputs.changelog }}
           files: ./artifacts/*
 
   deploy:
