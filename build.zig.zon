@@ -37,14 +37,14 @@
             .hash = "httpx-0.1.2-8qj2euWvDwBMDjAcqpg5eiiOAOSLRwEfTR7L1xx1-8J5",
         },
         .zembed = .{
-            .path = "packages/zembed",
+            .url = "https://github.com/borisgk/zembed/archive/refs/tags/v0.1.0.tar.gz",
+            .hash = "zembed-0.1.0-CywvZrSRAAD1Q9WsAvX4KUdpkI4pH24lH95DJKv_ABhE",
         },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
-        "packages",
         // For example...
         //"LICENSE",
         //"README.md",
