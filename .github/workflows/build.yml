@@ -118,6 +118,7 @@ jobs:
           {
             echo "changelog<<EOF"
             node scripts/release-notes.js
+            echo ""
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 

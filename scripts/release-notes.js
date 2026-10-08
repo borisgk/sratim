@@ -76,7 +76,7 @@ if (!isTelegram) {
       lines.push(`  - ${b}`);
     }
   }
-  process.stdout.write(lines.join('\n'));
+  process.stdout.write(lines.join('\n') + '\n');
 } else {
   const escapeHtml = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const fmtInline = s =>
@@ -105,5 +105,5 @@ if (!isTelegram) {
 
   const header = `🚀 <b>Sratim Release ${escapeHtml(tag)}!</b>\n\n`;
   const footer = `\n\n🔗 <a href="https://github.com/${repo}/releases/tag/${escapeHtml(tag)}">View Release on GitHub</a>`;
-  process.stdout.write(`${header}${items.join('\n')}${footer}`);
+  process.stdout.write(`${header}${items.join('\n')}${footer}\n`);
 }
