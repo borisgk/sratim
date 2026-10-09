@@ -14,38 +14,27 @@ permissions:
 jobs:
   build:
     name: Build ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    container:
-      image: ${{ matrix.container }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
           - name: Linux x86_64 (Baseline)
-            os: ubuntu-latest
-            container: ubuntu:22.04
-            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl xz-utils pkg-config
+            zig_target: x86_64-linux
             zig_cpu: baseline
             artifact_name: sratim-linux-x86_64-baseline
             binary_name: sratim-linux-x86_64-baseline
           - name: Arch Linux x86_64 (Silvermont)
-            os: ubuntu-latest
-            container: archlinux:base-devel
-            setup_cmd: pacman -Syu --needed --noconfirm git curl tar xz pkgconf
+            zig_target: x86_64-linux
             zig_cpu: silvermont
             artifact_name: sratim-arch-n3150
             binary_name: sratim-archlinux-x86_64-silvermont
-          - name: Ubuntu 26.04 LTS ARM64 (Ampere)
-            os: ubuntu-24.04-arm
-            container: ubuntu:26.04
-            setup_cmd: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl xz-utils pkg-config
+          - name: Ubuntu ARM64 (Ampere Neoverse-N1)
+            zig_target: aarch64-linux
             zig_cpu: neoverse_n1
             artifact_name: sratim-ubuntu-aarch64
             binary_name: sratim-ubuntu-aarch64-neoverse_n1
 
     steps:
-      - name: Install System Dependencies
-        run: ${{ matrix.setup_cmd }}
-
       - name: Checkout Repository
         uses: actions/checkout@v7
 
@@ -72,9 +61,9 @@ jobs:
           default_bump: patch
           dry_run: true
 
-      - name: Build Binary (-Doptimize=fast -Dcpu=${{ matrix.zig_cpu }})
+      - name: Build Binary (-Doptimize=fast -Dtarget=${{ matrix.zig_target }} -Dcpu=${{ matrix.zig_cpu }})
         run: |
-          zig build -Doptimize=fast -Dcpu=${{ matrix.zig_cpu }} -Dversion=${{ steps.tag_version.outputs.new_tag }}
+          zig build -Dtarget=${{ matrix.zig_target }} -Doptimize=fast -Dcpu=${{ matrix.zig_cpu }} -Dversion=${{ steps.tag_version.outputs.new_tag }}
 
       - name: Rename Binary
         run: mv zig-out/bin/sratim zig-out/bin/${{ matrix.binary_name }}

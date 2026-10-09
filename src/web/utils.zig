@@ -66,7 +66,7 @@ pub fn parseQueryFloat(target: []const u8, name: []const u8) ?f64 {
 pub fn getLanIp(allocator: std.mem.Allocator) !?[]const u8 {
     if (builtin.os.tag == .linux) {
         const fd = std.posix.openatZ(std.posix.AT.FDCWD, "/proc/net/fib_trie", .{ .ACCMODE = .RDONLY }, 0) catch return null;
-        defer std.posix.close(fd);
+        defer _ = std.os.linux.close(fd);
 
         var buf: [4096]u8 = undefined;
         const n = std.posix.read(fd, &buf) catch return null;
