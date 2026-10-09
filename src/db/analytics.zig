@@ -891,6 +891,7 @@ fn computeLibraryIntelligence(
         var t_keys = std.ArrayList(TitleInfo).empty;
         var t_it = entry.value_ptr.titles.iterator();
         while (t_it.next()) |t_entry| {
+            if (t_keys.items.len >= 50) break;
             try t_keys.append(aa, .{
                 .id = t_entry.key_ptr.id,
                 .is_show = t_entry.key_ptr.is_show,
@@ -970,27 +971,41 @@ fn computeLibraryIntelligence(
         id: i64,
         name: []const u8,
     };
+    const TitlePersons = struct {
+        dirs: std.ArrayList(PersonBrief),
+        acts: std.ArrayList(PersonBrief),
+    };
+
+    // Pre-index movie credits by movie_id in a single O(N) pass to avoid quadratic scans
+    var movie_persons = std.AutoHashMap(i64, TitlePersons).init(aa);
+    var m_cr_iter = catalog.movie_credits.valueIterator();
+    while (m_cr_iter.next()) |cr| {
+        const is_director = (!cr.is_cast and (std.mem.eql(u8, cr.department, "Directing") or (cr.job != null and std.mem.indexOf(u8, cr.job.?, "Director") != null)));
+        const is_top_cast = (cr.is_cast and cr.order < 12);
+        if (!is_director and !is_top_cast) continue;
+
+        var entry = try movie_persons.getOrPut(cr.movie_id);
+        if (!entry.found_existing) {
+            entry.value_ptr.* = .{
+                .dirs = std.ArrayList(PersonBrief).empty,
+                .acts = std.ArrayList(PersonBrief).empty,
+            };
+        }
+        if (is_top_cast) {
+            try entry.value_ptr.acts.append(aa, .{ .id = cr.person_id, .name = cr.name });
+        } else if (is_director) {
+            try entry.value_ptr.dirs.append(aa, .{ .id = cr.person_id, .name = cr.name });
+        }
+    }
 
     var movie_it = catalog.movies.valueIterator();
     while (movie_it.next()) |m| {
         if (!m.is_present) continue;
+        const mp = movie_persons.get(m.id) orelse continue;
         const title_name = if (m.title) |t| t else m.clean_name;
 
-        var dirs = std.ArrayList(PersonBrief).empty;
-        var acts = std.ArrayList(PersonBrief).empty;
-
-        var m_cr_iter = catalog.movie_credits.valueIterator();
-        while (m_cr_iter.next()) |cr| {
-            if (cr.movie_id != m.id) continue;
-            if (cr.is_cast and cr.order < 12) {
-                try acts.append(aa, .{ .id = cr.person_id, .name = cr.name });
-            } else if (!cr.is_cast and (std.mem.eql(u8, cr.department, "Directing") or (cr.job != null and std.mem.indexOf(u8, cr.job.?, "Director") != null))) {
-                try dirs.append(aa, .{ .id = cr.person_id, .name = cr.name });
-            }
-        }
-
-        for (dirs.items) |d| {
-            for (acts.items) |a| {
+        for (mp.dirs.items) |d| {
+            for (mp.acts.items) |a| {
                 if (d.id == a.id) continue;
                 const p_key = PairKey{ .p1 = d.id, .p2 = a.id };
                 var entry = try dir_actor_pairs.getOrPut(p_key);
@@ -1007,8 +1022,8 @@ fn computeLibraryIntelligence(
             }
         }
 
-        for (acts.items, 0..) |a1, idx| {
-            for (acts.items[idx + 1 ..]) |a2| {
+        for (mp.acts.items, 0..) |a1, idx| {
+            for (mp.acts.items[idx + 1 ..]) |a2| {
                 const min_id = @min(a1.id, a2.id);
                 const max_id = @max(a1.id, a2.id);
                 const p_key = PairKey{ .p1 = min_id, .p2 = max_id };
@@ -1027,26 +1042,36 @@ fn computeLibraryIntelligence(
         }
     }
 
+    // Pre-index show credits by show_id in a single O(M) pass to avoid quadratic scans
+    var show_persons = std.AutoHashMap(i64, TitlePersons).init(aa);
+    var s_cr_iter = catalog.show_credits.valueIterator();
+    while (s_cr_iter.next()) |cr| {
+        const is_director = (!cr.is_cast and (std.mem.eql(u8, cr.department, "Directing") or (cr.job != null and (std.mem.indexOf(u8, cr.job.?, "Director") != null or std.mem.indexOf(u8, cr.job.?, "Creator") != null))));
+        const is_top_cast = (cr.is_cast and cr.order < 12);
+        if (!is_director and !is_top_cast) continue;
+
+        var entry = try show_persons.getOrPut(cr.show_id);
+        if (!entry.found_existing) {
+            entry.value_ptr.* = .{
+                .dirs = std.ArrayList(PersonBrief).empty,
+                .acts = std.ArrayList(PersonBrief).empty,
+            };
+        }
+        if (is_top_cast) {
+            try entry.value_ptr.acts.append(aa, .{ .id = cr.person_id, .name = cr.name });
+        } else if (is_director) {
+            try entry.value_ptr.dirs.append(aa, .{ .id = cr.person_id, .name = cr.name });
+        }
+    }
+
     var show_it = catalog.shows.valueIterator();
     while (show_it.next()) |s| {
         if (!s.is_present) continue;
+        const sp = show_persons.get(s.id) orelse continue;
         const title_name = s.title;
 
-        var dirs = std.ArrayList(PersonBrief).empty;
-        var acts = std.ArrayList(PersonBrief).empty;
-
-        var s_cr_iter = catalog.show_credits.valueIterator();
-        while (s_cr_iter.next()) |cr| {
-            if (cr.show_id != s.id) continue;
-            if (cr.is_cast and cr.order < 12) {
-                try acts.append(aa, .{ .id = cr.person_id, .name = cr.name });
-            } else if (!cr.is_cast and (std.mem.eql(u8, cr.department, "Directing") or (cr.job != null and (std.mem.indexOf(u8, cr.job.?, "Director") != null or std.mem.indexOf(u8, cr.job.?, "Creator") != null)))) {
-                try dirs.append(aa, .{ .id = cr.person_id, .name = cr.name });
-            }
-        }
-
-        for (dirs.items) |d| {
-            for (acts.items) |a| {
+        for (sp.dirs.items) |d| {
+            for (sp.acts.items) |a| {
                 if (d.id == a.id) continue;
                 const p_key = PairKey{ .p1 = d.id, .p2 = a.id };
                 var entry = try dir_actor_pairs.getOrPut(p_key);
@@ -1063,8 +1088,8 @@ fn computeLibraryIntelligence(
             }
         }
 
-        for (acts.items, 0..) |a1, idx| {
-            for (acts.items[idx + 1 ..]) |a2| {
+        for (sp.acts.items, 0..) |a1, idx| {
+            for (sp.acts.items[idx + 1 ..]) |a2| {
                 const min_id = @min(a1.id, a2.id);
                 const max_id = @max(a1.id, a2.id);
                 const p_key = PairKey{ .p1 = min_id, .p2 = max_id };

@@ -35,6 +35,7 @@ pub const parseSubtitleTrackBox = tracks.parseSubtitleTrackBox;
 pub const parseGenericTrackBox = tracks.parseGenericTrackBox;
 pub const parseMp4SubtitleTrack = parser.parseMp4SubtitleTrack;
 pub const parseMp4Media = parser.parseMp4Media;
+pub const findMp4KeyframePts = parser.findMp4KeyframePts;
 
 /// Reads media sample payloads from a seekable reader in chunks and writes them directly to writer.
 /// If an I/O error occurs, sets `has_error.* = true` and returns immediately.

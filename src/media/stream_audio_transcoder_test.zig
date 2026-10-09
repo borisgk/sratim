@@ -11,7 +11,7 @@ test "StreamAudioTranscoder AC-3 native mode initializes correctly" {
     defer transcoder.deinit();
 
     try testing.expect(transcoder.is_pure_native);
-    try testing.expect(transcoder.native_ac3_dec != null);
+    try testing.expect(transcoder.decoder == .ac3);
     try testing.expectEqual(@as(usize, 0), transcoder.native_fifo.size());
 }
 
@@ -55,7 +55,7 @@ test "StreamAudioTranscoder pure Zig MP3 transcode end-to-end" {
     defer transcoder.deinit();
 
     try testing.expect(transcoder.is_pure_native);
-    try testing.expect(transcoder.native_mp3_dec != null);
+    try testing.expect(transcoder.decoder == .mp3);
     try testing.expect(transcoder.resampler_l != null);
 
     // 128kbps 44.1kHz Joint Stereo frame (417 bytes)
@@ -173,7 +173,7 @@ test "StreamAudioTranscoder DTS native mode initializes correctly" {
     defer transcoder.deinit();
 
     try testing.expect(transcoder.is_pure_native);
-    try testing.expect(transcoder.native_dts_dec != null);
+    try testing.expect(transcoder.decoder == .dts);
     try testing.expectEqual(@as(usize, 0), transcoder.native_fifo.size());
 }
 

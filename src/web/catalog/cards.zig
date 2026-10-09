@@ -20,12 +20,12 @@ pub fn appendMovieCard(
     const display_title = if (title_opt) |t| t else clean_name;
 
     try cards_buf.appendSlice(allocator, "        <div class=\"movie-item\">\n");
-    const card_header = try std.fmt.allocPrint(allocator, "            <div class=\"movie-card{s}\" data-id=\"{d}\" data-tmdb-id=\"{s}\" data-name=\"", .{
+    var header_buf: [256]u8 = undefined;
+    const card_header = try std.fmt.bufPrint(&header_buf, "            <div class=\"movie-card{s}\" data-id=\"{d}\" data-tmdb-id=\"{s}\" data-name=\"", .{
         if (poster_path_opt != null and poster_path_opt.?.len > 0) " has-poster" else "",
         movie_id,
         tmdb_id_str,
     });
-    defer allocator.free(card_header);
     try cards_buf.appendSlice(allocator, card_header);
     try utils.escapeHtml(cards_buf, allocator, display_title);
     if (file_path) |fp| {
@@ -45,18 +45,19 @@ pub fn appendMovieCard(
     }
     if (is_admin) {
         try cards_buf.appendSlice(allocator, "            <button class=\"context-menu-btn\" title=\"Actions\">\n                <svg viewBox=\"0 0 24 24\" fill=\"currentColor\" width=\"20\" height=\"20\">\n                    <circle cx=\"12\" cy=\"5\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"12\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"19\" r=\"2\"/>\n                </svg>\n            </button>\n            <div class=\"context-dropdown\">\n");
-        const dropdown_content = try std.fmt.allocPrint(allocator,
+        var dropdown_buf: [512]u8 = undefined;
+        const dropdown_content = try std.fmt.bufPrint(&dropdown_buf,
             \\                <button class="dropdown-item lookup-btn" data-id="{d}" data-type="movie">Lookup Metadata</button>
             \\                <button class="dropdown-item manual-id-btn" data-id="{d}" data-type="movie" data-tmdb-id="{s}">Manual TMDB ID</button>
             \\                <button class="dropdown-item refetch-credits-btn" data-id="{d}" data-type="movie">Refetch Cast</button>
             \\            </div>
             \\
         , .{ movie_id, movie_id, tmdb_id_str, movie_id });
-        defer allocator.free(dropdown_content);
         try cards_buf.appendSlice(allocator, dropdown_content);
     }
 
-    const play_link = try std.fmt.allocPrint(allocator,
+    var play_link_buf: [512]u8 = undefined;
+    const play_link = try std.fmt.bufPrint(&play_link_buf,
         \\            <a href="/details?id={d}" class="play-link"></a>
         \\
         \\            <div class="card-content">
@@ -71,18 +72,17 @@ pub fn appendMovieCard(
         \\            </div>
         \\
     , .{movie_id});
-    defer allocator.free(play_link);
     try cards_buf.appendSlice(allocator, play_link);
 
     if (progress_pct) |pct| {
         if (pct >= 1.0 and pct < 95.0) {
-            const progress_str = try std.fmt.allocPrint(allocator,
+            var prog_buf: [128]u8 = undefined;
+            const progress_str = try std.fmt.bufPrint(&prog_buf,
                 \\            <div class="card-progress">
                 \\                <div class="progress-fill" style="width: {d:.1}%;"></div>
                 \\            </div>
                 \\
             , .{pct});
-            defer allocator.free(progress_str);
             try cards_buf.appendSlice(allocator, progress_str);
         }
     }
@@ -106,12 +106,12 @@ pub fn appendShowCard(
     const tmdb_id_str = if (tmdb_id) |tid| (std.fmt.bufPrint(&tmdb_id_buf, "{d}", .{tid}) catch "") else "";
 
     try cards_buf.appendSlice(allocator, "        <div class=\"movie-item\">\n");
-    const card_header = try std.fmt.allocPrint(allocator, "            <div class=\"movie-card{s}\" data-id=\"{d}\" data-tmdb-id=\"{s}\" data-name=\"", .{
+    var header_buf: [256]u8 = undefined;
+    const card_header = try std.fmt.bufPrint(&header_buf, "            <div class=\"movie-card{s}\" data-id=\"{d}\" data-tmdb-id=\"{s}\" data-name=\"", .{
         if (poster_path_opt != null and poster_path_opt.?.len > 0) " has-poster" else "",
         show_id,
         tmdb_id_str,
     });
-    defer allocator.free(card_header);
     try cards_buf.appendSlice(allocator, card_header);
     try utils.escapeHtml(cards_buf, allocator, title);
     try cards_buf.appendSlice(allocator, "\">\n");
@@ -124,18 +124,19 @@ pub fn appendShowCard(
 
     if (is_admin) {
         try cards_buf.appendSlice(allocator, "            <button class=\"context-menu-btn\" title=\"Actions\">\n                <svg viewBox=\"0 0 24 24\" fill=\"currentColor\" width=\"20\" height=\"20\">\n                    <circle cx=\"12\" cy=\"5\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"12\" r=\"2\"/>\n                    <circle cx=\"12\" cy=\"19\" r=\"2\"/>\n                </svg>\n            </button>\n            <div class=\"context-dropdown\">\n");
-        const dropdown_content = try std.fmt.allocPrint(allocator,
+        var dropdown_buf: [512]u8 = undefined;
+        const dropdown_content = try std.fmt.bufPrint(&dropdown_buf,
             \\                <button class="dropdown-item lookup-btn" data-id="{d}" data-type="show">Lookup Metadata</button>
             \\                <button class="dropdown-item manual-id-btn" data-id="{d}" data-type="show" data-tmdb-id="{s}">Manual TMDB ID</button>
             \\                <button class="dropdown-item refetch-credits-btn" data-id="{d}" data-type="show">Refetch Cast</button>
             \\            </div>
             \\
         , .{ show_id, show_id, tmdb_id_str, show_id });
-        defer allocator.free(dropdown_content);
         try cards_buf.appendSlice(allocator, dropdown_content);
     }
 
-    const play_link = try std.fmt.allocPrint(allocator,
+    var play_link_buf: [512]u8 = undefined;
+    const play_link = try std.fmt.bufPrint(&play_link_buf,
         \\            <a href="/show?id={d}" class="play-link"></a>
         \\
         \\            <div class="card-content">
@@ -150,7 +151,6 @@ pub fn appendShowCard(
         \\            </div>
         \\
     , .{show_id});
-    defer allocator.free(play_link);
     try cards_buf.appendSlice(allocator, play_link);
 
     try cards_buf.appendSlice(allocator, "        </div>\n        <h3 class=\"movie-title\">");
@@ -170,11 +170,11 @@ pub fn appendEpisodeRecentCard(
     progress_pct: ?f64,
 ) !void {
     try cards_buf.appendSlice(allocator, "        <div class=\"movie-item\">\n");
-    const card_header = try std.fmt.allocPrint(allocator, "            <div class=\"movie-card{s}\" data-id=\"{d}\" data-name=\"", .{
+    var header_buf: [256]u8 = undefined;
+    const card_header = try std.fmt.bufPrint(&header_buf, "            <div class=\"movie-card{s}\" data-id=\"{d}\" data-name=\"", .{
         if (poster_path_opt != null and poster_path_opt.?.len > 0) " has-poster" else "",
         episode_id,
     });
-    defer allocator.free(card_header);
     try cards_buf.appendSlice(allocator, card_header);
     try utils.escapeHtml(cards_buf, allocator, show_title);
     try cards_buf.appendSlice(allocator, " ");
@@ -187,7 +187,8 @@ pub fn appendEpisodeRecentCard(
         try cards_buf.appendSlice(allocator, "\">\n");
     }
 
-    const play_link = try std.fmt.allocPrint(allocator,
+    var play_link_buf: [512]u8 = undefined;
+    const play_link = try std.fmt.bufPrint(&play_link_buf,
         \\            <a href="/player?episode_id={d}" class="play-link"></a>
         \\            <div class="card-content">
         \\                <div class="card-top">
@@ -204,18 +205,17 @@ pub fn appendEpisodeRecentCard(
         \\            </div>
         \\
     , .{ episode_id, ep_badge });
-    defer allocator.free(play_link);
     try cards_buf.appendSlice(allocator, play_link);
 
     if (progress_pct) |pct| {
         if (pct >= 1.0 and pct < 95.0) {
-            const progress_str = try std.fmt.allocPrint(allocator,
+            var prog_buf: [128]u8 = undefined;
+            const progress_str = try std.fmt.bufPrint(&prog_buf,
                 \\            <div class="card-progress">
                 \\                <div class="progress-fill" style="width: {d:.1}%;"></div>
                 \\            </div>
                 \\
             , .{pct});
-            defer allocator.free(progress_str);
             try cards_buf.appendSlice(allocator, progress_str);
         }
     }

@@ -55,30 +55,8 @@ pub fn getKeyframePts(io: std.Io, file_path: []const u8, start_time: f64) !f64 {
     const bytes_read = file_reader.interface.readSliceShort(&magic_buf) catch 0;
 
     if (bytes_read >= 8 and isobmff.isMp4Container(magic_buf[0..bytes_read])) {
-        // MP4 / MOV container: inspect video sync samples
-        const allocator = std.heap.c_allocator;
-        const z_path = allocator.dupeSentinel(u8, file_path, 0) catch return start_time;
-        defer allocator.free(z_path);
-
-        var media = isobmff.parseMp4Media(allocator, io, z_path) catch return start_time;
-        defer media.deinit(allocator);
-
-        if (media.video_track) |vt| {
-            if (vt.samples.len > 0 and start_time > 0.0) {
-                var best_pts: f64 = 0.0;
-                for (vt.samples) |s| {
-                    if (s.is_sync) {
-                        if (s.pts_sec <= start_time) {
-                            best_pts = s.pts_sec;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                return best_pts;
-            }
-        }
-        return 0.0;
+        // Fast MP4 / MOV keyframe seek: parse only sync tables and timescale
+        return isobmff.findMp4KeyframePts(std.heap.c_allocator, io, file_path, start_time) catch start_time;
     }
 
     // Matroska container: parse EBML Cues

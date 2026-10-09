@@ -18,15 +18,20 @@ pub const EncodedAacFrame = struct {
 /// into standardized 48kHz Stereo AAC frames for native fMP4 container muxing.
 /// Operates 100% in pure Zig with zero FFmpeg dependencies.
 pub const StreamAudioTranscoder = struct {
+    pub const Decoder = union(enum) {
+        ac3: ac3_dec.Ac3Decoder,
+        eac3: eac3_dec.Eac3Decoder,
+        aac: aac_dec.AacDecoder,
+        mp3: mp3_dec.Mp3Decoder,
+        dts: dts_dec.DtsDecoder,
+    };
+
+    allocator: std.mem.Allocator = std.heap.c_allocator,
     target_channels: u8 = 2,
     is_pure_native: bool = true,
     native_fifo: audio_fifo.AudioFifo,
     native_aac_enc: aac_enc.AacEncoder,
-    native_ac3_dec: ?ac3_dec.Ac3Decoder = null,
-    native_eac3_dec: ?eac3_dec.Eac3Decoder = null,
-    native_aac_dec: ?aac_dec.AacDecoder = null,
-    native_mp3_dec: ?mp3_dec.Mp3Decoder = null,
-    native_dts_dec: ?dts_dec.DtsDecoder = null,
+    decoder: Decoder,
     resampler_l: ?dsp.HermiteResampler = null,
     resampler_r: ?dsp.HermiteResampler = null,
 
@@ -100,15 +105,25 @@ pub const StreamAudioTranscoder = struct {
 
         const needs_resample = (effective_sample_rate != 48000 and effective_sample_rate > 0);
 
+        const dec_union: Decoder = if (is_ac3)
+            .{ .ac3 = ac3_dec.Ac3Decoder.init() }
+        else if (is_eac3)
+            .{ .eac3 = eac3_dec.Eac3Decoder.init() }
+        else if (is_aac)
+            .{ .aac = aac_dec_inst.? }
+        else if (is_mp3)
+            .{ .mp3 = mp3_dec.Mp3Decoder.init() }
+        else if (is_dts)
+            .{ .dts = dts_dec.DtsDecoder.init() }
+        else
+            return error.UnsupportedAudioCodec;
+
         self.* = .{
+            .allocator = allocator,
             .is_pure_native = true,
             .native_fifo = audio_fifo.AudioFifo.init(allocator),
             .native_aac_enc = aac_enc.AacEncoder.init(48000, 192000),
-            .native_ac3_dec = if (is_ac3) ac3_dec.Ac3Decoder.init() else null,
-            .native_eac3_dec = if (is_eac3) eac3_dec.Eac3Decoder.init() else null,
-            .native_aac_dec = aac_dec_inst,
-            .native_mp3_dec = if (is_mp3) mp3_dec.Mp3Decoder.init() else null,
-            .native_dts_dec = if (is_dts) dts_dec.DtsDecoder.init() else null,
+            .decoder = dec_union,
             .resampler_l = if (needs_resample) dsp.HermiteResampler.init(effective_sample_rate, 48000) else null,
             .resampler_r = if (needs_resample) dsp.HermiteResampler.init(effective_sample_rate, 48000) else null,
         };
@@ -122,98 +137,89 @@ pub const StreamAudioTranscoder = struct {
         raw_payload: []const u8,
         out_frames: *std.ArrayList(EncodedAacFrame),
     ) !void {
-        if (self.native_ac3_dec) |*dec| {
-            var stereo_interleaved: [1536 * 2]f32 = undefined;
-            if (dec.decodeFrame(raw_payload, &stereo_interleaved)) |n_samples| {
-                if (n_samples > 0) {
-                    var planar_l: [1536]f32 = undefined;
-                    var planar_r: [1536]f32 = undefined;
-                    for (0..n_samples) |i| {
-                        planar_l[i] = stereo_interleaved[i * 2];
-                        planar_r[i] = stereo_interleaved[i * 2 + 1];
+        switch (self.decoder) {
+            .ac3 => |*dec| {
+                var stereo_interleaved: [1536 * 2]f32 = undefined;
+                if (dec.decodeFrame(raw_payload, &stereo_interleaved)) |n_samples| {
+                    if (n_samples > 0) {
+                        var planar_l: [1536]f32 = undefined;
+                        var planar_r: [1536]f32 = undefined;
+                        for (0..n_samples) |i| {
+                            planar_l[i] = stereo_interleaved[i * 2];
+                            planar_r[i] = stereo_interleaved[i * 2 + 1];
+                        }
+                        try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
                     }
-                    try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
+                } else |_| {
+                    // Concealment silence: keep audio clock aligned if packet decode errors
+                    try self.injectConcealmentSilence(allocator, 1536, out_frames);
                 }
-            } else |_| {
-                // Concealment silence: keep audio clock aligned if packet decode errors
-                try self.injectConcealmentSilence(allocator, 1536, out_frames);
-            }
-            return;
-        }
-
-        if (self.native_eac3_dec) |*dec| {
-            var stereo_interleaved: [1536 * 2]f32 = undefined;
-            if (dec.decodeFrame(raw_payload, &stereo_interleaved)) |n_samples| {
-                if (n_samples > 0) {
-                    var planar_l: [1536]f32 = undefined;
-                    var planar_r: [1536]f32 = undefined;
-                    for (0..n_samples) |i| {
-                        planar_l[i] = stereo_interleaved[i * 2];
-                        planar_r[i] = stereo_interleaved[i * 2 + 1];
+            },
+            .eac3 => |*dec| {
+                var stereo_interleaved: [1536 * 2]f32 = undefined;
+                if (dec.decodeFrame(raw_payload, &stereo_interleaved)) |n_samples| {
+                    if (n_samples > 0) {
+                        var planar_l: [1536]f32 = undefined;
+                        var planar_r: [1536]f32 = undefined;
+                        for (0..n_samples) |i| {
+                            planar_l[i] = stereo_interleaved[i * 2];
+                            planar_r[i] = stereo_interleaved[i * 2 + 1];
+                        }
+                        try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
                     }
-                    try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
+                } else |_| {
+                    try self.injectConcealmentSilence(allocator, 1536, out_frames);
                 }
-            } else |_| {
-                try self.injectConcealmentSilence(allocator, 1536, out_frames);
-            }
-            return;
-        }
-
-        if (self.native_aac_dec) |*dec| {
-            var stereo_interleaved: [2048]f32 = undefined;
-            if (dec.decodeFrame(raw_payload, &stereo_interleaved)) |n_samples| {
-                if (n_samples > 0) {
-                    var planar_l: [1024]f32 = undefined;
-                    var planar_r: [1024]f32 = undefined;
-                    for (0..n_samples) |i| {
-                        planar_l[i] = stereo_interleaved[i * 2];
-                        planar_r[i] = stereo_interleaved[i * 2 + 1];
+            },
+            .aac => |*dec| {
+                var stereo_interleaved: [2048]f32 = undefined;
+                if (dec.decodeFrame(raw_payload, &stereo_interleaved)) |n_samples| {
+                    if (n_samples > 0) {
+                        var planar_l: [1024]f32 = undefined;
+                        var planar_r: [1024]f32 = undefined;
+                        for (0..n_samples) |i| {
+                            planar_l[i] = stereo_interleaved[i * 2];
+                            planar_r[i] = stereo_interleaved[i * 2 + 1];
+                        }
+                        try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
                     }
-                    try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
+                } else |_| {
+                    try self.injectConcealmentSilence(allocator, 1024, out_frames);
                 }
-            } else |_| {
-                try self.injectConcealmentSilence(allocator, 1024, out_frames);
-            }
-            return;
-        }
-
-        if (self.native_mp3_dec) |*dec| {
-            var stereo_interleaved: [1152 * 2]f32 = undefined;
-            if (dec.decodeFrame(raw_payload, &stereo_interleaved)) |n_samples| {
-                if (n_samples > 0) {
-                    var planar_l: [1152]f32 = undefined;
-                    var planar_r: [1152]f32 = undefined;
-                    for (0..n_samples) |i| {
-                        planar_l[i] = stereo_interleaved[i * 2];
-                        planar_r[i] = stereo_interleaved[i * 2 + 1];
+            },
+            .mp3 => |*dec| {
+                var stereo_interleaved: [1152 * 2]f32 = undefined;
+                if (dec.decodeFrame(raw_payload, &stereo_interleaved)) |n_samples| {
+                    if (n_samples > 0) {
+                        var planar_l: [1152]f32 = undefined;
+                        var planar_r: [1152]f32 = undefined;
+                        for (0..n_samples) |i| {
+                            planar_l[i] = stereo_interleaved[i * 2];
+                            planar_r[i] = stereo_interleaved[i * 2 + 1];
+                        }
+                        try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
                     }
-                    try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
+                } else |_| {
+                    try self.injectConcealmentSilence(allocator, 1152, out_frames);
                 }
-            } else |_| {
-                try self.injectConcealmentSilence(allocator, 1152, out_frames);
-            }
-            return;
-        }
-
-        if (self.native_dts_dec) |*dec| {
-            var stereo_interleaved: [2048 * 2]f32 = undefined;
-            if (dec.decodeFrame(raw_payload, &stereo_interleaved)) |n_samples| {
-                if (n_samples > 0) {
-                    var planar_l: [2048]f32 = undefined;
-                    var planar_r: [2048]f32 = undefined;
-                    for (0..n_samples) |i| {
-                        planar_l[i] = stereo_interleaved[i * 2];
-                        planar_r[i] = stereo_interleaved[i * 2 + 1];
+            },
+            .dts => |*dec| {
+                var stereo_interleaved: [2048 * 2]f32 = undefined;
+                if (dec.decodeFrame(raw_payload, &stereo_interleaved)) |n_samples| {
+                    if (n_samples > 0) {
+                        var planar_l: [2048]f32 = undefined;
+                        var planar_r: [2048]f32 = undefined;
+                        for (0..n_samples) |i| {
+                            planar_l[i] = stereo_interleaved[i * 2];
+                            planar_r[i] = stereo_interleaved[i * 2 + 1];
+                        }
+                        try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
                     }
-                    try self.writePlanarAndDrain(allocator, planar_l[0..n_samples], planar_r[0..n_samples], out_frames);
+                } else |_| {
+                    try self.injectConcealmentSilence(allocator, 1024, out_frames);
                 }
-            } else |_| {
-                try self.injectConcealmentSilence(allocator, 1024, out_frames);
-            }
-            return;
+            },
         }
-
-        return error.UnsupportedAudioCodec;
     }
 
     /// Emits smooth concealment silence (ramped down from previous audio sample if needed)
@@ -365,6 +371,6 @@ pub const StreamAudioTranscoder = struct {
 
     pub fn deinit(self: *StreamAudioTranscoder) void {
         self.native_fifo.deinit();
-        std.heap.c_allocator.destroy(self);
+        self.allocator.destroy(self);
     }
 };
