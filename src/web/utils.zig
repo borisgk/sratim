@@ -4,8 +4,13 @@ const c = @import("../core/c.zig").c;
 /// Parse an integer query parameter by name from a URL target string.
 /// Robust against trailing whitespace, encoded characters, or fragment identifiers.
 pub fn parseQueryInt(comptime T: type, target: []const u8, name: []const u8) ?T {
-    const q_idx = std.mem.indexOf(u8, target, "?") orelse return null;
-    var it = std.mem.splitScalar(u8, target[q_idx + 1 ..], '&');
+    const q_idx = std.mem.indexOfScalar(u8, target, '?') orelse return null;
+    const after_q = target[q_idx + 1 ..];
+    const query = if (std.mem.indexOfScalar(u8, after_q, '#')) |hash_idx|
+        after_q[0..hash_idx]
+    else
+        after_q;
+    var it = std.mem.splitScalar(u8, query, '&');
     while (it.next()) |param| {
         if (std.mem.startsWith(u8, param, name) and param.len > name.len and param[name.len] == '=') {
             const raw = param[name.len + 1 ..];
@@ -25,8 +30,13 @@ pub fn parseQueryInt(comptime T: type, target: []const u8, name: []const u8) ?T 
 
 /// Parse a float query parameter by name from a URL target string.
 pub fn parseQueryFloat(target: []const u8, name: []const u8) ?f64 {
-    const q_idx = std.mem.indexOf(u8, target, "?") orelse return null;
-    var it = std.mem.splitScalar(u8, target[q_idx + 1 ..], '&');
+    const q_idx = std.mem.indexOfScalar(u8, target, '?') orelse return null;
+    const after_q = target[q_idx + 1 ..];
+    const query = if (std.mem.indexOfScalar(u8, after_q, '#')) |hash_idx|
+        after_q[0..hash_idx]
+    else
+        after_q;
+    var it = std.mem.splitScalar(u8, query, '&');
     while (it.next()) |param| {
         if (std.mem.startsWith(u8, param, name) and param.len > name.len and param[name.len] == '=') {
             const raw = param[name.len + 1 ..];
@@ -71,9 +81,11 @@ pub fn getLanIp(allocator: std.mem.Allocator) !?[]const u8 {
                 // sin.addr holds the address in network byte order; view its memory directly.
                 // (Zig 0.17 @bitCast to arrays is LSB-first, which would reverse octets on big-endian.)
                 const bytes: *const [4]u8 = @ptrCast(&sin.addr);
-                return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{
+                var ip_buf: [16]u8 = undefined;
+                const ip_str = std.fmt.bufPrint(&ip_buf, "{d}.{d}.{d}.{d}", .{
                     bytes[0], bytes[1], bytes[2], bytes[3],
-                });
+                }) catch return null;
+                return try allocator.dupe(u8, ip_str);
             }
         }
     }
@@ -83,72 +95,113 @@ pub fn getLanIp(allocator: std.mem.Allocator) !?[]const u8 {
 const video_extensions = [_][]const u8{ ".mkv", ".mp4", ".avi", ".ts", ".webm", ".mov" };
 
 pub fn isVideoFile(basename: []const u8) bool {
-    for (video_extensions) |ext| {
-        if (std.mem.endsWith(u8, basename, ext)) return true;
+    const dot_idx = std.mem.lastIndexOfScalar(u8, basename, '.') orelse return false;
+    const ext = basename[dot_idx..];
+    inline for (video_extensions) |valid_ext| {
+        if (std.ascii.eqlIgnoreCase(ext, valid_ext)) return true;
     }
     return false;
 }
 
 /// Percent-encodes a path for use in an HTML href attribute.
 pub fn writePercentEncoded(list: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
-    for (input) |ch| {
-        switch (ch) {
-            ' ' => try list.appendSlice(allocator, "%20"),
-            '#' => try list.appendSlice(allocator, "%23"),
-            '?' => try list.appendSlice(allocator, "%3F"),
-            '&' => try list.appendSlice(allocator, "%26"),
-            '%' => try list.appendSlice(allocator, "%25"),
-            '"' => try list.appendSlice(allocator, "%22"),
-            '<' => try list.appendSlice(allocator, "%3C"),
-            '>' => try list.appendSlice(allocator, "%3E"),
-            '\'' => try list.appendSlice(allocator, "%27"),
-            else => try list.append(allocator, ch),
+    try list.ensureUnusedCapacity(allocator, input.len);
+    var start: usize = 0;
+    for (input, 0..) |ch, i| {
+        const replacement = switch (ch) {
+            ' ' => "%20",
+            '#' => "%23",
+            '?' => "%3F",
+            '&' => "%26",
+            '%' => "%25",
+            '"' => "%22",
+            '<' => "%3C",
+            '>' => "%3E",
+            '\'' => "%27",
+            else => continue,
+        };
+        if (i > start) {
+            try list.appendSlice(allocator, input[start..i]);
         }
+        try list.appendSlice(allocator, replacement);
+        start = i + 1;
+    }
+    if (start < input.len) {
+        try list.appendSlice(allocator, input[start..]);
     }
 }
 
 /// Escapes HTML special characters for safe injection into text content.
 pub fn escapeHtml(list: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
-    for (input) |ch| {
-        switch (ch) {
-            '<' => try list.appendSlice(allocator, "&lt;"),
-            '>' => try list.appendSlice(allocator, "&gt;"),
-            '&' => try list.appendSlice(allocator, "&amp;"),
-            '"' => try list.appendSlice(allocator, "&quot;"),
-            '\'' => try list.appendSlice(allocator, "&#39;"),
-            else => try list.append(allocator, ch),
+    try list.ensureUnusedCapacity(allocator, input.len);
+    var start: usize = 0;
+    for (input, 0..) |ch, i| {
+        const replacement = switch (ch) {
+            '<' => "&lt;",
+            '>' => "&gt;",
+            '&' => "&amp;",
+            '"' => "&quot;",
+            '\'' => "&#39;",
+            else => continue,
+        };
+        if (i > start) {
+            try list.appendSlice(allocator, input[start..i]);
         }
+        try list.appendSlice(allocator, replacement);
+        start = i + 1;
+    }
+    if (start < input.len) {
+        try list.appendSlice(allocator, input[start..]);
     }
 }
 
 /// Percent-encodes a string for safe embedding as a URL query parameter value.
 pub fn writePercentEncodedQueryParam(list: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
-    for (input) |ch| {
-        switch (ch) {
-            ' ' => try list.appendSlice(allocator, "%20"),
-            '/' => try list.appendSlice(allocator, "%2F"),
-            '?' => try list.appendSlice(allocator, "%3F"),
-            '=' => try list.appendSlice(allocator, "%3D"),
-            '&' => try list.appendSlice(allocator, "%26"),
-            '#' => try list.appendSlice(allocator, "%23"),
-            '%' => try list.appendSlice(allocator, "%25"),
-            '"' => try list.appendSlice(allocator, "%22"),
-            '<' => try list.appendSlice(allocator, "%3C"),
-            '>' => try list.appendSlice(allocator, "%3E"),
-            '\'' => try list.appendSlice(allocator, "%27"),
-            else => try list.append(allocator, ch),
+    try list.ensureUnusedCapacity(allocator, input.len);
+    var start: usize = 0;
+    for (input, 0..) |ch, i| {
+        const replacement = switch (ch) {
+            ' ' => "%20",
+            '/' => "%2F",
+            '?' => "%3F",
+            '=' => "%3D",
+            '&' => "%26",
+            '#' => "%23",
+            '%' => "%25",
+            '"' => "%22",
+            '<' => "%3C",
+            '>' => "%3E",
+            '\'' => "%27",
+            else => continue,
+        };
+        if (i > start) {
+            try list.appendSlice(allocator, input[start..i]);
         }
+        try list.appendSlice(allocator, replacement);
+        start = i + 1;
+    }
+    if (start < input.len) {
+        try list.appendSlice(allocator, input[start..]);
     }
 }
 
 /// Parse and percent-decode a string query parameter by name from a URL target string.
 /// Caller owns the returned allocated slice if non-null.
 pub fn parseQueryString(allocator: std.mem.Allocator, target: []const u8, name: []const u8) ?[]const u8 {
-    const q_idx = std.mem.indexOf(u8, target, "?") orelse return null;
-    var it = std.mem.splitScalar(u8, target[q_idx + 1 ..], '&');
+    const q_idx = std.mem.indexOfScalar(u8, target, '?') orelse return null;
+    const after_q = target[q_idx + 1 ..];
+    const query = if (std.mem.indexOfScalar(u8, after_q, '#')) |hash_idx|
+        after_q[0..hash_idx]
+    else
+        after_q;
+    var it = std.mem.splitScalar(u8, query, '&');
     while (it.next()) |param| {
         if (std.mem.startsWith(u8, param, name) and param.len > name.len and param[name.len] == '=') {
             const raw = param[name.len + 1 ..];
+            // Fast path: if no percent-encoding is present, dupe directly
+            if (std.mem.indexOfScalar(u8, raw, '%') == null) {
+                return allocator.dupe(u8, raw) catch null;
+            }
             const decoded = allocator.dupe(u8, raw) catch return null;
             const res = std.Uri.percentDecodeInPlace(decoded);
             if (res.len != decoded.len) {
@@ -167,18 +220,14 @@ pub fn parseQueryString(allocator: std.mem.Allocator, target: []const u8, name: 
 
 /// Validates that a redirect target is a safe relative path on the same origin.
 pub fn isValidRedirect(target: []const u8) bool {
-    if (target.len == 0) return false;
-    if (target[0] != '/') return false;
+    if (target.len == 0 or target[0] != '/') return false;
     if (target.len > 1 and target[1] == '/') return false;
-    if (std.mem.indexOfScalar(u8, target, '\\') != null) return false;
-    if (std.mem.indexOfScalar(u8, target, '\r') != null) return false;
-    if (std.mem.indexOfScalar(u8, target, '\n') != null) return false;
-    if (std.mem.indexOfScalar(u8, target, '"') != null) return false;
-    if (std.mem.indexOfScalar(u8, target, '\'') != null) return false;
-    if (std.mem.indexOfScalar(u8, target, '<') != null) return false;
-    if (std.mem.indexOfScalar(u8, target, '>') != null) return false;
     for (target) |ch| {
         if (ch <= 32 or ch >= 127) return false;
+        switch (ch) {
+            '\\', '"', '\'', '<', '>' => return false,
+            else => {},
+        }
     }
     return true;
 }
@@ -193,11 +242,19 @@ pub fn readRequestBody(request: *std.http.Server.Request, allocator: std.mem.All
 /// Reads an HTTP request body up to max_size bytes into a newly allocated buffer.
 /// Returns error.PayloadTooLarge if the incoming body exceeds max_size.
 pub fn readRequestBodyWithLimit(request: *std.http.Server.Request, allocator: std.mem.Allocator, body_buf: []u8, max_size: usize) ![]u8 {
+    if (request.head.content_length) |cl| {
+        if (cl > max_size) return error.PayloadTooLarge;
+    }
+
     var reader = request.readerExpectNone(body_buf);
     var body_data = std.ArrayList(u8).empty;
     errdefer body_data.deinit(allocator);
 
-    var chunk_buf: [4096]u8 = undefined;
+    if (request.head.content_length) |cl| {
+        try body_data.ensureTotalCapacity(allocator, @intCast(cl));
+    }
+
+    var chunk_buf: [8192]u8 = undefined;
     while (true) {
         const n = reader.readSliceShort(&chunk_buf) catch break;
         if (n == 0) break;
@@ -211,20 +268,33 @@ pub fn readRequestBodyWithLimit(request: *std.http.Server.Request, allocator: st
 
 /// Escapes a string for safe embedding into JSON string literals.
 pub fn escapeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
-    for (input) |ch| {
-        switch (ch) {
-            '\\' => try out.appendSlice(allocator, "\\\\"),
-            '"' => try out.appendSlice(allocator, "\\\""),
-            '\n' => try out.appendSlice(allocator, "\\n"),
-            '\r' => try out.appendSlice(allocator, "\\r"),
-            '\t' => try out.appendSlice(allocator, "\\t"),
-            else => try out.append(allocator, ch),
+    try out.ensureUnusedCapacity(allocator, input.len);
+    var start: usize = 0;
+    for (input, 0..) |ch, i| {
+        const replacement = switch (ch) {
+            '\\' => "\\\\",
+            '"' => "\\\"",
+            '\n' => "\\n",
+            '\r' => "\\r",
+            '\t' => "\\t",
+            else => continue,
+        };
+        if (i > start) {
+            try out.appendSlice(allocator, input[start..i]);
         }
+        try out.appendSlice(allocator, replacement);
+        start = i + 1;
+    }
+    if (start < input.len) {
+        try out.appendSlice(allocator, input[start..]);
     }
 }
 
 /// Escapes a string for safe embedding into JSON string literals, returning an allocated slice.
 pub fn escapeJsonAlloc(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+    if (std.mem.indexOfAny(u8, input, "\\\"\n\r\t") == null) {
+        return try allocator.dupe(u8, input);
+    }
     var out = std.ArrayList(u8).empty;
     errdefer out.deinit(allocator);
     try escapeJsonString(&out, allocator, input);
@@ -233,17 +303,27 @@ pub fn escapeJsonAlloc(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
 
 /// Escapes a string for safe embedding into JavaScript string literals inside HTML templates.
 pub fn escapeForJs(out: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
-    for (input) |ch| {
-        switch (ch) {
-            '\\' => try out.appendSlice(allocator, "\\\\"),
-            '"' => try out.appendSlice(allocator, "\\\""),
-            '\'' => try out.appendSlice(allocator, "\\'"),
-            '<' => try out.appendSlice(allocator, "\\u003c"),
-            '>' => try out.appendSlice(allocator, "\\u003e"),
-            '\n' => try out.appendSlice(allocator, "\\n"),
-            '\r' => try out.appendSlice(allocator, "\\r"),
-            else => try out.append(allocator, ch),
+    try out.ensureUnusedCapacity(allocator, input.len);
+    var start: usize = 0;
+    for (input, 0..) |ch, i| {
+        const replacement = switch (ch) {
+            '\\' => "\\\\",
+            '"' => "\\\"",
+            '\'' => "\\'",
+            '<' => "\\u003c",
+            '>' => "\\u003e",
+            '\n' => "\\n",
+            '\r' => "\\r",
+            else => continue,
+        };
+        if (i > start) {
+            try out.appendSlice(allocator, input[start..i]);
         }
+        try out.appendSlice(allocator, replacement);
+        start = i + 1;
+    }
+    if (start < input.len) {
+        try out.appendSlice(allocator, input[start..]);
     }
 }
 
@@ -258,27 +338,53 @@ pub fn getFormValue(body: []const u8, key: []const u8) ?[]const u8 {
     return null;
 }
 
+inline fn hexDigit(ch: u8) ?u8 {
+    return switch (ch) {
+        '0'...'9' => ch - '0',
+        'a'...'f' => ch - 'a' + 10,
+        'A'...'F' => ch - 'A' + 10,
+        else => null,
+    };
+}
+
 /// Decodes an application/x-www-form-urlencoded value: converts '+' to space and decodes %XX sequences.
 /// Caller owns the returned slice and must free it with allocator.
 pub fn urlDecode(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
-    var list = std.ArrayList(u8).empty;
-    errdefer list.deinit(allocator);
+    // Fast path: if there are no '+' or '%' characters, dupe directly.
+    if (std.mem.indexOfAny(u8, input, "+%") == null) {
+        return try allocator.dupe(u8, input);
+    }
+
+    const out = try allocator.alloc(u8, input.len);
+    errdefer allocator.free(out);
 
     var i: usize = 0;
+    var out_idx: usize = 0;
     while (i < input.len) {
         if (input[i] == '+') {
-            try list.append(allocator, ' ');
+            out[out_idx] = ' ';
+            out_idx += 1;
             i += 1;
         } else if (input[i] == '%' and i + 2 < input.len) {
-            const hex = input[i + 1 .. i + 3];
-            const byte = std.fmt.parseInt(u8, hex, 16) catch ' ';
-            try list.append(allocator, byte);
+            const h1 = hexDigit(input[i + 1]);
+            const h2 = hexDigit(input[i + 2]);
+            if (h1 != null and h2 != null) {
+                out[out_idx] = (h1.? << 4) | h2.?;
+            } else {
+                out[out_idx] = ' ';
+            }
+            out_idx += 1;
             i += 3;
         } else {
-            try list.append(allocator, input[i]);
+            out[out_idx] = input[i];
+            out_idx += 1;
             i += 1;
         }
     }
-    return list.toOwnedSlice(allocator);
+
+    if (out_idx == input.len) {
+        return out;
+    }
+    return try allocator.realloc(out, out_idx);
 }
 
