@@ -205,6 +205,7 @@ test {
     _ = @import("web/handlers/analytics_admin_test.zig");
     _ = @import("web/handlers/show.zig");
     _ = @import("web/handlers/show_test.zig");
+    _ = @import("web/catalog/cards_test.zig");
     if (build_options.test_audio) {
         _ = @import("media/native/audio/test_ac3_mkv.zig");
         _ = @import("media/native/audio/test_eac3_mkv.zig");
