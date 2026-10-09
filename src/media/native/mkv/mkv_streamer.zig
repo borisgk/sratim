@@ -509,28 +509,7 @@ pub fn streamMkvGeneric(
         };
 
         // Stream video payload bytes directly from payload_file
-        for (v_samples) |s| {
-            if (s.size == 0) continue;
-            payload_reader.seekTo(s.offset) catch {
-                has_error.* = true;
-                break;
-            };
-
-            var rem = s.size;
-            while (rem > 0) {
-                const to_read: usize = @intCast(@min(rem, transfer_buf.len));
-                payload_reader.interface.readSliceAll(transfer_buf[0..to_read]) catch {
-                    has_error.* = true;
-                    break;
-                };
-                writer.writeAll(transfer_buf[0..to_read]) catch {
-                    has_error.* = true;
-                    break;
-                };
-                rem -= @intCast(to_read);
-            }
-            if (has_error.*) break;
-        }
+        isobmff.streamSamplePayloads(&payload_reader, writer, v_samples, &transfer_buf, has_error);
 
         // Stream audio payload bytes
         if (!has_error.* and a_samples.items.len > 0) {
@@ -544,28 +523,7 @@ pub fn streamMkvGeneric(
                 for (transcoded_audio_frames.items) |f| allocator.free(f.data);
                 transcoded_audio_frames.clearRetainingCapacity();
             } else {
-                for (a_samples.items) |s| {
-                    if (s.size == 0) continue;
-                    payload_reader.seekTo(s.offset) catch {
-                        has_error.* = true;
-                        break;
-                    };
-
-                    var rem = s.size;
-                    while (rem > 0) {
-                        const to_read: usize = @intCast(@min(rem, transfer_buf.len));
-                        payload_reader.interface.readSliceAll(transfer_buf[0..to_read]) catch {
-                            has_error.* = true;
-                            break;
-                        };
-                        writer.writeAll(transfer_buf[0..to_read]) catch {
-                            has_error.* = true;
-                            break;
-                        };
-                        rem -= @intCast(to_read);
-                    }
-                    if (has_error.*) break;
-                }
+                isobmff.streamSamplePayloads(&payload_reader, writer, a_samples.items, &transfer_buf, has_error);
             }
         }
 

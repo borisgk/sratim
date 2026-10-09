@@ -5,19 +5,9 @@ const logs_engine = @import("../../storage/logs_engine.zig");
 const analytics_mod = @import("../../db/analytics.zig");
 const template_engine = @import("../../core/template.zig");
 const global_css: []const u8 = @embedFile("../style.css");
+const utils = @import("../utils.zig");
+const escapeJsonString = utils.escapeJsonString;
 
-fn escapeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
-    for (input) |ch| {
-        switch (ch) {
-            '\\' => try out.appendSlice(allocator, "\\\\"),
-            '"' => try out.appendSlice(allocator, "\\\""),
-            '\n' => try out.appendSlice(allocator, "\\n"),
-            '\r' => try out.appendSlice(allocator, "\\r"),
-            '\t' => try out.appendSlice(allocator, "\\t"),
-            else => try out.append(allocator, ch),
-        }
-    }
-}
 
 fn appendFormatted(out: *std.ArrayList(u8), allocator: std.mem.Allocator, comptime fmt: []const u8, args: anytype) !void {
     const formatted = try std.fmt.allocPrint(allocator, fmt, args);

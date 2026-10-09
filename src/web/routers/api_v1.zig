@@ -23,7 +23,7 @@ pub fn route(
     config: *const config_mod.Config,
     database: *db_mod.Database,
     logs_database: *db_mod.Database,
-    session_info_opt: ?session_mod.SessionInfo,
+    session_info: session_mod.SessionInfo,
     body_buf: *[8192]u8,
 ) !bool {
     const target = request.head.target;
@@ -38,19 +38,8 @@ pub fn route(
         return true;
     }
 
-    // Protected routes: require session
-    if (session_info_opt == null) {
-        try request.respond("{\"success\":false,\"error\":\"Unauthorized\"}", .{
-            .status = .unauthorized,
-            .extra_headers = &.{
-                .{ .name = "content-type", .value = "application/json" },
-            },
-        });
-        return true;
-    }
-
     if (std.mem.eql(u8, target, "/api/v1/library/rename") or std.mem.eql(u8, target, "/api/v1/libraries/rename")) {
-        try library.handleRenameLibrary(request, allocator, database, session_info_opt.?.is_admin, body_buf);
+        try library.handleRenameLibrary(request, allocator, database, session_info.is_admin, body_buf);
         return true;
     } else if (std.mem.eql(u8, target, "/api/v1/libraries")) {
         try library.handleGetLibraries(request, allocator, database);

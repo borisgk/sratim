@@ -3,52 +3,7 @@ const db_mod = @import("../../db/db.zig");
 const users_mod = @import("../../db/users.zig");
 const template_engine = @import("../../core/template.zig");
 const global_css: []const u8 = @embedFile("../style.css");
-
-fn getFormValue(body: []const u8, key: []const u8) ?[]const u8 {
-    var it = std.mem.splitSequence(u8, body, "&");
-    while (it.next()) |pair| {
-        if (std.mem.startsWith(u8, pair, key) and pair.len > key.len and pair[key.len] == '=') {
-            return pair[key.len + 1 ..];
-        }
-    }
-    return null;
-}
-
-fn urlDecode(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
-    var list = std.ArrayList(u8).empty;
-    defer list.deinit(allocator);
-
-    var i: usize = 0;
-    while (i < input.len) {
-        if (input[i] == '+') {
-            try list.append(allocator, ' ');
-            i += 1;
-        } else if (input[i] == '%' and i + 2 < input.len) {
-            const hex = input[i + 1 .. i + 3];
-            const byte = std.fmt.parseInt(u8, hex, 16) catch ' ';
-            try list.append(allocator, byte);
-            i += 3;
-        } else {
-            try list.append(allocator, input[i]);
-            i += 1;
-        }
-    }
-    return list.toOwnedSlice(allocator);
-}
-
-/// Escapes HTML characters for safe table injection.
-fn escapeHtml(list: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
-    for (input) |ch| {
-        switch (ch) {
-            '<' => try list.appendSlice(allocator, "&lt;"),
-            '>' => try list.appendSlice(allocator, "&gt;"),
-            '&' => try list.appendSlice(allocator, "&amp;"),
-            '"' => try list.appendSlice(allocator, "&quot;"),
-            '\'' => try list.appendSlice(allocator, "&#39;"),
-            else => try list.append(allocator, ch),
-        }
-    }
-}
+const utils = @import("../utils.zig");
 
 /// Serves the User Management page at GET /admin/users
 pub fn serveUserManagementPage(
@@ -80,7 +35,7 @@ pub fn serveUserManagementPage(
             try rows_buf.appendSlice(allocator, "U");
         }
         try rows_buf.appendSlice(allocator, "</div>\n      <span class=\"user-name\">");
-        try escapeHtml(&rows_buf, allocator, u.username);
+        try utils.escapeHtml(&rows_buf, allocator, u.username);
         if (is_current_user) {
             try rows_buf.appendSlice(allocator, " <span class=\"you-badge\">(You)</span>");
         }
@@ -159,32 +114,18 @@ pub fn serveUserManagementPage(
     }) catch return;
 }
 
-fn readRequestBody(request: *std.http.Server.Request, allocator: std.mem.Allocator, body_buf: *[8192]u8) ![]u8 {
-    var reader = request.readerExpectNone(body_buf);
-    var body_data = std.ArrayList(u8).empty;
-    errdefer body_data.deinit(allocator);
-
-    var chunk_buf: [4096]u8 = undefined;
-    while (true) {
-        const n = reader.readSliceShort(&chunk_buf) catch break;
-        if (n == 0) break;
-        try body_data.appendSlice(allocator, chunk_buf[0..n]);
-    }
-    return body_data.toOwnedSlice(allocator);
-}
-
 /// Handles POST /admin/users/create
 pub fn handleCreateUserPost(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database, io: std.Io, body_buf: *[8192]u8) !void {
-    const body = try readRequestBody(request, allocator, body_buf);
+    const body = try utils.readRequestBody(request, allocator, body_buf);
     defer allocator.free(body);
 
-    const username_enc = getFormValue(body, "username") orelse "";
-    const password_enc = getFormValue(body, "password") orelse "";
-    const is_admin_val = getFormValue(body, "is_admin") orelse "0";
+    const username_enc = utils.getFormValue(body, "username") orelse "";
+    const password_enc = utils.getFormValue(body, "password") orelse "";
+    const is_admin_val = utils.getFormValue(body, "is_admin") orelse "0";
 
-    const username = try urlDecode(allocator, username_enc);
+    const username = try utils.urlDecode(allocator, username_enc);
     defer allocator.free(username);
-    const password = try urlDecode(allocator, password_enc);
+    const password = try utils.urlDecode(allocator, password_enc);
     defer allocator.free(password);
 
     if (username.len > 0 and password.len > 0) {
@@ -205,10 +146,10 @@ pub fn handleCreateUserPost(request: *std.http.Server.Request, allocator: std.me
 /// Handles POST /admin/users/delete
 pub fn handleDeleteUserPost(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database, current_username: []const u8, body_buf: *[8192]u8) !void {
     _ = current_username;
-    const body = try readRequestBody(request, allocator, body_buf);
+    const body = try utils.readRequestBody(request, allocator, body_buf);
     defer allocator.free(body);
 
-    const user_id_str = getFormValue(body, "user_id") orelse "";
+    const user_id_str = utils.getFormValue(body, "user_id") orelse "";
     if (std.fmt.parseInt(i64, user_id_str, 10)) |id| {
         users_mod.deleteUserById(database, id) catch |err| {
             std.debug.print("Delete user error: {}\n", .{err});
@@ -226,10 +167,10 @@ pub fn handleDeleteUserPost(request: *std.http.Server.Request, allocator: std.me
 /// Handles POST /admin/users/toggle-role
 pub fn handleToggleRolePost(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database, current_username: []const u8, body_buf: *[8192]u8) !void {
     _ = current_username;
-    const body = try readRequestBody(request, allocator, body_buf);
+    const body = try utils.readRequestBody(request, allocator, body_buf);
     defer allocator.free(body);
 
-    const user_id_str = getFormValue(body, "user_id") orelse "";
+    const user_id_str = utils.getFormValue(body, "user_id") orelse "";
     if (std.fmt.parseInt(i64, user_id_str, 10)) |id| {
         users_mod.toggleAdminRole(database, id) catch |err| {
             std.debug.print("Toggle role error: {}\n", .{err});
@@ -246,13 +187,13 @@ pub fn handleToggleRolePost(request: *std.http.Server.Request, allocator: std.me
 
 /// Handles POST /admin/users/reset-password
 pub fn handleResetPasswordPost(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database, io: std.Io, body_buf: *[8192]u8) !void {
-    const body = try readRequestBody(request, allocator, body_buf);
+    const body = try utils.readRequestBody(request, allocator, body_buf);
     defer allocator.free(body);
 
-    const user_id_str = getFormValue(body, "user_id") orelse "";
-    const new_pwd_enc = getFormValue(body, "new_password") orelse "";
+    const user_id_str = utils.getFormValue(body, "user_id") orelse "";
+    const new_pwd_enc = utils.getFormValue(body, "new_password") orelse "";
 
-    const new_password = try urlDecode(allocator, new_pwd_enc);
+    const new_password = try utils.urlDecode(allocator, new_pwd_enc);
     defer allocator.free(new_password);
 
     if (new_password.len > 0) {
@@ -270,3 +211,4 @@ pub fn handleResetPasswordPost(request: *std.http.Server.Request, allocator: std
         },
     }) catch return;
 }
+

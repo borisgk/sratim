@@ -3,20 +3,7 @@ const db_mod = @import("../../db/db.zig");
 const unmatched_db = @import("../../db/unmatched.zig");
 const template_engine = @import("../../core/template.zig");
 const global_css: []const u8 = @embedFile("../style.css");
-
-/// Escapes HTML special characters for safe rendering.
-fn escapeHtml(list: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
-    for (input) |ch| {
-        switch (ch) {
-            '<' => try list.appendSlice(allocator, "&lt;"),
-            '>' => try list.appendSlice(allocator, "&gt;"),
-            '&' => try list.appendSlice(allocator, "&amp;"),
-            '"' => try list.appendSlice(allocator, "&quot;"),
-            '\'' => try list.appendSlice(allocator, "&#39;"),
-            else => try list.append(allocator, ch),
-        }
-    }
-}
+const utils = @import("../utils.zig");
 
 /// Serves the Unmatched Metadata page at GET /admin/unmatched
 pub fn serveUnmatchedPage(
@@ -50,14 +37,14 @@ pub fn serveUnmatchedPage(
     } else {
         for (items) |item| {
             try rows_buf.appendSlice(allocator, "<tr>\n  <td>\n    <div style=\"display: flex; flex-direction: column;\">\n      <span style=\"font-weight: 600; color: #f3f4f6;\">");
-            try escapeHtml(&rows_buf, allocator, item.title);
+            try utils.escapeHtml(&rows_buf, allocator, item.title);
             try rows_buf.appendSlice(allocator, "</span>\n      <span style=\"font-size: 0.8rem; color: #9ca3af; font-family: monospace; word-break: break-all;\">");
-            try escapeHtml(&rows_buf, allocator, item.file_path_or_path);
+            try utils.escapeHtml(&rows_buf, allocator, item.file_path_or_path);
             try rows_buf.appendSlice(allocator, "</span>\n    </div>\n  </td>\n");
 
             // Library column
             try rows_buf.appendSlice(allocator, "  <td>\n    <div style=\"display: flex; align-items: center; gap: 6px;\">\n      <span class=\"role-badge user\">");
-            try escapeHtml(&rows_buf, allocator, item.library_name);
+            try utils.escapeHtml(&rows_buf, allocator, item.library_name);
             try rows_buf.appendSlice(allocator, "</span>\n    </div>\n  </td>\n");
 
             // Status column

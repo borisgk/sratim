@@ -355,28 +355,7 @@ pub fn streamMp4WithMedia(
         };
 
         // Stream Video Samples
-        for (v_slice) |s| {
-            if (s.size == 0) continue;
-            file_reader.seekTo(s.offset) catch {
-                http_ctx.has_error = true;
-                break;
-            };
-
-            var rem = s.size;
-            while (rem > 0) {
-                const to_read: usize = @intCast(@min(rem, transfer_buf.len));
-                file_reader.interface.readSliceAll(transfer_buf[0..to_read]) catch {
-                    http_ctx.has_error = true;
-                    break;
-                };
-                http_ctx.writer.writer.writeAll(transfer_buf[0..to_read]) catch {
-                    http_ctx.has_error = true;
-                    break;
-                };
-                rem -= @intCast(to_read);
-            }
-            if (http_ctx.has_error) break;
-        }
+        isobmff.streamSamplePayloads(&file_reader, &http_ctx.writer.writer, v_slice, &transfer_buf, &http_ctx.has_error);
 
         // Stream Audio Samples
         if (!http_ctx.has_error and out_a_slice.len > 0) {
@@ -390,28 +369,7 @@ pub fn streamMp4WithMedia(
                 for (transcoded_audio_frames.items) |f| allocator.free(f.data);
                 transcoded_audio_frames.clearRetainingCapacity();
             } else {
-                for (a_slice) |s| {
-                    if (s.size == 0) continue;
-                    file_reader.seekTo(s.offset) catch {
-                        http_ctx.has_error = true;
-                        break;
-                    };
-
-                    var rem = s.size;
-                    while (rem > 0) {
-                        const to_read: usize = @intCast(@min(rem, transfer_buf.len));
-                        file_reader.interface.readSliceAll(transfer_buf[0..to_read]) catch {
-                            http_ctx.has_error = true;
-                            break;
-                        };
-                        http_ctx.writer.writer.writeAll(transfer_buf[0..to_read]) catch {
-                            http_ctx.has_error = true;
-                            break;
-                        };
-                        rem -= @intCast(to_read);
-                    }
-                    if (http_ctx.has_error) break;
-                }
+                isobmff.streamSamplePayloads(&file_reader, &http_ctx.writer.writer, a_slice, &transfer_buf, &http_ctx.has_error);
             }
         }
 

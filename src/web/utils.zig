@@ -182,3 +182,70 @@ pub fn isValidRedirect(target: []const u8) bool {
     }
     return true;
 }
+
+/// Reads an HTTP request body completely into a newly allocated buffer.
+/// Uses body_buf for reading chunks via request.readerExpectNone.
+/// Caller owns the returned slice and must free it with allocator.
+pub fn readRequestBody(request: *std.http.Server.Request, allocator: std.mem.Allocator, body_buf: []u8) ![]u8 {
+    var reader = request.readerExpectNone(body_buf);
+    var body_data = std.ArrayList(u8).empty;
+    errdefer body_data.deinit(allocator);
+
+    var chunk_buf: [4096]u8 = undefined;
+    while (true) {
+        const n = reader.readSliceShort(&chunk_buf) catch break;
+        if (n == 0) break;
+        try body_data.appendSlice(allocator, chunk_buf[0..n]);
+    }
+    return try body_data.toOwnedSlice(allocator);
+}
+
+/// Escapes a string for safe embedding into JSON string literals.
+pub fn escapeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
+    for (input) |ch| {
+        switch (ch) {
+            '\\' => try out.appendSlice(allocator, "\\\\"),
+            '"' => try out.appendSlice(allocator, "\\\""),
+            '\n' => try out.appendSlice(allocator, "\\n"),
+            '\r' => try out.appendSlice(allocator, "\\r"),
+            '\t' => try out.appendSlice(allocator, "\\t"),
+            else => try out.append(allocator, ch),
+        }
+    }
+}
+
+/// Extracts the raw (encoded) value for a given key from an application/x-www-form-urlencoded body.
+pub fn getFormValue(body: []const u8, key: []const u8) ?[]const u8 {
+    var it = std.mem.splitScalar(u8, body, '&');
+    while (it.next()) |pair| {
+        if (std.mem.startsWith(u8, pair, key) and pair.len > key.len and pair[key.len] == '=') {
+            return pair[key.len + 1 ..];
+        }
+    }
+    return null;
+}
+
+/// Decodes an application/x-www-form-urlencoded value: converts '+' to space and decodes %XX sequences.
+/// Caller owns the returned slice and must free it with allocator.
+pub fn urlDecode(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+    var list = std.ArrayList(u8).empty;
+    errdefer list.deinit(allocator);
+
+    var i: usize = 0;
+    while (i < input.len) {
+        if (input[i] == '+') {
+            try list.append(allocator, ' ');
+            i += 1;
+        } else if (input[i] == '%' and i + 2 < input.len) {
+            const hex = input[i + 1 .. i + 3];
+            const byte = std.fmt.parseInt(u8, hex, 16) catch ' ';
+            try list.append(allocator, byte);
+            i += 3;
+        } else {
+            try list.append(allocator, input[i]);
+            i += 1;
+        }
+    }
+    return list.toOwnedSlice(allocator);
+}
+

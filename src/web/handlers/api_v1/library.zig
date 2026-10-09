@@ -35,20 +35,10 @@ pub fn handleGetLibraries(
     for (libraries, 0..) |lib, i| {
         if (i > 0) try json.appendSlice(allocator, ",");
 
-        var escaped_name = std.ArrayList(u8).empty;
-        defer escaped_name.deinit(allocator);
-        for (lib.name) |c| {
-            switch (c) {
-                '"' => try escaped_name.appendSlice(allocator, "\\\""),
-                '\\' => try escaped_name.appendSlice(allocator, "\\\\"),
-                '\n' => try escaped_name.appendSlice(allocator, "\\n"),
-                '\r' => try escaped_name.appendSlice(allocator, "\\r"),
-                '\t' => try escaped_name.appendSlice(allocator, "\\t"),
-                else => try escaped_name.append(allocator, c),
-            }
-        }
+        const escaped_name = try utils.escapeJsonString(allocator, lib.name);
+        defer allocator.free(escaped_name);
 
-        const lib_json = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"name\":\"{s}\",\"type\":\"{s}\"}}", .{ lib.id, escaped_name.items, lib.lib_type.toString() });
+        const lib_json = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"name\":\"{s}\",\"type\":\"{s}\"}}", .{ lib.id, escaped_name, lib.lib_type.toString() });
         defer allocator.free(lib_json);
         try json.appendSlice(allocator, lib_json);
     }
@@ -121,20 +111,10 @@ pub fn handleGetLibraryItems(
             var tmdb_id_buf: [32]u8 = undefined;
             const tmdb_id_str = if (s.tmdb_id) |tid| std.fmt.bufPrint(&tmdb_id_buf, "{d}", .{tid}) catch "" else "";
 
-            var escaped_title = std.ArrayList(u8).empty;
-            defer escaped_title.deinit(allocator);
-            for (title) |c| {
-                switch (c) {
-                    '"' => try escaped_title.appendSlice(allocator, "\\\""),
-                    '\\' => try escaped_title.appendSlice(allocator, "\\\\"),
-                    '\n' => try escaped_title.appendSlice(allocator, "\\n"),
-                    '\r' => try escaped_title.appendSlice(allocator, "\\r"),
-                    '\t' => try escaped_title.appendSlice(allocator, "\\t"),
-                    else => try escaped_title.append(allocator, c),
-                }
-            }
+            const escaped_title = try utils.escapeJsonString(allocator, title);
+            defer allocator.free(escaped_title);
 
-            const item_json = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"title\":\"{s}\",\"poster_path\":\"{s}\",\"tmdb_id\":\"{s}\",\"type\":\"show\"}}", .{ show_id, escaped_title.items, poster_path, tmdb_id_str });
+            const item_json = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"title\":\"{s}\",\"poster_path\":\"{s}\",\"tmdb_id\":\"{s}\",\"type\":\"show\"}}", .{ show_id, escaped_title, poster_path, tmdb_id_str });
             defer allocator.free(item_json);
             try json.appendSlice(allocator, item_json);
         }
@@ -158,20 +138,10 @@ pub fn handleGetLibraryItems(
             var tmdb_id_buf: [32]u8 = undefined;
             const tmdb_id_str = if (m.tmdb_id) |tid| std.fmt.bufPrint(&tmdb_id_buf, "{d}", .{tid}) catch "" else "";
 
-            var escaped_title = std.ArrayList(u8).empty;
-            defer escaped_title.deinit(allocator);
-            for (display_title) |ch| {
-                switch (ch) {
-                    '"' => try escaped_title.appendSlice(allocator, "\\\""),
-                    '\\' => try escaped_title.appendSlice(allocator, "\\\\"),
-                    '\n' => try escaped_title.appendSlice(allocator, "\\n"),
-                    '\r' => try escaped_title.appendSlice(allocator, "\\r"),
-                    '\t' => try escaped_title.appendSlice(allocator, "\\t"),
-                    else => try escaped_title.append(allocator, ch),
-                }
-            }
+            const escaped_title = try utils.escapeJsonString(allocator, display_title);
+            defer allocator.free(escaped_title);
 
-            const item_json = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"title\":\"{s}\",\"poster_path\":\"{s}\",\"tmdb_id\":\"{s}\",\"type\":\"movie\"}}", .{ movie_id, escaped_title.items, poster_path, tmdb_id_str });
+            const item_json = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"title\":\"{s}\",\"poster_path\":\"{s}\",\"tmdb_id\":\"{s}\",\"type\":\"movie\"}}", .{ movie_id, escaped_title, poster_path, tmdb_id_str });
             defer allocator.free(item_json);
             try json.appendSlice(allocator, item_json);
         }
@@ -214,18 +184,18 @@ pub fn handleRenameLibrary(
         return;
     }
 
-    var reader = request.readerExpectNone(body_buf);
-    var body_data = std.ArrayList(u8).empty;
-    defer body_data.deinit(allocator);
+    const body_data = utils.readRequestBody(request, allocator, body_buf, 64 * 1024) catch {
+        try request.respond("{\"success\":false,\"error\":\"Payload too large\"}", .{
+            .status = .payload_too_large,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "application/json" },
+            },
+        });
+        return;
+    };
+    defer allocator.free(body_data);
 
-    var chunk_buf: [4096]u8 = undefined;
-    while (true) {
-        const n = reader.readSliceShort(&chunk_buf) catch break;
-        if (n == 0) break;
-        try body_data.appendSlice(allocator, chunk_buf[0..n]);
-    }
-
-    const parsed = std.json.parseFromSlice(RenameLibraryPayload, allocator, body_data.items, .{
+    const parsed = std.json.parseFromSlice(RenameLibraryPayload, allocator, body_data, .{
         .ignore_unknown_fields = true,
     }) catch {
         try request.respond("{\"success\":false,\"error\":\"Invalid JSON body\"}", .{
@@ -279,20 +249,10 @@ pub fn handleRenameLibrary(
         },
     };
 
-    var escaped_name = std.ArrayList(u8).empty;
-    defer escaped_name.deinit(allocator);
-    for (trimmed) |ch| {
-        switch (ch) {
-            '"' => try escaped_name.appendSlice(allocator, "\\\""),
-            '\\' => try escaped_name.appendSlice(allocator, "\\\\"),
-            '\n' => try escaped_name.appendSlice(allocator, "\\n"),
-            '\r' => try escaped_name.appendSlice(allocator, "\\r"),
-            '\t' => try escaped_name.appendSlice(allocator, "\\t"),
-            else => try escaped_name.append(allocator, ch),
-        }
-    }
+    const escaped_name = try utils.escapeJsonString(allocator, trimmed);
+    defer allocator.free(escaped_name);
 
-    const resp_json = try std.fmt.allocPrint(allocator, "{{\"success\":true,\"library\":{{\"id\":{d},\"name\":\"{s}\"}}}}", .{ parsed.value.library_id, escaped_name.items });
+    const resp_json = try std.fmt.allocPrint(allocator, "{{\"success\":true,\"library\":{{\"id\":{d},\"name\":\"{s}\"}}}}", .{ parsed.value.library_id, escaped_name });
     defer allocator.free(resp_json);
 
     try request.respond(resp_json, .{

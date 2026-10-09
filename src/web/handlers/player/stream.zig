@@ -33,32 +33,7 @@ pub fn handleStream(
     }
 
     const target = request.head.target;
-    const movie_id = utils.parseQueryInt(i64, target, "id");
-    const episode_id = utils.parseQueryInt(i64, target, "episode_id");
-
-    if (movie_id == null and episode_id == null) {
-        try request.respond("Missing id or episode_id parameter", .{ .status = .bad_request });
-        return;
-    }
-
-    const media_info_opt = if (movie_id != null)
-        metadata_mod.getMovieInfoById(database, allocator, movie_id.?) catch null
-    else
-        metadata_mod.getEpisodeInfoById(database, allocator, episode_id.?) catch null;
-
-    const resolved = common.resolveMediaPath(database, allocator, media_info_opt) catch |err| {
-        if (err == error.PathTraversal) {
-            try request.respond("Forbidden", .{ .status = .forbidden });
-        } else {
-            try request.respond("Internal Server Error", .{ .status = .internal_server_error });
-        }
-        return;
-    };
-    if (resolved == null) {
-        try request.respond("Movie not found", .{ .status = .not_found });
-        return;
-    }
-    var res_media = resolved.?;
+    var res_media = (try common.resolveRequestMedia(request, allocator, database)) orelse return;
     defer res_media.deinit(allocator);
 
     const start_time = utils.parseQueryFloat(target, "start") orelse 0;
@@ -134,7 +109,7 @@ pub fn handleStream(
             } else if (bytes_read >= 4 and magic_buf[0] == 0x1A and magic_buf[1] == 0x45 and magic_buf[2] == 0xDF and magic_buf[3] == 0xA3) {
                 is_supported = mkv_streamer.canStreamMkvNatively(allocator, io, z_path, audio_idx);
                 if (is_supported) {
-                    actual_start = media_metadata.getKeyframePts(io, resolved.?.resolved_path, start_time, audio_idx, config.media_engine.metadata);
+                    actual_start = media_metadata.getKeyframePts(io, res_media.resolved_path, start_time, audio_idx, config.media_engine.metadata);
                     if (streamer.getMediaInfo(allocator, io, z_path, config.media_engine.metadata)) |minfo| {
                         defer minfo.deinit(allocator);
                         if (minfo.audio_tracks.len > 0) {
@@ -202,7 +177,7 @@ pub fn handleStream(
             return;
         };
     } else {
-        streamer.streamMedia(std.heap.c_allocator, io, resolved.?.resolved_path, start_time, audio_idx, &stream_ctx, config.media_engine.streamer, config.media_engine.audio_transcoder) catch |e| {
+        streamer.streamMedia(std.heap.c_allocator, io, res_media.resolved_path, start_time, audio_idx, &stream_ctx, config.media_engine.streamer, config.media_engine.audio_transcoder) catch |e| {
             if (e != error.ConnectionDropped) {
                 std.debug.print("Stream error: {}\n", .{e});
             }

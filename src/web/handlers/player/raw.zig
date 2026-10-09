@@ -29,33 +29,7 @@ pub fn handleRawPlay(
         return;
     }
 
-    const target = request.head.target;
-    const movie_id = utils.parseQueryInt(i64, target, "id");
-    const episode_id = utils.parseQueryInt(i64, target, "episode_id");
-
-    if (movie_id == null and episode_id == null) {
-        try request.respond("Missing id or episode_id parameter", .{ .status = .bad_request });
-        return;
-    }
-
-    const media_info_opt = if (movie_id != null)
-        metadata_mod.getMovieInfoById(database, allocator, movie_id.?) catch null
-    else
-        metadata_mod.getEpisodeInfoById(database, allocator, episode_id.?) catch null;
-
-    const resolved = common.resolveMediaPath(database, allocator, media_info_opt) catch |err| {
-        if (err == error.PathTraversal) {
-            try request.respond("Forbidden", .{ .status = .forbidden });
-        } else {
-            try request.respond("Internal Server Error", .{ .status = .internal_server_error });
-        }
-        return;
-    };
-    if (resolved == null) {
-        try request.respond("Media not found", .{ .status = .not_found });
-        return;
-    }
-    var res_media = resolved.?;
+    var res_media = (try common.resolveRequestMedia(request, allocator, database)) orelse return;
     defer res_media.deinit(allocator);
 
     const file_path = res_media.resolved_path;

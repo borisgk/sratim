@@ -22,32 +22,10 @@ pub fn handlePlayer(
     const movie_id = utils.parseQueryInt(i64, target, "id");
     const episode_id = utils.parseQueryInt(i64, target, "episode_id");
 
-    if (movie_id == null and episode_id == null) {
-        try request.respond("Missing movie id or episode id parameter", .{ .status = .bad_request });
-        return;
-    }
-
-    const media_info_opt = if (movie_id != null)
-        metadata_mod.getMovieInfoById(database, allocator, movie_id.?) catch null
-    else
-        metadata_mod.getEpisodeInfoById(database, allocator, episode_id.?) catch null;
-
-    const resolved = common.resolveMediaPath(database, allocator, media_info_opt) catch |err| {
-        if (err == error.PathTraversal) {
-            try request.respond("Forbidden", .{ .status = .forbidden });
-        } else {
-            try request.respond("Internal Server Error", .{ .status = .internal_server_error });
-        }
-        return;
-    };
-    if (resolved == null) {
-        try request.respond("Media not found", .{ .status = .not_found });
-        return;
-    }
-    var res_media = resolved.?;
+    var res_media = (try common.resolveRequestMedia(request, allocator, database)) orelse return;
     defer res_media.deinit(allocator);
 
-    const c_full_path = try allocator.dupeSentinel(u8, resolved.?.resolved_path, 0);
+    const c_full_path = try allocator.dupeSentinel(u8, res_media.resolved_path, 0);
     defer allocator.free(c_full_path);
 
     const media_info = streamer.getMediaInfo(allocator, io, c_full_path, config.media_engine.metadata) catch streamer.MediaInfo{

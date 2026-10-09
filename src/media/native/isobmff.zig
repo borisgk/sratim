@@ -35,3 +35,37 @@ pub const parseSubtitleTrackBox = tracks.parseSubtitleTrackBox;
 pub const parseGenericTrackBox = tracks.parseGenericTrackBox;
 pub const parseMp4SubtitleTrack = parser.parseMp4SubtitleTrack;
 pub const parseMp4Media = parser.parseMp4Media;
+
+/// Reads media sample payloads from a seekable reader in chunks and writes them directly to writer.
+/// If an I/O error occurs, sets `has_error.* = true` and returns immediately.
+pub fn streamSamplePayloads(
+    payload_reader: anytype,
+    writer: anytype,
+    sample_list: []const MediaSample,
+    transfer_buf: []u8,
+    has_error: *bool,
+) void {
+    for (sample_list) |s| {
+        if (s.size == 0) continue;
+        payload_reader.seekTo(s.offset) catch {
+            has_error.* = true;
+            return;
+        };
+
+        var rem = s.size;
+        while (rem > 0) {
+            const to_read: usize = @intCast(@min(rem, transfer_buf.len));
+            payload_reader.interface.readSliceAll(transfer_buf[0..to_read]) catch {
+                has_error.* = true;
+                return;
+            };
+            writer.writeAll(transfer_buf[0..to_read]) catch {
+                has_error.* = true;
+                return;
+            };
+            rem -= @intCast(to_read);
+        }
+        if (has_error.*) return;
+    }
+}
+

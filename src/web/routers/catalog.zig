@@ -17,30 +17,9 @@ pub fn route(
     config: *const config_mod.Config,
     database: *db_mod.Database,
     logs_database: *db_mod.Database,
-    session_info_opt: ?session_mod.SessionInfo,
+    session_info: session_mod.SessionInfo,
 ) !bool {
     const target = request.head.target;
-
-    if (session_info_opt == null) {
-        var loc_buf = std.ArrayList(u8).empty;
-        defer loc_buf.deinit(allocator);
-        try loc_buf.appendSlice(allocator, "/login");
-
-        if (target.len > 1 and !std.mem.startsWith(u8, target, "/api/") and !std.mem.startsWith(u8, target, "/login")) {
-            try loc_buf.appendSlice(allocator, "?redirect=");
-            try utils.writePercentEncodedQueryParam(&loc_buf, allocator, target);
-        }
-
-        try request.respond("", .{
-            .status = .found,
-            .extra_headers = &.{
-                .{ .name = "location", .value = loc_buf.items },
-            },
-        });
-        return true;
-    }
-
-    const session_info = session_info_opt.?;
 
     if (std.mem.eql(u8, target, "/")) {
         const html_content = catalog_index.generateHtml(allocator, database, logs_database, session_info.username, session_info.is_admin) catch |err| {

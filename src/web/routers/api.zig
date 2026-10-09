@@ -16,7 +16,7 @@ pub fn route(
     config: *const config_mod.Config,
     database: *db_mod.Database,
     logs_database: *db_mod.Database,
-    session_info_opt: ?session_mod.SessionInfo,
+    session_info: session_mod.SessionInfo,
     resp_buf: *[8192]u8,
 ) !bool {
     const target = request.head.target;
@@ -25,18 +25,6 @@ pub fn route(
     if (!std.mem.startsWith(u8, target, "/api/") and !std.mem.startsWith(u8, target, "/libraries/add")) {
         return false;
     }
-
-    if (session_info_opt == null) {
-        try request.respond("", .{
-            .status = .found,
-            .extra_headers = &.{
-                .{ .name = "location", .value = "/login" },
-            },
-        });
-        return true;
-    }
-
-    const session_info = session_info_opt.?;
 
     if (std.mem.startsWith(u8, target, "/api/v1/admin/analytics") and method == .GET) {
         if (!session_info.is_admin) {

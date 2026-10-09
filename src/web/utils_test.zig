@@ -48,3 +48,37 @@ test "getLanIp does not crash" {
         try testing.expectEqual(@as(usize, 4), octets);
     }
 }
+
+test "getFormValue and urlDecode" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    const body = "username=john+doe&password=secret%21%40%23&role=admin";
+    const user_raw = utils.getFormValue(body, "username");
+    try testing.expect(user_raw != null);
+    try testing.expectEqualStrings("john+doe", user_raw.?);
+
+    const user_decoded = try utils.urlDecode(alloc, user_raw.?);
+    defer alloc.free(user_decoded);
+    try testing.expectEqualStrings("john doe", user_decoded);
+
+    const pass_raw = utils.getFormValue(body, "password");
+    try testing.expect(pass_raw != null);
+    const pass_decoded = try utils.urlDecode(alloc, pass_raw.?);
+    defer alloc.free(pass_decoded);
+    try testing.expectEqualStrings("secret!@#", pass_decoded);
+
+    try testing.expect(utils.getFormValue(body, "nonexistent") == null);
+}
+
+test "escapeJsonString" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var buf = std.ArrayList(u8).empty;
+    defer buf.deinit(alloc);
+
+    try utils.escapeJsonString(&buf, alloc, "Hello \"World\"\nLine 2\tTab\\Backslash\rCarriage");
+    try testing.expectEqualStrings("Hello \\\"World\\\"\\nLine 2\\tTab\\\\Backslash\\rCarriage", buf.items);
+}
+

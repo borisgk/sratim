@@ -104,18 +104,28 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
 
         // --- Auth middleware: all remaining routes require a valid session ---
         const session_token = auth_handler.extractCookieToken(&request);
-        const session_info = if (session_token) |token|
+        const session_info_opt = if (session_token) |token|
             session_mod.getSession(database, allocator, token) catch null
         else
             null;
 
-        if (session_info == null) {
+        if (session_info_opt == null) {
+            if (std.mem.startsWith(u8, target, "/api/")) {
+                request.respond("{\"success\":false,\"error\":\"Unauthorized\"}", .{
+                    .status = .unauthorized,
+                    .extra_headers = &.{
+                        .{ .name = "content-type", .value = "application/json" },
+                    },
+                }) catch return;
+                continue;
+            }
+
             var loc_buf = std.ArrayList(u8).empty;
             defer loc_buf.deinit(allocator);
             loc_buf.appendSlice(allocator, "/login") catch return;
 
-            // Only append redirect if target is not root "/" or an API call or another login attempt
-            if (target.len > 1 and !std.mem.startsWith(u8, target, "/api/") and !std.mem.startsWith(u8, target, "/login")) {
+            // Only append redirect if target is not root "/" or another login attempt
+            if (target.len > 1 and !std.mem.startsWith(u8, target, "/login")) {
                 loc_buf.appendSlice(allocator, "?redirect=") catch return;
                 utils.writePercentEncodedQueryParam(&loc_buf, allocator, target) catch return;
             }
@@ -129,28 +139,45 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
             continue;
         }
 
+        const session_info = session_info_opt.?;
+
         // Route: API v1 Handlers
-        if (api_v1_router.route(&request, allocator, io, config, database, logs_database, session_info, &resp_buf) catch return) {
+        const handled_api_v1 = api_v1_router.route(&request, allocator, io, config, database, logs_database, session_info, &resp_buf) catch |err| {
+            std.debug.print("API v1 routing error on {s}: {}\n", .{ target, err });
+            request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch {};
             continue;
-        }
+        };
+        if (handled_api_v1) continue;
 
         // Route: HTML Player
         if (std.mem.startsWith(u8, target, "/player?")) {
-            player_html.handlePlayer(&request, allocator, database, logs_database, session_info.?.username, config, io) catch return;
+            player_html.handlePlayer(&request, allocator, database, logs_database, session_info.username, config, io) catch |err| {
+                std.debug.print("Player handler error on {s}: {}\n", .{ target, err });
+                request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch {};
+            };
             continue;
         }
 
-        if (api_router.route(&request, allocator, io, config, database, logs_database, session_info, &resp_buf) catch return) {
+        const handled_api = api_router.route(&request, allocator, io, config, database, logs_database, session_info, &resp_buf) catch |err| {
+            std.debug.print("API routing error on {s}: {}\n", .{ target, err });
+            request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch {};
             continue;
-        }
+        };
+        if (handled_api) continue;
 
-        if (admin_router.route(&request, allocator, io, database, logs_database, session_info, &resp_buf) catch return) {
+        const handled_admin = admin_router.route(&request, allocator, io, database, logs_database, session_info, &resp_buf) catch |err| {
+            std.debug.print("Admin routing error on {s}: {}\n", .{ target, err });
+            request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch {};
             continue;
-        }
+        };
+        if (handled_admin) continue;
 
-        if (catalog_router.route(&request, allocator, io, config, database, logs_database, session_info) catch return) {
+        const handled_catalog = catalog_router.route(&request, allocator, io, config, database, logs_database, session_info) catch |err| {
+            std.debug.print("Catalog routing error on {s}: {}\n", .{ target, err });
+            request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch {};
             continue;
-        }
+        };
+        if (handled_catalog) continue;
 
         // Unknown route
         request.respond("Not found", .{ .status = .not_found }) catch return;

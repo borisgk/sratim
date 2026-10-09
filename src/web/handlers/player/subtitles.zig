@@ -52,29 +52,12 @@ pub fn handleSubtitles(
     const track_idx = utils.parseQueryInt(usize, target, "track");
     const start_offset = utils.parseQueryFloat(target, "start") orelse utils.parseQueryFloat(target, "offset") orelse 0.0;
 
-    if ((movie_id == null and episode_id == null) or track_idx == null) {
+    if (track_idx == null) {
         try request.respond("Missing parameters", .{ .status = .bad_request });
         return;
     }
 
-    const media_info_opt = if (movie_id != null)
-        metadata_mod.getMovieInfoById(database, allocator, movie_id.?) catch null
-    else
-        metadata_mod.getEpisodeInfoById(database, allocator, episode_id.?) catch null;
-
-    const resolved = common.resolveMediaPath(database, allocator, media_info_opt) catch |err| {
-        if (err == error.PathTraversal) {
-            try request.respond("Forbidden", .{ .status = .forbidden });
-        } else {
-            try request.respond("Internal Server Error", .{ .status = .internal_server_error });
-        }
-        return;
-    };
-    if (resolved == null) {
-        try request.respond("Media not found", .{ .status = .not_found });
-        return;
-    }
-    var res_media = resolved.?;
+    var res_media = (try common.resolveRequestMedia(request, allocator, database)) orelse return;
     defer res_media.deinit(allocator);
 
     // Ensure cache directory exists
@@ -102,7 +85,7 @@ pub fn handleSubtitles(
         }
     }
 
-    const c_full_path = try allocator.dupeSentinel(u8, resolved.?.resolved_path, 0);
+    const c_full_path = try allocator.dupeSentinel(u8, res_media.resolved_path, 0);
     defer allocator.free(c_full_path);
 
     const resp_buf = try allocator.alloc(u8, 8192);

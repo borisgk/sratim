@@ -106,15 +106,6 @@ pub fn serveBrowseJson(request: *std.http.Server.Request, allocator: std.mem.All
     }) catch return;
 }
 
-pub fn escapeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
-    for (input) |ch| {
-        switch (ch) {
-            '\\' => try out.appendSlice(allocator, "\\\\"),
-            '"' => try out.appendSlice(allocator, "\\\""),
-            '\n' => try out.appendSlice(allocator, "\\n"),
-            '\r' => try out.appendSlice(allocator, "\\r"),
-            '\t' => try out.appendSlice(allocator, "\\t"),
-            else => try out.append(allocator, ch),
-        }
-    }
-}
+const utils = @import("../utils.zig");
+pub const escapeJsonString = utils.escapeJsonString;
+

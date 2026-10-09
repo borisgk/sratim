@@ -3,6 +3,8 @@ const config_mod = @import("../../config.zig");
 const tmdb = @import("../../media/tmdb.zig");
 const db_mod = @import("../../db/db.zig");
 const metadata_mod = @import("../../db/metadata.zig");
+const utils = @import("../utils.zig");
+
 
 pub const credits_sync = @import("metadata/credits_sync.zig");
 pub const syncShowCredits = credits_sync.syncShowCredits;
@@ -77,18 +79,13 @@ const MetadataLinkPayload = struct {
 };
 
 pub fn handleApiMetadataLink(request: *std.http.Server.Request, allocator: std.mem.Allocator, io: std.Io, database: *db_mod.Database, config: *const config_mod.Config, body_buf: *[8192]u8) !void {
-    var reader = request.readerExpectNone(body_buf);
-    var body_data = std.ArrayList(u8).empty;
-    defer body_data.deinit(allocator);
+    const body_data = utils.readRequestBody(request, allocator, body_buf) catch {
+        request.respond("Bad Request", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    defer allocator.free(body_data);
 
-    var chunk_buf: [4096]u8 = undefined;
-    while (true) {
-        const n = reader.readSliceShort(&chunk_buf) catch break;
-        if (n == 0) break;
-        try body_data.appendSlice(allocator, chunk_buf[0..n]);
-    }
-
-    const parsed = std.json.parseFromSlice(MetadataLinkPayload, allocator, body_data.items, .{
+    const parsed = std.json.parseFromSlice(MetadataLinkPayload, allocator, body_data, .{
         .ignore_unknown_fields = true,
     }) catch |err| {
         std.debug.print("Failed to parse metadata link JSON: {any}\n", .{err});
@@ -135,18 +132,13 @@ pub fn handleApiMetadataAutoLink(request: *std.http.Server.Request, allocator: s
         return;
     }
 
-    var reader = request.readerExpectNone(body_buf);
-    var body_data = std.ArrayList(u8).empty;
-    defer body_data.deinit(allocator);
+    const body_data = utils.readRequestBody(request, allocator, body_buf) catch {
+        request.respond("Bad Request", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    defer allocator.free(body_data);
 
-    var chunk_buf: [4096]u8 = undefined;
-    while (true) {
-        const n = reader.readSliceShort(&chunk_buf) catch break;
-        if (n == 0) break;
-        try body_data.appendSlice(allocator, chunk_buf[0..n]);
-    }
-
-    const parsed = std.json.parseFromSlice(MetadataAutoLinkPayload, allocator, body_data.items, .{
+    const parsed = std.json.parseFromSlice(MetadataAutoLinkPayload, allocator, body_data, .{
         .ignore_unknown_fields = true,
     }) catch |err| {
         std.debug.print("Failed to parse metadata auto-link JSON: {any}\n", .{err});
@@ -278,18 +270,13 @@ pub fn handleApiMetadataManualLink(request: *std.http.Server.Request, allocator:
         return;
     }
 
-    var reader = request.readerExpectNone(body_buf);
-    var body_data = std.ArrayList(u8).empty;
-    defer body_data.deinit(allocator);
+    const body_data = utils.readRequestBody(request, allocator, body_buf, 1024 * 1024) catch {
+        request.respond("Payload Too Large", .{ .status = .payload_too_large }) catch return;
+        return;
+    };
+    defer allocator.free(body_data);
 
-    var chunk_buf: [4096]u8 = undefined;
-    while (true) {
-        const n = reader.readSliceShort(&chunk_buf) catch break;
-        if (n == 0) break;
-        try body_data.appendSlice(allocator, chunk_buf[0..n]);
-    }
-
-    const parsed = std.json.parseFromSlice(MetadataManualLinkPayload, allocator, body_data.items, .{
+    const parsed = std.json.parseFromSlice(MetadataManualLinkPayload, allocator, body_data, .{
         .ignore_unknown_fields = true,
     }) catch |err| {
         std.debug.print("Failed to parse metadata manual link JSON: {any}\n", .{err});
@@ -399,18 +386,13 @@ pub fn handleApiMetadataRefetchCredits(
         return;
     }
 
-    var reader = request.readerExpectNone(body_buf);
-    var body_data = std.ArrayList(u8).empty;
-    defer body_data.deinit(allocator);
+    const body_data = utils.readRequestBody(request, allocator, body_buf, 1024 * 1024) catch {
+        request.respond("Payload Too Large", .{ .status = .payload_too_large }) catch return;
+        return;
+    };
+    defer allocator.free(body_data);
 
-    var chunk_buf: [4096]u8 = undefined;
-    while (true) {
-        const n = reader.readSliceShort(&chunk_buf) catch break;
-        if (n == 0) break;
-        try body_data.appendSlice(allocator, chunk_buf[0..n]);
-    }
-
-    const parsed = std.json.parseFromSlice(MetadataRefetchCreditsPayload, allocator, body_data.items, .{
+    const parsed = std.json.parseFromSlice(MetadataRefetchCreditsPayload, allocator, body_data, .{
         .ignore_unknown_fields = true,
     }) catch |err| {
         std.debug.print("Failed to parse metadata refetch credits JSON: {any}\n", .{err});

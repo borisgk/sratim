@@ -7,45 +7,28 @@ const utils = @import("../utils.zig");
 
 /// Handles POST /libraries/add — validates library config and inserts to DB.
 pub fn handleLibraryAdd(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database, body_buf: *[8192]u8) !void {
-    var reader = request.readerExpectNone(body_buf);
-    var body_data = std.ArrayList(u8).empty;
-    defer body_data.deinit(allocator);
+    const body_data = utils.readRequestBody(request, allocator, body_buf) catch {
+        request.respond("Error reading request body", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    defer allocator.free(body_data);
 
-    var chunk_buf: [4096]u8 = undefined;
-    while (true) {
-        const n = reader.readSliceShort(&chunk_buf) catch break;
-        if (n == 0) break;
-        try body_data.appendSlice(allocator, chunk_buf[0..n]);
+    const name_raw = utils.getFormValue(body_data, "name");
+    const path_raw = utils.getFormValue(body_data, "path");
+    const type_raw = utils.getFormValue(body_data, "type");
+
+    const name: ?[]const u8 = if (name_raw) |n| try utils.urlDecode(allocator, n) else null;
+    defer if (name) |n| allocator.free(n);
+    const path: ?[]const u8 = if (path_raw) |p| try utils.urlDecode(allocator, p) else null;
+    defer if (path) |p| allocator.free(p);
+    var type_str: ?[]const u8 = if (type_raw) |t| try utils.urlDecode(allocator, t) else null;
+    defer if (type_str) |t| allocator.free(t);
+    if (type_str) |t| {
+        type_str = std.mem.trim(u8, t, " \r\n");
     }
 
-    var name: ?[]const u8 = null;
-    var path: ?[]const u8 = null;
-    var type_str: ?[]const u8 = null;
 
-    var pairs = std.mem.splitScalar(u8, body_data.items, '&');
-    while (pairs.next()) |pair| {
-        if (std.mem.startsWith(u8, pair, "name=")) {
-            const raw = pair[5..];
-            const decoded = allocator.dupe(u8, raw) catch continue;
-            std.mem.replaceScalar(u8, decoded, '+', ' ');
-            name = std.Uri.percentDecodeInPlace(decoded);
-        } else if (std.mem.startsWith(u8, pair, "path=")) {
-            const raw = pair[5..];
-            const decoded = allocator.dupe(u8, raw) catch continue;
-            std.mem.replaceScalar(u8, decoded, '+', ' ');
-            path = std.Uri.percentDecodeInPlace(decoded);
-        } else if (std.mem.startsWith(u8, pair, "type=")) {
-            const raw = pair[5..];
-            const decoded = allocator.dupe(u8, raw) catch continue;
-            std.mem.replaceScalar(u8, decoded, '+', ' ');
-            type_str = std.Uri.percentDecodeInPlace(decoded);
-            if (type_str) |t| {
-                type_str = std.mem.trim(u8, t, " \r\n");
-            }
-        }
-    }
-
-    std.debug.print("RAW BODY: {s}\n", .{body_data.items});
+    std.debug.print("RAW BODY: {s}\n", .{body_data});
     std.debug.print("PARSED: name={?s}, path={?s}, type={?s}\n", .{ name, path, type_str });
 
     if (name != null and path != null and type_str != null) {
@@ -78,18 +61,13 @@ pub fn handleLibraryRescan(request: *std.http.Server.Request, allocator: std.mem
         return;
     }
 
-    var reader = request.readerExpectNone(body_buf);
-    var body_data = std.ArrayList(u8).empty;
-    defer body_data.deinit(allocator);
+    const body_data = utils.readRequestBody(request, allocator, body_buf) catch {
+        request.respond("Bad Request", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    defer allocator.free(body_data);
 
-    var chunk_buf: [4096]u8 = undefined;
-    while (true) {
-        const n = reader.readSliceShort(&chunk_buf) catch break;
-        if (n == 0) break;
-        try body_data.appendSlice(allocator, chunk_buf[0..n]);
-    }
-
-    const parsed = std.json.parseFromSlice(LibraryRescanPayload, allocator, body_data.items, .{
+    const parsed = std.json.parseFromSlice(LibraryRescanPayload, allocator, body_data, .{
         .ignore_unknown_fields = true,
     }) catch |err| {
         std.debug.print("Failed to parse library rescan JSON: {any}\n", .{err});
@@ -125,18 +103,13 @@ pub fn handleLibraryRename(
         return;
     }
 
-    var reader = request.readerExpectNone(body_buf);
-    var body_data = std.ArrayList(u8).empty;
-    defer body_data.deinit(allocator);
+    const body_data = utils.readRequestBody(request, allocator, body_buf) catch {
+        request.respond("Bad Request: Invalid body", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    defer allocator.free(body_data);
 
-    var chunk_buf: [4096]u8 = undefined;
-    while (true) {
-        const n = reader.readSliceShort(&chunk_buf) catch break;
-        if (n == 0) break;
-        try body_data.appendSlice(allocator, chunk_buf[0..n]);
-    }
-
-    const parsed = std.json.parseFromSlice(LibraryRenamePayload, allocator, body_data.items, .{
+    const parsed = std.json.parseFromSlice(LibraryRenamePayload, allocator, body_data, .{
         .ignore_unknown_fields = true,
     }) catch |err| {
         std.debug.print("Failed to parse library rename JSON: {any}\n", .{err});

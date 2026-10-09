@@ -72,43 +72,24 @@ pub fn handleLoginPost(request: *std.http.Server.Request, allocator: std.mem.All
     defer if (query_redirect) |r| allocator.free(r);
 
     // Read request body
-    var reader = request.readerExpectNone(body_buf);
-    var body_data = std.ArrayList(u8).empty;
-    defer body_data.deinit(allocator);
-
-    var chunk_buf: [4096]u8 = undefined;
-    while (true) {
-        const n = reader.readSliceShort(&chunk_buf) catch break;
-        if (n == 0) break;
-        try body_data.appendSlice(allocator, chunk_buf[0..n]);
-    }
+    const body_data = utils.readRequestBody(request, allocator, body_buf) catch {
+        try serveLoginPageWithRedirect(request, allocator, "Invalid request body.", query_redirect);
+        return;
+    };
+    defer allocator.free(body_data);
 
     // Parse form data (application/x-www-form-urlencoded)
-    var username: ?[]const u8 = null;
+    const username_raw = utils.getFormValue(body_data, "username");
+    const password_raw = utils.getFormValue(body_data, "password");
+    const redirect_raw = utils.getFormValue(body_data, "redirect");
+
+    const username: ?[]const u8 = if (username_raw) |u| try utils.urlDecode(allocator, u) else null;
     defer if (username) |u| allocator.free(u);
-    var password: ?[]const u8 = null;
+    const password: ?[]const u8 = if (password_raw) |p| try utils.urlDecode(allocator, p) else null;
     defer if (password) |p| allocator.free(p);
-    var redirect: ?[]const u8 = null;
+    var redirect: ?[]const u8 = if (redirect_raw) |r| (if (r.len > 0) try utils.urlDecode(allocator, r) else null) else null;
     defer if (redirect) |r| allocator.free(r);
 
-    var pairs = std.mem.splitScalar(u8, body_data.items, '&');
-    while (pairs.next()) |pair| {
-        if (std.mem.startsWith(u8, pair, "username=")) {
-            const raw = pair[9..];
-            const decoded = allocator.dupe(u8, raw) catch continue;
-            username = std.Uri.percentDecodeInPlace(decoded);
-        } else if (std.mem.startsWith(u8, pair, "password=")) {
-            const raw = pair[9..];
-            const decoded = allocator.dupe(u8, raw) catch continue;
-            password = std.Uri.percentDecodeInPlace(decoded);
-        } else if (std.mem.startsWith(u8, pair, "redirect=")) {
-            const raw = pair[9..];
-            if (raw.len > 0) {
-                const decoded = allocator.dupe(u8, raw) catch continue;
-                redirect = std.Uri.percentDecodeInPlace(decoded);
-            }
-        }
-    }
 
     if (redirect == null or redirect.?.len == 0) {
         if (query_redirect) |qr| {

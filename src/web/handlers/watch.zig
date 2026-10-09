@@ -1,6 +1,7 @@
 const std = @import("std");
 const db_mod = @import("../../db/db.zig");
 const logging_mod = @import("../../db/logging.zig");
+const utils = @import("../utils.zig");
 
 const WatchEventPayload = struct {
     id: ?i64 = null,
@@ -12,18 +13,13 @@ const WatchEventPayload = struct {
 };
 
 pub fn handleApiWatchEvent(request: *std.http.Server.Request, allocator: std.mem.Allocator, logs_database: *db_mod.Database, username: []const u8, body_buf: *[8192]u8) !void {
-    var reader = request.readerExpectNone(body_buf);
-    var body_data = std.ArrayList(u8).empty;
-    defer body_data.deinit(allocator);
+    const body_data = utils.readRequestBody(request, allocator, body_buf) catch {
+        request.respond("Bad Request", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    defer allocator.free(body_data);
 
-    var chunk_buf: [4096]u8 = undefined;
-    while (true) {
-        const n = reader.readSliceShort(&chunk_buf) catch break;
-        if (n == 0) break;
-        try body_data.appendSlice(allocator, chunk_buf[0..n]);
-    }
-
-    const parsed = std.json.parseFromSlice(WatchEventPayload, allocator, body_data.items, .{
+    const parsed = std.json.parseFromSlice(WatchEventPayload, allocator, body_data, .{
         .ignore_unknown_fields = true,
     }) catch |err| {
         std.debug.print("Failed to parse watch event JSON: {any}\n", .{err});
