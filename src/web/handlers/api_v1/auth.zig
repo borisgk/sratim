@@ -31,7 +31,7 @@ pub fn handleLogin(
         }
     }
 
-    const body_data = utils.readRequestBody(request, allocator, body_buf, 64 * 1024) catch {
+    const body_data = utils.readRequestBodyWithLimit(request, allocator, body_buf, 64 * 1024) catch {
         try request.respond("{\"success\":false,\"error\":\"Payload too large\"}", .{ .status = .payload_too_large });
         return;
     };

@@ -35,7 +35,7 @@ pub fn handleGetLibraries(
     for (libraries, 0..) |lib, i| {
         if (i > 0) try json.appendSlice(allocator, ",");
 
-        const escaped_name = try utils.escapeJsonString(allocator, lib.name);
+        const escaped_name = try utils.escapeJsonAlloc(allocator, lib.name);
         defer allocator.free(escaped_name);
 
         const lib_json = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"name\":\"{s}\",\"type\":\"{s}\"}}", .{ lib.id, escaped_name, lib.lib_type.toString() });
@@ -111,7 +111,7 @@ pub fn handleGetLibraryItems(
             var tmdb_id_buf: [32]u8 = undefined;
             const tmdb_id_str = if (s.tmdb_id) |tid| std.fmt.bufPrint(&tmdb_id_buf, "{d}", .{tid}) catch "" else "";
 
-            const escaped_title = try utils.escapeJsonString(allocator, title);
+            const escaped_title = try utils.escapeJsonAlloc(allocator, title);
             defer allocator.free(escaped_title);
 
             const item_json = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"title\":\"{s}\",\"poster_path\":\"{s}\",\"tmdb_id\":\"{s}\",\"type\":\"show\"}}", .{ show_id, escaped_title, poster_path, tmdb_id_str });
@@ -138,7 +138,7 @@ pub fn handleGetLibraryItems(
             var tmdb_id_buf: [32]u8 = undefined;
             const tmdb_id_str = if (m.tmdb_id) |tid| std.fmt.bufPrint(&tmdb_id_buf, "{d}", .{tid}) catch "" else "";
 
-            const escaped_title = try utils.escapeJsonString(allocator, display_title);
+            const escaped_title = try utils.escapeJsonAlloc(allocator, display_title);
             defer allocator.free(escaped_title);
 
             const item_json = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"title\":\"{s}\",\"poster_path\":\"{s}\",\"tmdb_id\":\"{s}\",\"type\":\"movie\"}}", .{ movie_id, escaped_title, poster_path, tmdb_id_str });
@@ -184,7 +184,7 @@ pub fn handleRenameLibrary(
         return;
     }
 
-    const body_data = utils.readRequestBody(request, allocator, body_buf, 64 * 1024) catch {
+    const body_data = utils.readRequestBodyWithLimit(request, allocator, body_buf, 64 * 1024) catch {
         try request.respond("{\"success\":false,\"error\":\"Payload too large\"}", .{
             .status = .payload_too_large,
             .extra_headers = &.{
@@ -249,7 +249,7 @@ pub fn handleRenameLibrary(
         },
     };
 
-    const escaped_name = try utils.escapeJsonString(allocator, trimmed);
+    const escaped_name = try utils.escapeJsonAlloc(allocator, trimmed);
     defer allocator.free(escaped_name);
 
     const resp_json = try std.fmt.allocPrint(allocator, "{{\"success\":true,\"library\":{{\"id\":{d},\"name\":\"{s}\"}}}}", .{ parsed.value.library_id, escaped_name });

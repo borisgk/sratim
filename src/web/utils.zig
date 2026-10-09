@@ -187,6 +187,12 @@ pub fn isValidRedirect(target: []const u8) bool {
 /// Uses body_buf for reading chunks via request.readerExpectNone.
 /// Caller owns the returned slice and must free it with allocator.
 pub fn readRequestBody(request: *std.http.Server.Request, allocator: std.mem.Allocator, body_buf: []u8) ![]u8 {
+    return readRequestBodyWithLimit(request, allocator, body_buf, 10 * 1024 * 1024);
+}
+
+/// Reads an HTTP request body up to max_size bytes into a newly allocated buffer.
+/// Returns error.PayloadTooLarge if the incoming body exceeds max_size.
+pub fn readRequestBodyWithLimit(request: *std.http.Server.Request, allocator: std.mem.Allocator, body_buf: []u8, max_size: usize) ![]u8 {
     var reader = request.readerExpectNone(body_buf);
     var body_data = std.ArrayList(u8).empty;
     errdefer body_data.deinit(allocator);
@@ -195,6 +201,9 @@ pub fn readRequestBody(request: *std.http.Server.Request, allocator: std.mem.All
     while (true) {
         const n = reader.readSliceShort(&chunk_buf) catch break;
         if (n == 0) break;
+        if (body_data.items.len + n > max_size) {
+            return error.PayloadTooLarge;
+        }
         try body_data.appendSlice(allocator, chunk_buf[0..n]);
     }
     return try body_data.toOwnedSlice(allocator);
@@ -212,6 +221,14 @@ pub fn escapeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, i
             else => try out.append(allocator, ch),
         }
     }
+}
+
+/// Escapes a string for safe embedding into JSON string literals, returning an allocated slice.
+pub fn escapeJsonAlloc(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+    var out = std.ArrayList(u8).empty;
+    errdefer out.deinit(allocator);
+    try escapeJsonString(&out, allocator, input);
+    return out.toOwnedSlice(allocator);
 }
 
 /// Escapes a string for safe embedding into JavaScript string literals inside HTML templates.

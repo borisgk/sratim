@@ -270,7 +270,7 @@ pub fn handleApiMetadataManualLink(request: *std.http.Server.Request, allocator:
         return;
     }
 
-    const body_data = utils.readRequestBody(request, allocator, body_buf, 1024 * 1024) catch {
+    const body_data = utils.readRequestBodyWithLimit(request, allocator, body_buf, 1024 * 1024) catch {
         request.respond("Payload Too Large", .{ .status = .payload_too_large }) catch return;
         return;
     };
@@ -386,7 +386,7 @@ pub fn handleApiMetadataRefetchCredits(
         return;
     }
 
-    const body_data = utils.readRequestBody(request, allocator, body_buf, 1024 * 1024) catch {
+    const body_data = utils.readRequestBodyWithLimit(request, allocator, body_buf, 1024 * 1024) catch {
         request.respond("Payload Too Large", .{ .status = .payload_too_large }) catch return;
         return;
     };

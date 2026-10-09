@@ -228,7 +228,7 @@ pub fn generatePersonHtml(
     }
 }
 
-fn determineRole(credits: []const schema.CreditRecord, known_for_department: ?[]const u8) []const u8 {
+fn determineRole(credits: []const schema.MovieCredit, known_for_department: ?[]const u8) []const u8 {
     var is_director = false;
     var is_actor = false;
     for (credits) |c| {
@@ -405,7 +405,7 @@ fn renderBioHtml(allocator: std.mem.Allocator, details_opt: ?schema.PersonDetail
 fn renderDirectedSection(
     allocator: std.mem.Allocator,
     cat: anytype,
-    credits: []const schema.CreditRecord,
+    credits: []const schema.MovieCredit,
     progress_list: []const logging_mod.ProgressInfo,
     person_name: []const u8,
     is_admin: bool,
@@ -455,7 +455,7 @@ fn renderDirectedSection(
 fn renderLibrarySection(
     allocator: std.mem.Allocator,
     cat: anytype,
-    credits: []const schema.CreditRecord,
+    credits: []const schema.MovieCredit,
     person_id: i64,
     progress_list: []const logging_mod.ProgressInfo,
     directed_movie_ids: *const std.AutoHashMap(i64, void),
