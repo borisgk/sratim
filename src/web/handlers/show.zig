@@ -31,12 +31,10 @@ pub fn handleShow(
     config: *const config_mod.Config,
     request: *std.http.Server.Request,
     database: *db_mod.Database,
-    logs_database: *db_mod.Database,
     username: []const u8,
     is_admin: bool,
     show_id: i64,
 ) !void {
-    _ = logs_database;
     _ = username;
 
     const cat = database.catalog orelse {

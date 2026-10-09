@@ -57,7 +57,7 @@ pub fn serveLoginPageWithRedirect(request: *std.http.Server.Request, allocator: 
 }
 
 /// Handles POST /login — validates credentials and creates a session.
-pub fn handleLoginPost(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database, logs_database: *db_mod.Database, body_buf: *[8192]u8, io: std.Io) !void {
+pub fn handleLoginPost(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database, body_buf: *[8192]u8, io: std.Io) !void {
     var client_ip: []const u8 = "127.0.0.1";
     var headers = request.iterateHeaders();
     while (headers.next()) |header| {
@@ -106,7 +106,7 @@ pub fn handleLoginPost(request: *std.http.Server.Request, allocator: std.mem.All
     const valid = users_mod.verifyPassword(database, allocator, username.?, password.?) catch false;
     if (!valid) {
         if (username) |u| {
-            logging_mod.logLoginAttempt(logs_database, u, "failed", client_ip) catch |err| {
+            logging_mod.logLoginAttempt(database, u, "failed", client_ip) catch |err| {
                 std.debug.print("Failed to log failed auth attempt: {}\n", .{err});
             };
         }
@@ -118,7 +118,7 @@ pub fn handleLoginPost(request: *std.http.Server.Request, allocator: std.mem.All
     const is_admin = users_mod.isAdmin(database, username.?) catch false;
 
     // Log successful login
-    logging_mod.logLoginAttempt(logs_database, username.?, "success", client_ip) catch |err| {
+    logging_mod.logLoginAttempt(database, username.?, "success", client_ip) catch |err| {
         std.debug.print("Failed to log successful auth attempt: {}\n", .{err});
     };
 

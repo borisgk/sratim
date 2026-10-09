@@ -1,6 +1,6 @@
 const std = @import("std");
 const tables = @import("tables.zig");
-const bit_reader = @import("../ac3/bit_reader.zig");
+const bit_reader = @import("../bit_reader.zig");
 pub const BitReader = bit_reader.BitReader;
 
 pub const AudioSpecificConfig = struct {

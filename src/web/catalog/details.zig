@@ -9,7 +9,6 @@ const global_css: []const u8 = @embedFile("../style.css");
 pub fn generateDetailsHtml(
     allocator: std.mem.Allocator,
     database: *db_mod.Database,
-    logs_database: *db_mod.Database,
     movie_id: i64,
     username: []const u8,
 ) ![]u8 {
@@ -67,7 +66,7 @@ pub fn generateDetailsHtml(
     var resume_btn_buf = std.ArrayList(u8).empty;
     defer resume_btn_buf.deinit(allocator);
 
-    const resume_pos = logging_mod.getPlaybackProgress(logs_database, username, movie_id) catch 0.0;
+    const resume_pos = logging_mod.getPlaybackProgress(database, username, movie_id) catch 0.0;
     if (resume_pos > 0.0) {
         const resume_btn = try std.fmt.allocPrint(allocator,
             \\                    <a href="{s}" class="play-btn-large resume-btn">

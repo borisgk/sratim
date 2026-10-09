@@ -95,8 +95,7 @@ pub fn main() !void {
     }});
     checkpoint_thread.detach();
 
-    var database = db_mod.Database.forCatalog(&sratim_storage);
-    var logs_database = db_mod.Database.forLogs(&logs_storage);
+    var database = db_mod.Database.init(&sratim_storage, &logs_storage);
 
     try users_mod.ensureAdminExists(&database, io);
 
@@ -125,7 +124,7 @@ pub fn main() !void {
         };
 
         // Spawn a brand new OS thread to handle the client
-        const thread = try std.Thread.spawn(.{}, server.handleConnection, .{ stream, io, &config, &database, &logs_database });
+        const thread = try std.Thread.spawn(.{}, server.handleConnection, .{ stream, io, &config, &database });
 
         // Detach the thread so it runs independently, allowing the main loop to instantly continue
         thread.detach();

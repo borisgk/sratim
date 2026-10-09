@@ -5,6 +5,7 @@ pub const reader = @import("isobmff/reader.zig");
 pub const samples = @import("isobmff/samples.zig");
 pub const tracks = @import("isobmff/tracks.zig");
 pub const parser = @import("isobmff/parser.zig");
+pub const stsd = @import("isobmff/stsd.zig");
 
 // Re-export public types
 pub const BoxHeader = types.BoxHeader;
@@ -36,6 +37,10 @@ pub const parseGenericTrackBox = tracks.parseGenericTrackBox;
 pub const parseMp4SubtitleTrack = parser.parseMp4SubtitleTrack;
 pub const parseMp4Media = parser.parseMp4Media;
 pub const findMp4KeyframePts = parser.findMp4KeyframePts;
+pub const buildAvc1Stsd = stsd.buildAvc1Stsd;
+pub const buildHevcStsd = stsd.buildHevcStsd;
+pub const buildAv1Stsd = stsd.buildAv1Stsd;
+pub const buildAacStsd = stsd.buildAacStsd;
 
 /// Reads media sample payloads from a seekable reader in chunks and writes them directly to writer.
 /// If an I/O error occurs, sets `has_error.* = true` and returns immediately.

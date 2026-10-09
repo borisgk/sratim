@@ -4,16 +4,21 @@ const metadata_mod = @import("../../../db/metadata.zig");
 const logging_mod = @import("../../../db/logging.zig");
 const streamer = @import("../../../media/streamer.zig");
 const config_mod = @import("../../../config.zig");
-const html = @import("../../../core/html.zig");
+const template_engine = @import("../../../core/template.zig");
 const utils = @import("../../utils.zig");
 const common = @import("common.zig");
+
+const player_js_tmpl: []const u8 = @embedFile("../../templates/player.js");
+const stats_js_tmpl: []const u8 = @embedFile("../../templates/stats.js");
+const player_html_tmpl: []const u8 = @embedFile("../../templates/player.html");
+const player_css: []const u8 = @embedFile("../../templates/player.css");
+const stats_css: []const u8 = @embedFile("../../templates/stats.css");
 
 /// Handles the HTML Player page endpoint (/player).
 pub fn handlePlayer(
     request: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     database: *db_mod.Database,
-    logs_database: *db_mod.Database,
     username: []const u8,
     config: *const config_mod.Config,
     io: std.Io,
@@ -96,9 +101,9 @@ pub fn handlePlayer(
 
     const start_opt = utils.parseQueryFloat(target, "start");
     var resume_pos = if (start_opt) |s| s else if (movie_id != null)
-        logging_mod.getPlaybackProgress(logs_database, username, movie_id.?) catch 0.0
+        logging_mod.getPlaybackProgress(database, username, movie_id.?) catch 0.0
     else
-        logging_mod.getEpisodePlaybackProgress(logs_database, username, episode_id.?) catch 0.0;
+        logging_mod.getEpisodePlaybackProgress(database, username, episode_id.?) catch 0.0;
 
     if (resume_pos < 0.0 or (media_info.duration > 0.0 and (resume_pos >= media_info.duration - 3.0 or resume_pos >= media_info.duration * 0.95))) {
         resume_pos = 0.0;
@@ -162,7 +167,7 @@ pub fn handlePlayer(
     const streamer_mode = if (config.media_engine.streamer == .native) "native-fmp4" else "ffmpeg";
     const audio_mode = if (config.media_engine.audio_transcoder == .native) "native-aac" else "ffmpeg";
 
-    const html_content = try html.generatePlayerHtml(
+    const html_content = try generatePlayerHtml(
         allocator,
         media_query,
         media_info.duration,
@@ -182,5 +187,66 @@ pub fn handlePlayer(
         .extra_headers = &.{
             .{ .name = "content-type", .value = "text/html; charset=utf-8" },
         },
+    });
+}
+
+fn generatePlayerHtml(
+    allocator: std.mem.Allocator,
+    media_query: []const u8,
+    duration: f64,
+    codec_str: []const u8,
+    audio_tracks_json: []const u8,
+    subtitle_tracks_json: []const u8,
+    start_position: f64,
+    media_title: []const u8,
+    server_lan_ip: []const u8,
+    streamer_mode: []const u8,
+    audio_transcoder_mode: []const u8,
+    return_url: []const u8,
+) ![]u8 {
+    const min = @as(u32, @intFromFloat(duration)) / 60;
+    const sec = @as(u32, @intFromFloat(duration)) % 60;
+    const time_str = try std.fmt.allocPrint(allocator, "{d}:{d:0>2}", .{ min, sec });
+    defer allocator.free(time_str);
+
+    var title_escaped: std.ArrayList(u8) = .empty;
+    defer title_escaped.deinit(allocator);
+    try utils.escapeForJs(&title_escaped, allocator, media_title);
+
+    var title_html: std.ArrayList(u8) = .empty;
+    defer title_html.deinit(allocator);
+    try utils.escapeHtml(&title_html, allocator, media_title);
+
+    var return_url_escaped: std.ArrayList(u8) = .empty;
+    defer return_url_escaped.deinit(allocator);
+    try utils.escapeForJs(&return_url_escaped, allocator, return_url);
+
+    const rendered_js = try template_engine.render(allocator, player_js_tmpl, .{
+        .DURATION = duration,
+        .MEDIA_QUERY = media_query,
+        .CODEC_STR = codec_str,
+        .AUDIO_TRACKS_JSON = audio_tracks_json,
+        .SUBTITLE_TRACKS_JSON = subtitle_tracks_json,
+        .START_POSITION = start_position,
+        .MEDIA_TITLE = title_escaped.items,
+        .SERVER_LAN_IP = server_lan_ip,
+        .RETURN_URL = return_url_escaped.items,
+    });
+    defer allocator.free(rendered_js);
+
+    const rendered_stats_js = try template_engine.render(allocator, stats_js_tmpl, .{
+        .STREAMER_MODE = streamer_mode,
+        .AUDIO_TRANSCODER_MODE = audio_transcoder_mode,
+    });
+    defer allocator.free(rendered_stats_js);
+
+    return template_engine.render(allocator, player_html_tmpl, .{
+        .PLAYER_CSS = player_css,
+        .STATS_CSS = stats_css,
+        .PLAYER_JS = rendered_js,
+        .STATS_JS = rendered_stats_js,
+        .TIME_STR = time_str,
+        .MEDIA_TITLE = title_html.items,
+        .RETURN_URL = return_url,
     });
 }

@@ -9,6 +9,10 @@ pub const Database = struct {
     catalog: ?*engine.SratimStorage = null,
     logs: ?*logs_engine.LogsStorage = null,
 
+    pub fn init(c: *engine.SratimStorage, l: *logs_engine.LogsStorage) Database {
+        return .{ .catalog = c, .logs = l };
+    }
+
     pub fn forCatalog(s: *engine.SratimStorage) Database {
         return .{ .catalog = s, .logs = null };
     }

@@ -2,7 +2,7 @@ const std = @import("std");
 const tables = @import("tables.zig");
 const huffman = @import("huffman.zig");
 const mdct = @import("../mdct.zig");
-const bit_reader = @import("../ac3/bit_reader.zig");
+const bit_reader = @import("../bit_reader.zig");
 
 pub const config = @import("config.zig");
 pub const tns_mod = @import("tns.zig");
@@ -567,17 +567,7 @@ pub const AacDecoder = struct {
         const win_prev_short = if (self.prev_window_shape[ch] == 1) &tables.KBD_WINDOW_256 else &tables.SINE_WINDOW_256;
         const win_curr_short = if (ics.window_shape == 1) &tables.KBD_WINDOW_256 else &tables.SINE_WINDOW_256;
 
-        if (self.frame_count == 1) {
-            var max_s: f32 = 0;
-            var max_idx: usize = 0;
-            for (spectrum, 0..) |v, idx| {
-                if (@abs(v) > max_s) {
-                    max_s = @abs(v);
-                    max_idx = idx;
-                }
-            }
-            std.debug.print("  [F0 IMDCT ch={d}] max_spec={d:.4} at bin={d} win_seq={d}\n", .{ ch, max_s, max_idx, ics.window_sequence });
-        }
+
 
         switch (ics.window_sequence) {
             0 => { // ONLY_LONG_SEQUENCE

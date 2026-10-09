@@ -13,7 +13,6 @@ const global_css: []const u8 = @embedFile("../style.css");
 pub fn generateHtml(
     allocator: std.mem.Allocator,
     database: *db_mod.Database,
-    logs_database: *db_mod.Database,
     username: []const u8,
     is_admin: bool,
 ) ![]u8 {
@@ -62,7 +61,7 @@ pub fn generateHtml(
     var recently_watched_section_buf = std.ArrayList(u8).empty;
     defer recently_watched_section_buf.deinit(allocator);
 
-    const recent_items = logging_mod.getRecentlyWatched(logs_database, allocator, username, 20) catch &[_]logging_mod.RecentlyWatchedItem{};
+    const recent_items = logging_mod.getRecentlyWatched(database, allocator, username, 20) catch &[_]logging_mod.RecentlyWatchedItem{};
     defer allocator.free(recent_items);
 
     var recent_cards_buf = std.ArrayList(u8).empty;

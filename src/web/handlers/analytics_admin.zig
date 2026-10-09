@@ -5,6 +5,7 @@ const logs_engine = @import("../../storage/logs_engine.zig");
 const analytics_mod = @import("../../db/analytics.zig");
 const template_engine = @import("../../core/template.zig");
 const global_css: []const u8 = @embedFile("../style.css");
+const analytics_js: []const u8 = @embedFile("../templates/analytics.js");
 const utils = @import("../utils.zig");
 const escapeJsonString = utils.escapeJsonString;
 
@@ -268,10 +269,9 @@ pub fn serveAnalyticsPage(
     request: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     database: *db_mod.Database,
-    logs_database: *db_mod.Database,
 ) !void {
     const cat = database.catalog orelse return error.CatalogNotConfigured;
-    const logs = logs_database.logs orelse return error.LogsNotConfigured;
+    const logs = database.logs orelse return error.LogsNotConfigured;
 
     var report = try analytics_mod.computeReport(allocator, cat, logs, .d30, .watch_time, 20);
     defer report.deinit();
@@ -295,6 +295,7 @@ pub fn serveAnalyticsPage(
     const html = try template_engine.render(allocator, @embedFile("../templates/analytics.html"), .{
         .INLINE_CSS = global_css,
         .ANALYTICS_DATA_JSON = json_data,
+        .ANALYTICS_JS = analytics_js,
         .TOTAL_WATCH_TIME = watch_time_str,
         .TOTAL_PLAYS = plays_str,
         .ACTIVE_VIEWERS = viewers_str,
@@ -315,10 +316,9 @@ pub fn handleApiAnalytics(
     request: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     database: *db_mod.Database,
-    logs_database: *db_mod.Database,
 ) !void {
     const cat = database.catalog orelse return error.CatalogNotConfigured;
-    const logs = logs_database.logs orelse return error.LogsNotConfigured;
+    const logs = database.logs orelse return error.LogsNotConfigured;
 
     const target = request.head.target;
 

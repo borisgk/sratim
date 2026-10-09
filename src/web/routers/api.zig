@@ -15,7 +15,6 @@ pub fn route(
     io: std.Io,
     config: *const config_mod.Config,
     database: *db_mod.Database,
-    logs_database: *db_mod.Database,
     session_info: session_mod.SessionInfo,
     resp_buf: *[8192]u8,
 ) !bool {
@@ -31,7 +30,7 @@ pub fn route(
             try request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden });
             return true;
         }
-        analytics_admin_handler.handleApiAnalytics(request, allocator, database, logs_database) catch |err| {
+        analytics_admin_handler.handleApiAnalytics(request, allocator, database) catch |err| {
             std.debug.print("API Admin Analytics error: {}\n", .{err});
             try request.respond("Internal Server Error", .{ .status = .internal_server_error });
         };
@@ -88,7 +87,7 @@ pub fn route(
     }
 
     if (std.mem.startsWith(u8, target, "/api/watch/event") and method == .POST) {
-        watch_handler.handleApiWatchEvent(request, allocator, logs_database, session_info.username, resp_buf) catch |err| {
+        watch_handler.handleApiWatchEvent(request, allocator, database, session_info.username, resp_buf) catch |err| {
             std.debug.print("API Watch Event error: {}\n", .{err});
             try request.respond("Internal Server Error", .{ .status = .internal_server_error });
         };

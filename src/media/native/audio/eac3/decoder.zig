@@ -1,7 +1,7 @@
 const std = @import("std");
 const tables = @import("tables.zig");
 const ac3_dec = @import("../ac3/decoder.zig");
-const bit_reader = @import("../ac3/bit_reader.zig");
+const bit_reader = @import("../bit_reader.zig");
 const bit_allocation = @import("../ac3/bit_allocation.zig");
 const imdct = @import("../imdct.zig");
 

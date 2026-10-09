@@ -14,7 +14,6 @@ pub fn handleLogin(
     request: *std.http.Server.Request,
     allocator: std.mem.Allocator,
     database: *db_mod.Database,
-    logs_database: *db_mod.Database,
     body_buf: *[8192]u8,
     io: std.Io,
 ) !void {
@@ -52,7 +51,7 @@ pub fn handleLogin(
 
     const valid = users_mod.verifyPassword(database, allocator, username, password) catch false;
     if (!valid) {
-        logging_mod.logLoginAttempt(logs_database, username, "failed", client_ip) catch |err| {
+        logging_mod.logLoginAttempt(database, username, "failed", client_ip) catch |err| {
             std.debug.print("Failed to log failed auth attempt: {}\n", .{err});
         };
         try request.respond("{\"success\":false,\"error\":\"Invalid credentials\"}", .{ .status = .unauthorized });
@@ -61,7 +60,7 @@ pub fn handleLogin(
 
     const is_admin = users_mod.isAdmin(database, username) catch false;
 
-    logging_mod.logLoginAttempt(logs_database, username, "success", client_ip) catch |err| {
+    logging_mod.logLoginAttempt(database, username, "success", client_ip) catch |err| {
         std.debug.print("Failed to log successful auth attempt: {}\n", .{err});
     };
 

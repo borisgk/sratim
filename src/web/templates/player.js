@@ -908,43 +908,7 @@
         // =========================================================================
         // 6. UI Controls & Keyboard Shortcuts
         // =========================================================================
-        function updateVideoLayout() {
-            if (!video || !playerWrapper) return;
-            const vw = video.videoWidth;
-            const vh = video.videoHeight;
-            if (!vw || !vh) {
-                video.style.width = '100%';
-                video.style.height = '100%';
-                video.style.left = '0px';
-                video.style.top = '0px';
-                return;
-            }
-            const cw = playerWrapper.clientWidth;
-            const ch = playerWrapper.clientHeight;
-            if (!cw || !ch) return;
 
-            const videoRatio = vw / vh;
-            const containerRatio = cw / ch;
-
-            let targetW, targetH;
-            if (containerRatio > videoRatio) {
-                // Limited by container height
-                targetH = ch;
-                targetW = Math.round(targetH * videoRatio);
-            } else {
-                // Limited by container width
-                targetW = cw;
-                targetH = Math.round(targetW / videoRatio);
-            }
-
-            const left = Math.round((cw - targetW) / 2);
-            const top = Math.round((ch - targetH) / 2);
-
-            video.style.width = targetW + 'px';
-            video.style.height = targetH + 'px';
-            video.style.left = left + 'px';
-            video.style.top = top + 'px';
-        }
 
         function initControls() {
             function togglePlayPause() {
@@ -1007,18 +971,7 @@
                 }
             }, 2000);
 
-            video.addEventListener('loadedmetadata', updateVideoLayout);
-            video.addEventListener('resize', updateVideoLayout);
-            window.addEventListener('resize', updateVideoLayout);
-            document.addEventListener('fullscreenchange', () => {
-                setTimeout(updateVideoLayout, 50);
-            });
-            if (window.ResizeObserver) {
-                const ro = new ResizeObserver(() => {
-                    updateVideoLayout();
-                });
-                ro.observe(playerWrapper);
-            }
+
 
             video.addEventListener('seeked', () => {
                 SubtitleManager.updateOverlay();
@@ -1249,7 +1202,6 @@
         AudioManager.initUI();
         CastController.init();
         initControls();
-        updateVideoLayout();
 
         // Auto-select Forced subtitle track if available
         if (SUBTITLE_TRACKS && SUBTITLE_TRACKS.length > 0) {

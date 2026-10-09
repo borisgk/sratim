@@ -12,7 +12,6 @@ pub fn generateLibraryContentHtml(
     allocator: std.mem.Allocator,
     io: std.Io,
     database: *db_mod.Database,
-    logs_database: *db_mod.Database,
     library_id: i64,
     username: []const u8,
     is_admin: bool,
@@ -55,7 +54,7 @@ pub fn generateLibraryContentHtml(
         "";
     defer if (is_admin) allocator.free(rename_btn_html);
 
-    const progress_list = logging_mod.getProgressForUser(logs_database, allocator, username) catch &[_]logging_mod.ProgressInfo{};
+    const progress_list = logging_mod.getProgressForUser(database, allocator, username) catch &[_]logging_mod.ProgressInfo{};
     defer allocator.free(progress_list);
 
     var cards_buf = std.ArrayList(u8).empty;

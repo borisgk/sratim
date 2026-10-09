@@ -22,10 +22,7 @@ const utils = @import("utils.zig");
 /// Handles an incoming HTTP connection from a client.
 /// This function runs inside an isolated OS thread spawned specifically for this connection.
 /// It parses headers, routes endpoints, and serves content synchronously.
-pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const config_mod.Config, database_shared: *db_mod.Database, logs_database_shared: *db_mod.Database) void {
-    const database = database_shared;
-    const logs_database = logs_database_shared;
-
+pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const config_mod.Config, database: *db_mod.Database) void {
     defer stream.socket.close(io);
 
     // Enable TCP Keep-Alive to prevent NAT routers and reverse proxies (e.g. Caddy) from dropping idle connections
@@ -58,7 +55,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
         // Route: API v1 Login
         if (std.mem.eql(u8, target, "/api/v1/login")) {
             var body_buf: [8192]u8 = undefined;
-            api_v1_router.handleLogin(&request, allocator, database, logs_database, &body_buf, io) catch return;
+            api_v1_router.handleLogin(&request, allocator, database, &body_buf, io) catch return;
             continue;
         }
 
@@ -66,7 +63,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
         if (std.mem.startsWith(u8, target, "/login")) {
             if (method == .POST) {
                 var body_buf: [8192]u8 = undefined;
-                auth_handler.handleLoginPost(&request, allocator, database, logs_database, &body_buf, io) catch return;
+                auth_handler.handleLoginPost(&request, allocator, database, &body_buf, io) catch return;
             } else {
                 auth_handler.serveLoginPage(&request, allocator, "") catch return;
             }
@@ -142,7 +139,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
         const session_info = session_info_opt.?;
 
         // Route: API v1 Handlers
-        const handled_api_v1 = api_v1_router.route(&request, allocator, io, config, database, logs_database, session_info, &resp_buf) catch |err| {
+        const handled_api_v1 = api_v1_router.route(&request, allocator, io, config, database, session_info, &resp_buf) catch |err| {
             std.debug.print("API v1 routing error on {s}: {}\n", .{ target, err });
             request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch {};
             continue;
@@ -151,28 +148,28 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
 
         // Route: HTML Player
         if (std.mem.startsWith(u8, target, "/player?")) {
-            player_html.handlePlayer(&request, allocator, database, logs_database, session_info.username, config, io) catch |err| {
+            player_html.handlePlayer(&request, allocator, database, session_info.username, config, io) catch |err| {
                 std.debug.print("Player handler error on {s}: {}\n", .{ target, err });
                 request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch {};
             };
             continue;
         }
 
-        const handled_api = api_router.route(&request, allocator, io, config, database, logs_database, session_info, &resp_buf) catch |err| {
+        const handled_api = api_router.route(&request, allocator, io, config, database, session_info, &resp_buf) catch |err| {
             std.debug.print("API routing error on {s}: {}\n", .{ target, err });
             request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch {};
             continue;
         };
         if (handled_api) continue;
 
-        const handled_admin = admin_router.route(&request, allocator, io, database, logs_database, session_info, &resp_buf) catch |err| {
+        const handled_admin = admin_router.route(&request, allocator, io, database, session_info, &resp_buf) catch |err| {
             std.debug.print("Admin routing error on {s}: {}\n", .{ target, err });
             request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch {};
             continue;
         };
         if (handled_admin) continue;
 
-        const handled_catalog = catalog_router.route(&request, allocator, io, config, database, logs_database, session_info) catch |err| {
+        const handled_catalog = catalog_router.route(&request, allocator, io, config, database, session_info) catch |err| {
             std.debug.print("Catalog routing error on {s}: {}\n", .{ target, err });
             request.respond("Internal Server Error", .{ .status = .internal_server_error }) catch {};
             continue;

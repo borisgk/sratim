@@ -214,6 +214,22 @@ pub fn escapeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, i
     }
 }
 
+/// Escapes a string for safe embedding into JavaScript string literals inside HTML templates.
+pub fn escapeForJs(out: *std.ArrayList(u8), allocator: std.mem.Allocator, input: []const u8) !void {
+    for (input) |ch| {
+        switch (ch) {
+            '\\' => try out.appendSlice(allocator, "\\\\"),
+            '"' => try out.appendSlice(allocator, "\\\""),
+            '\'' => try out.appendSlice(allocator, "\\'"),
+            '<' => try out.appendSlice(allocator, "\\u003c"),
+            '>' => try out.appendSlice(allocator, "\\u003e"),
+            '\n' => try out.appendSlice(allocator, "\\n"),
+            '\r' => try out.appendSlice(allocator, "\\r"),
+            else => try out.append(allocator, ch),
+        }
+    }
+}
+
 /// Extracts the raw (encoded) value for a given key from an application/x-www-form-urlencoded body.
 pub fn getFormValue(body: []const u8, key: []const u8) ?[]const u8 {
     var it = std.mem.splitScalar(u8, body, '&');

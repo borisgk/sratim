@@ -16,13 +16,12 @@ pub fn route(
     io: std.Io,
     config: *const config_mod.Config,
     database: *db_mod.Database,
-    logs_database: *db_mod.Database,
     session_info: session_mod.SessionInfo,
 ) !bool {
     const target = request.head.target;
 
     if (std.mem.eql(u8, target, "/")) {
-        const html_content = catalog_index.generateHtml(allocator, database, logs_database, session_info.username, session_info.is_admin) catch |err| {
+        const html_content = catalog_index.generateHtml(allocator, database, session_info.username, session_info.is_admin) catch |err| {
             std.debug.print("Catalog error: {}\n", .{err});
             try request.respond("Internal Server Error", .{ .status = .internal_server_error });
             return true;
@@ -43,7 +42,7 @@ pub fn route(
             return true;
         };
 
-        const html_content_opt = catalog_library.generateLibraryContentHtml(allocator, io, database, logs_database, lib_id, session_info.username, session_info.is_admin) catch |err| {
+        const html_content_opt = catalog_library.generateLibraryContentHtml(allocator, io, database, lib_id, session_info.username, session_info.is_admin) catch |err| {
             std.debug.print("Browse Library content error: {}\n", .{err});
             if (err == error.LibraryPathNotFound) {
                 try request.respond("Library path not found or inaccessible.", .{ .status = .not_found });
@@ -72,7 +71,7 @@ pub fn route(
             return true;
         };
 
-        const html_content = catalog_details.generateDetailsHtml(allocator, database, logs_database, movie_id, session_info.username) catch |err| {
+        const html_content = catalog_details.generateDetailsHtml(allocator, database, movie_id, session_info.username) catch |err| {
             std.debug.print("Details view error: {}\n", .{err});
             if (err == error.MovieNotFound) {
                 try request.respond("Movie not found", .{ .status = .not_found });
@@ -97,7 +96,7 @@ pub fn route(
             return true;
         };
 
-        show_handler.handleShow(allocator, io, config, request, database, logs_database, session_info.username, session_info.is_admin, show_id) catch |err| {
+        show_handler.handleShow(allocator, io, config, request, database, session_info.username, session_info.is_admin, show_id) catch |err| {
             std.debug.print("Show view error: {}\n", .{err});
             try request.respond("Internal Server Error", .{ .status = .internal_server_error });
         };
@@ -110,7 +109,7 @@ pub fn route(
             return true;
         };
 
-        const html_content = catalog_person.generatePersonHtml(allocator, io, config, database, logs_database, person_id, session_info.username, session_info.is_admin) catch |err| {
+        const html_content = catalog_person.generatePersonHtml(allocator, io, config, database, person_id, session_info.username, session_info.is_admin) catch |err| {
             std.debug.print("Person view error: {}\n", .{err});
             if (err == error.PersonNotFound) {
                 try request.respond("Person not found", .{ .status = .not_found });

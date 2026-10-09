@@ -3,7 +3,6 @@ const isobmff = @import("isobmff.zig");
 const fmp4_muxer = @import("fmp4_muxer.zig");
 const streamer = @import("../streamer.zig");
 const transcoder_mod = @import("../transcoder.zig");
-const track_parser = @import("mkv/track_parser.zig");
 const config_mod = @import("../../config.zig");
 
 /// Checks whether an already parsed Mp4Media structure can be streamed natively.
@@ -149,7 +148,7 @@ pub fn streamMp4WithMedia(
                 at.timescale,
                 true,
             );
-            synthetic_aac_stsd = try track_parser.buildAacStsd(allocator, &[_]u8{ 0x11, 0x90 }, 2, 48000);
+            synthetic_aac_stsd = try isobmff.buildAacStsd(allocator, &[_]u8{ 0x11, 0x90 }, 2, 48000);
             mux_audio_track_opt = isobmff.Mp4MediaTrack{
                 .track_id = at.track_id,
                 .stream_idx = at.stream_idx,

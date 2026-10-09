@@ -22,7 +22,6 @@ pub fn route(
     io: std.Io,
     config: *const config_mod.Config,
     database: *db_mod.Database,
-    logs_database: *db_mod.Database,
     session_info: session_mod.SessionInfo,
     body_buf: *[8192]u8,
 ) !bool {
@@ -34,7 +33,7 @@ pub fn route(
 
     // Public route: login
     if (std.mem.eql(u8, target, "/api/v1/login")) {
-        try auth.handleLogin(request, allocator, database, logs_database, body_buf, io);
+        try auth.handleLogin(request, allocator, database, body_buf, io);
         return true;
     }
 

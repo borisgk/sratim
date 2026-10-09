@@ -4,7 +4,7 @@ pub const mdct = @import("native/audio/mdct.zig");
 pub const ac3_dec = @import("native/audio/ac3_dec.zig");
 pub const aac_dec = @import("native/audio/aac_dec.zig");
 pub const dts_dec = @import("native/audio/dts_dec.zig");
-pub const bit_reader = @import("native/audio/ac3/bit_reader.zig");
+pub const bit_reader = @import("native/audio/bit_reader.zig");
 pub const aac_enc = @import("native/audio/aac_enc.zig");
 
 pub const stream_audio_transcoder = @import("stream_audio_transcoder.zig");
