@@ -28,7 +28,7 @@ pub fn handleConnection(stream: std.Io.net.Stream, io: std.Io, config: *const co
     // Enable TCP Keep-Alive to prevent NAT routers and reverse proxies (e.g. Caddy) from dropping idle connections
     std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.KEEPALIVE, &std.mem.toBytes(@as(c_int, 1))) catch {};
 
-    var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+    var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 

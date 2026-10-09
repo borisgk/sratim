@@ -26,7 +26,7 @@ pub const StreamAudioTranscoder = struct {
         dts: dts_dec.DtsDecoder,
     };
 
-    allocator: std.mem.Allocator = std.heap.c_allocator,
+    allocator: std.mem.Allocator = std.heap.smp_allocator,
     target_channels: u8 = 2,
     is_pure_native: bool = true,
     native_fifo: audio_fifo.AudioFifo,
@@ -70,7 +70,7 @@ pub const StreamAudioTranscoder = struct {
         use_native_encoder: bool,
     ) !*StreamAudioTranscoder {
         _ = use_native_encoder;
-        const allocator = std.heap.c_allocator;
+        const allocator = std.heap.smp_allocator;
         const is_ac3 = matchesAny(codec_name, ac3_codecs);
         const is_eac3 = matchesAny(codec_name, eac3_codecs);
         const is_aac = matchesAny(codec_name, aac_codecs);

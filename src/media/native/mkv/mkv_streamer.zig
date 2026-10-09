@@ -138,9 +138,7 @@ pub fn streamMkvGeneric(
     }
 
     // Resolve seek offset using Cues table
-    var tv_start: std.c.timeval = undefined;
-    _ = std.c.gettimeofday(&tv_start, null);
-    const start_wall_time = @as(i64, tv_start.sec) * 1000 + @divTrunc(tv_start.usec, 1000);
+    const t_start = std.Io.Timestamp.now(io, .awake);
     var seek_cluster_offset: u64 = 0;
     var seek_keyframe_pts_sec: f64 = 0.0;
 
@@ -276,9 +274,7 @@ pub fn streamMkvGeneric(
     var seek_base_video_dts: ?u64 = null;
     var running_audio_samples: u64 = 0;
 
-    var tv_setup_done: std.c.timeval = undefined;
-    _ = std.c.gettimeofday(&tv_setup_done, null);
-    const t_setup_us = (@as(i64, tv_setup_done.sec) * 1_000_000 + tv_setup_done.usec) - (start_wall_time * 1000);
+    const t_setup_us = t_start.durationTo(std.Io.Timestamp.now(io, .awake)).toMicroseconds();
     var t_collect_us: i64 = 0;
     var t_demux_us: i64 = 0;
     var t_audio_us: i64 = 0;
@@ -335,17 +331,13 @@ pub fn streamMkvGeneric(
             }
         }
 
-        var tv_coll_0: std.c.timeval = undefined;
-        _ = std.c.gettimeofday(&tv_coll_0, null);
+        const t_coll_0 = std.Io.Timestamp.now(io, .awake);
 
         // Collect blocks until the next video keyframe or EOF
         while (true) {
-            var tv_d0: std.c.timeval = undefined;
-            _ = std.c.gettimeofday(&tv_d0, null);
+            const t_d0 = std.Io.Timestamp.now(io, .awake);
             const blk = (try block_rdr.readNextBlock(&current_file_pos)) orelse break;
-            var tv_d1: std.c.timeval = undefined;
-            _ = std.c.gettimeofday(&tv_d1, null);
-            t_demux_us += (@as(i64, tv_d1.sec) - @as(i64, tv_d0.sec)) * 1_000_000 + (@as(i64, tv_d1.usec) - @as(i64, tv_d0.usec));
+            t_demux_us += t_d0.durationTo(std.Io.Timestamp.now(io, .awake)).toMicroseconds();
 
             if (blk.track_num == video_trk.track_num) {
                 if (pending_video_blocks.items.len == 0) {
@@ -375,8 +367,7 @@ pub fn streamMkvGeneric(
                 }
 
                 if (needs_audio_transcode) {
-                    var tv_a0: std.c.timeval = undefined;
-                    _ = std.c.gettimeofday(&tv_a0, null);
+                    const t_a0 = std.Io.Timestamp.now(io, .awake);
                     payload_reader.seekTo(blk.payload_offset) catch {
                         has_error.* = true;
                         break;
@@ -388,29 +379,22 @@ pub fn streamMkvGeneric(
                         break;
                     };
                     try audio_transcoder.?.transcodePacket(allocator, raw_audio_packet_buf.items, &transcoded_audio_frames);
-                    var tv_a1: std.c.timeval = undefined;
-                    _ = std.c.gettimeofday(&tv_a1, null);
-                    t_audio_us += (@as(i64, tv_a1.sec) - @as(i64, tv_a0.sec)) * 1_000_000 + (@as(i64, tv_a1.usec) - @as(i64, tv_a0.usec));
+                    t_audio_us += t_a0.durationTo(std.Io.Timestamp.now(io, .awake)).toMicroseconds();
                 } else {
                     try pending_audio_blocks.append(allocator, blk);
                 }
             }
         }
 
-        var tv_coll_1: std.c.timeval = undefined;
-        _ = std.c.gettimeofday(&tv_coll_1, null);
-        t_collect_us += (@as(i64, tv_coll_1.sec) - @as(i64, tv_coll_0.sec)) * 1_000_000 + (@as(i64, tv_coll_1.usec) - @as(i64, tv_coll_0.usec));
+        t_collect_us += t_coll_0.durationTo(std.Io.Timestamp.now(io, .awake)).toMicroseconds();
 
         if (pending_video_blocks.items.len == 0) break; // EOF reached
 
         // Resolve GOP video samples (DTS, PTS, CTTS)
-        var tv_g0: std.c.timeval = undefined;
-        _ = std.c.gettimeofday(&tv_g0, null);
+        const t_g0 = std.Io.Timestamp.now(io, .awake);
         const v_samples = try gop_builder.buildGopMediaSamples(allocator, pending_video_blocks.items, 1000, 33);
         defer allocator.free(v_samples);
-        var tv_g1: std.c.timeval = undefined;
-        _ = std.c.gettimeofday(&tv_g1, null);
-        t_gop_builder_us += (@as(i64, tv_g1.sec) - @as(i64, tv_g0.sec)) * 1_000_000 + (@as(i64, tv_g1.usec) - @as(i64, tv_g0.usec));
+        t_gop_builder_us += t_g0.durationTo(std.Io.Timestamp.now(io, .awake)).toMicroseconds();
 
         if (seek_base_video_dts == null) {
             seek_base_video_dts = v_samples[0].dts;
@@ -461,9 +445,7 @@ pub fn streamMkvGeneric(
         running_audio_samples += @as(u64, a_samples.items.len) * 1024;
 
         if (seq_num == 1) {
-            var tv_now: std.c.timeval = undefined;
-            _ = std.c.gettimeofday(&tv_now, null);
-            const now_us = (@as(i64, tv_now.sec) * 1_000_000 + tv_now.usec) - (start_wall_time * 1000);
+            const now_us = t_start.durationTo(std.Io.Timestamp.now(io, .awake)).toMicroseconds();
             const v_dur_ms = if (v_samples.len > 0) v_samples[v_samples.len - 1].pts_sec - v_samples[0].pts_sec else 0.0;
             const a_dur_ms = @as(f64, @floatFromInt(a_samples.items.len * 1024)) / 48.0;
             std.debug.print(

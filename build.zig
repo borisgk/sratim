@@ -78,8 +78,6 @@ pub fn build(b: *std.Build) void {
         exe.root_module.strip = true;
     }
 
-    exe.root_module.link_libc = true;
-
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default
     // step). By default the install prefix is `zig-out/` but can be overridden
@@ -143,7 +141,6 @@ pub fn build(b: *std.Build) void {
     audio_test_mod.addImport("httpx", httpx_dep.module("httpx"));
     audio_test_mod.addImport("zembed", zembed_dep.module("zembed"));
     audio_test_mod.addOptions("build_options", audio_options);
-    audio_test_mod.link_libc = true;
 
     // Standard test step for storage and embedded database engine tests
     const storage_test_mod = b.createModule(.{

@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("../core/c.zig").c;
+const builtin = @import("builtin");
 
 /// Parse an integer query parameter by name from a URL target string.
 /// Robust against trailing whitespace, encoded characters, or fragment identifiers.
@@ -64,28 +64,26 @@ pub fn parseQueryFloat(target: []const u8, name: []const u8) ?f64 {
 }
 
 pub fn getLanIp(allocator: std.mem.Allocator) !?[]const u8 {
-    var ifap: ?*c.ifaddrs = null;
-    if (c.getifaddrs(&ifap) != 0) return null;
-    if (ifap == null) return null;
-    defer c.freeifaddrs(ifap);
+    if (builtin.os.tag == .linux) {
+        const fd = std.posix.openatZ(std.posix.AT.FDCWD, "/proc/net/fib_trie", .{ .ACCMODE = .RDONLY }, 0) catch return null;
+        defer std.posix.close(fd);
 
-    var curr = ifap;
-    while (curr) |ifa| : (curr = ifa.ifa_next) {
-        if (ifa.ifa_addr) |addr| {
-            if (addr.family == c.AF_INET) {
-                const flags = ifa.ifa_flags;
-                if ((flags & @as(c_uint, @intCast(c.IFF_LOOPBACK))) != 0) continue;
-                if ((flags & @as(c_uint, @intCast(c.IFF_UP))) == 0) continue;
+        var buf: [4096]u8 = undefined;
+        const n = std.posix.read(fd, &buf) catch return null;
+        const content = buf[0..n];
 
-                const sin = @as(*const c.sockaddr_in, @ptrCast(@alignCast(addr)));
-                // sin.addr holds the address in network byte order; view its memory directly.
-                // (Zig 0.17 @bitCast to arrays is LSB-first, which would reverse octets on big-endian.)
-                const bytes: *const [4]u8 = @ptrCast(&sin.addr);
-                var ip_buf: [16]u8 = undefined;
-                const ip_str = std.fmt.bufPrint(&ip_buf, "{d}.{d}.{d}.{d}", .{
-                    bytes[0], bytes[1], bytes[2], bytes[3],
-                }) catch return null;
-                return try allocator.dupe(u8, ip_str);
+        var it = std.mem.splitScalar(u8, content, '\n');
+        var candidate_ip: ?[]const u8 = null;
+
+        while (it.next()) |line| {
+            const trimmed = std.mem.trim(u8, line, " \t\r");
+            if (std.mem.startsWith(u8, trimmed, "|-- ")) {
+                const ip_part = trimmed[4..];
+                if (std.mem.indexOfScalar(u8, ip_part, '.') != null and !std.mem.startsWith(u8, ip_part, "127.")) {
+                    candidate_ip = ip_part;
+                }
+            } else if (candidate_ip != null and std.mem.indexOf(u8, trimmed, "host LOCAL") != null) {
+                return try allocator.dupe(u8, candidate_ip.?);
             }
         }
     }

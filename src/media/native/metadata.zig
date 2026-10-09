@@ -56,7 +56,7 @@ pub fn getKeyframePts(io: std.Io, file_path: []const u8, start_time: f64) !f64 {
 
     if (bytes_read >= 8 and isobmff.isMp4Container(magic_buf[0..bytes_read])) {
         // Fast MP4 / MOV keyframe seek: parse only sync tables and timescale
-        return isobmff.findMp4KeyframePts(std.heap.c_allocator, io, file_path, start_time) catch start_time;
+        return isobmff.findMp4KeyframePts(std.heap.smp_allocator, io, file_path, start_time) catch start_time;
     }
 
     // Matroska container: parse EBML Cues

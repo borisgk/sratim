@@ -1,5 +1,4 @@
 const std = @import("std");
-const c = @import("../../core/c.zig").c;
 
 /// Lists subdirectories of a given path for the file browser modal.
 pub fn handleApiBrowse(request: *std.http.Server.Request, allocator: std.mem.Allocator, io: std.Io) !void {
@@ -25,20 +24,12 @@ pub fn handleApiBrowse(request: *std.http.Server.Request, allocator: std.mem.All
 
     var resolved_path: []const u8 = undefined;
     if (target_path.len == 0) {
-        if (c.getenv("HOME")) |home| {
-            resolved_path = try allocator.dupe(u8, std.mem.span(home));
-        } else {
-            resolved_path = try allocator.dupe(u8, "/");
-        }
+        resolved_path = try allocator.dupe(u8, "/");
     } else {
         if (std.fs.path.resolve(allocator, &[_][]const u8{target_path})) |res| {
             resolved_path = res;
         } else |_| {
-            if (c.getenv("HOME")) |home| {
-                resolved_path = try allocator.dupe(u8, std.mem.span(home));
-            } else {
-                resolved_path = try allocator.dupe(u8, "/");
-            }
+            resolved_path = try allocator.dupe(u8, "/");
         }
     }
 

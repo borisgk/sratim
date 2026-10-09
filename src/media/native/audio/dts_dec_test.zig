@@ -27,8 +27,7 @@ test "DtsDecoder decodes test_dts_5s.dts with high correlation to reference PCM"
 
     var frame_out: [2048 * 2]f32 = undefined;
 
-    var tv_start: std.c.timeval = undefined;
-    _ = std.c.gettimeofday(&tv_start, null);
+    const t_start = std.Io.Timestamp.now(testing.io, .awake);
 
     while (offset + 96 <= bytes_read) {
         const sync = findSync(buf[offset..bytes_read]) orelse break;
@@ -45,9 +44,7 @@ test "DtsDecoder decodes test_dts_5s.dts with high correlation to reference PCM"
         if (frame_count >= 200) break;
     }
 
-    var tv_end: std.c.timeval = undefined;
-    _ = std.c.gettimeofday(&tv_end, null);
-    const elapsed_us = (@as(i64, tv_end.sec) - @as(i64, tv_start.sec)) * 1000000 + (@as(i64, tv_end.usec) - @as(i64, tv_start.usec));
+    const elapsed_us = t_start.durationTo(std.Io.Timestamp.now(testing.io, .awake)).toMicroseconds();
     const us_per_frame = @as(f64, @floatFromInt(elapsed_us)) / @as(f64, @floatFromInt(frame_count));
     std.debug.print("\n>>> DECODED {} DTS frames in {d:.2} ms ({d:.1} us/frame, {d:.1}x realtime) <<<\n", .{
         frame_count,

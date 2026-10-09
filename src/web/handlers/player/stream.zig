@@ -45,7 +45,7 @@ pub fn handleStream(
 
     var is_supported = false;
     var mp4_media_opt: ?isobmff.Mp4Media = null;
-    defer if (mp4_media_opt) |*m| m.deinit(std.heap.c_allocator);
+    defer if (mp4_media_opt) |*m| m.deinit(std.heap.smp_allocator);
 
     var actual_start: f64 = 0.0;
     var orig_audio_codec_buf: [64]u8 = undefined;
@@ -60,7 +60,7 @@ pub fn handleStream(
             var magic_buf: [16]u8 = undefined;
             const bytes_read = file_reader.interface.readSliceShort(&magic_buf) catch 0;
             if (bytes_read >= 8 and isobmff.isMp4Container(magic_buf[0..bytes_read])) {
-                const media = isobmff.parseMp4Media(std.heap.c_allocator, io, z_path) catch null;
+                const media = isobmff.parseMp4Media(std.heap.smp_allocator, io, z_path) catch null;
                 if (media) |m| {
                     if (mp4_streamer.canStreamParsedMp4(&m, audio_idx)) {
                         is_supported = true;
@@ -103,7 +103,7 @@ pub fn handleStream(
                         mp4_media_opt = m;
                     } else {
                         var tmp_m = m;
-                        tmp_m.deinit(std.heap.c_allocator);
+                        tmp_m.deinit(std.heap.smp_allocator);
                     }
                 }
             } else if (bytes_read >= 4 and magic_buf[0] == 0x1A and magic_buf[1] == 0x45 and magic_buf[2] == 0xDF and magic_buf[3] == 0xA3) {
@@ -168,16 +168,16 @@ pub fn handleStream(
     });
 
     var stream_ctx = streamer.HttpStreamContext{ .writer = &resp };
-    // Use std.heap.c_allocator so that each GOP fragment and AAC frame buffer is freed to the OS heap immediately
+    // Use std.heap.smp_allocator so that each GOP fragment and AAC frame buffer is freed to the OS heap immediately
     if (mp4_media_opt) |m| {
-        streamer.streamMp4WithMedia(std.heap.c_allocator, io, z_path, m, start_time, audio_idx, &stream_ctx, config.media_engine.audio_transcoder) catch |e| {
+        streamer.streamMp4WithMedia(std.heap.smp_allocator, io, z_path, m, start_time, audio_idx, &stream_ctx, config.media_engine.audio_transcoder) catch |e| {
             if (e != error.ConnectionDropped) {
                 std.debug.print("Stream error: {}\n", .{e});
             }
             return;
         };
     } else {
-        streamer.streamMedia(std.heap.c_allocator, io, res_media.resolved_path, start_time, audio_idx, &stream_ctx, config.media_engine.streamer, config.media_engine.audio_transcoder) catch |e| {
+        streamer.streamMedia(std.heap.smp_allocator, io, res_media.resolved_path, start_time, audio_idx, &stream_ctx, config.media_engine.streamer, config.media_engine.audio_transcoder) catch |e| {
             if (e != error.ConnectionDropped) {
                 std.debug.print("Stream error: {}\n", .{e});
             }

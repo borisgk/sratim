@@ -18,8 +18,10 @@ pub const mkv_streamer = @import("media/native/mkv/mkv_streamer.zig");
 pub var app_dir: std.Io.Dir = undefined;
 
 pub fn main() !void {
+    const gpa = std.heap.smp_allocator;
+
     // Initialize the thread-based asynchronous I/O backend (uses epoll/kqueue under the hood)
-    var t = std.Io.Threaded.init(std.heap.c_allocator, .{});
+    var t = std.Io.Threaded.init(gpa, .{});
     const io = t.io();
 
     var config_path: [:0]const u8 = "config.json";
@@ -36,8 +38,8 @@ pub fn main() !void {
         };
     }
 
-    var config = try config_mod.Config.load(std.heap.c_allocator, io, config_path);
-    defer config.deinit(std.heap.c_allocator);
+    var config = try config_mod.Config.load(gpa, io, config_path);
+    defer config.deinit(gpa);
 
     // Pure-Zig Storage paths
     const sratim_json_path = if (std.mem.eql(u8, config_path, "config.json")) "sratim.json" else "/var/lib/sratim/sratim.json";
@@ -50,10 +52,10 @@ pub fn main() !void {
     const logs_json_path = if (std.mem.eql(u8, config_path, "config.json")) "logs.json" else "/var/lib/sratim/logs.json";
     const logs_wal_path = if (std.mem.eql(u8, config_path, "config.json")) "logs.wal" else "/var/lib/sratim/logs.wal";
 
-    var sratim_storage = db_mod.engine.SratimStorage.init(std.heap.c_allocator, io, sratim_json_path, sratim_wal_path, persons_dir);
+    var sratim_storage = db_mod.engine.SratimStorage.init(gpa, io, sratim_json_path, sratim_wal_path, persons_dir);
     defer sratim_storage.deinit();
 
-    var logs_storage = db_mod.logs_engine.LogsStorage.init(std.heap.c_allocator, io, logs_json_path, logs_wal_path);
+    var logs_storage = db_mod.logs_engine.LogsStorage.init(gpa, io, logs_json_path, logs_wal_path);
     defer logs_storage.deinit();
 
     // Load snapshots from disk (JSON snapshot + replay WAL if exists)
@@ -100,12 +102,12 @@ pub fn main() !void {
     try users_mod.ensureAdminExists(&database, io);
 
     std.debug.print("Scanning libraries for files...\n", .{});
-    scanner_mod.scanLibraryFiles(&database, std.heap.c_allocator, io) catch |err| {
+    scanner_mod.scanLibraryFiles(&database, gpa, io) catch |err| {
         std.debug.print("Error scanning libraries: {}\n", .{err});
     };
     std.debug.print("Library scan complete.\n", .{});
 
-    fetcher.startFetcherThread(std.heap.c_allocator, io, &database, config.getTmdbToken(), config.tmdb_proxy) catch |err| {
+    fetcher.startFetcherThread(gpa, io, &database, config.getTmdbToken(), config.tmdb_proxy) catch |err| {
         std.debug.print("Failed to start TMDB fetcher: {}\n", .{err});
     };
 
