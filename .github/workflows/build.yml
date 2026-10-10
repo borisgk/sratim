@@ -3,6 +3,11 @@ name: Build & Semantic Release Multi-Arch Binaries
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - "**.md"
+      - ".gitignore"
+      - "LICENSE"
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
