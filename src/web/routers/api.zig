@@ -66,6 +66,18 @@ pub fn route(
         return true;
     }
 
+    if (std.mem.startsWith(u8, target, "/api/library/delete") and method == .POST) {
+        if (!session_info.is_admin) {
+            try request.respond("403 Forbidden: Admin access required", .{ .status = .forbidden });
+            return true;
+        }
+        library_handler.handleLibraryDelete(request, allocator, database, session_info.is_admin, resp_buf) catch |err| {
+            std.debug.print("API Library Delete error: {}\n", .{err});
+            try request.respond("Internal Server Error", .{ .status = .internal_server_error });
+        };
+        return true;
+    }
+
     if (std.mem.startsWith(u8, target, "/api/library/updates") and method == .GET) {
         library_handler.handleApiLibraryUpdates(request, allocator, database) catch |err| {
             std.debug.print("API Library Updates error: {}\n", .{err});

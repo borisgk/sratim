@@ -54,6 +54,21 @@ pub fn generateLibraryContentHtml(
         "";
     defer if (is_admin) allocator.free(rename_btn_html);
 
+    const delete_btn_html = if (is_admin)
+        try std.fmt.allocPrint(allocator,
+            \\<button id="open-delete-lib-btn" class="delete-lib-btn" data-id="{d}" title="Delete Library" aria-label="Delete Library">
+            \\    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            \\        <polyline points="3 6 5 6 21 6"></polyline>
+            \\        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            \\        <line x1="10" y1="11" x2="10" y2="17"></line>
+            \\        <line x1="14" y1="11" x2="14" y2="17"></line>
+            \\    </svg>
+            \\</button>
+        , .{lib.id})
+    else
+        "";
+    defer if (is_admin) allocator.free(delete_btn_html);
+
     const progress_list = logging_mod.getProgressForUser(database, allocator, username) catch &[_]logging_mod.ProgressInfo{};
     defer allocator.free(progress_list);
 
@@ -163,5 +178,6 @@ pub fn generateLibraryContentHtml(
         .MOVIE_CARDS = cards_buf.items,
         .RESCAN_BTN = rescan_btn_html,
         .RENAME_BTN = rename_btn_html,
+        .DELETE_BTN = delete_btn_html,
     });
 }

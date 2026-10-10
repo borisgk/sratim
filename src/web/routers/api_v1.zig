@@ -12,6 +12,7 @@ pub const handleLogin = auth.handleLogin;
 pub const handleGetLibraries = library.handleGetLibraries;
 pub const handleGetLibraryItems = library.handleGetLibraryItems;
 pub const handleRenameLibrary = library.handleRenameLibrary;
+pub const handleDeleteLibrary = library.handleDeleteLibrary;
 pub const handleGetMovie = media.handleGetMovie;
 pub const handleGetShow = media.handleGetShow;
 
@@ -39,6 +40,9 @@ pub fn route(
 
     if (std.mem.eql(u8, target, "/api/v1/library/rename") or std.mem.eql(u8, target, "/api/v1/libraries/rename")) {
         try library.handleRenameLibrary(request, allocator, database, session_info.is_admin, body_buf);
+        return true;
+    } else if (std.mem.eql(u8, target, "/api/v1/library/delete") or std.mem.eql(u8, target, "/api/v1/libraries/delete")) {
+        try library.handleDeleteLibrary(request, allocator, database, session_info.is_admin, body_buf);
         return true;
     } else if (std.mem.eql(u8, target, "/api/v1/libraries")) {
         try library.handleGetLibraries(request, allocator, database);

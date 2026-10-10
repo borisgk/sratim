@@ -262,3 +262,83 @@ pub fn handleRenameLibrary(
         },
     });
 }
+
+const DeleteLibraryPayload = struct {
+    library_id: i64,
+};
+
+pub fn handleDeleteLibrary(
+    request: *std.http.Server.Request,
+    allocator: std.mem.Allocator,
+    database: *db_mod.Database,
+    is_admin: bool,
+    body_buf: *[8192]u8,
+) !void {
+    if (request.head.method != .POST and request.head.method != .DELETE) {
+        try request.respond("{\"success\":false,\"error\":\"Method not allowed\"}", .{ .status = .method_not_allowed });
+        return;
+    }
+
+    if (!is_admin) {
+        try request.respond("{\"success\":false,\"error\":\"Forbidden: Admin access required\"}", .{
+            .status = .forbidden,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "application/json" },
+            },
+        });
+        return;
+    }
+
+    const body_data = utils.readRequestBodyWithLimit(request, allocator, body_buf, 64 * 1024) catch {
+        try request.respond("{\"success\":false,\"error\":\"Payload too large\"}", .{
+            .status = .payload_too_large,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "application/json" },
+            },
+        });
+        return;
+    };
+    defer allocator.free(body_data);
+
+    const parsed = std.json.parseFromSlice(DeleteLibraryPayload, allocator, body_data, .{
+        .ignore_unknown_fields = true,
+    }) catch {
+        try request.respond("{\"success\":false,\"error\":\"Invalid JSON body\"}", .{
+            .status = .bad_request,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "application/json" },
+            },
+        });
+        return;
+    };
+    defer parsed.deinit();
+
+    library_mod.deleteLibrary(database, parsed.value.library_id) catch |err| switch (err) {
+        error.LibraryNotFound => {
+            try request.respond("{\"success\":false,\"error\":\"Library not found\"}", .{
+                .status = .not_found,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "application/json" },
+                },
+            });
+            return;
+        },
+        else => {
+            try request.respond("{\"success\":false,\"error\":\"Internal Server Error\"}", .{
+                .status = .internal_server_error,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "application/json" },
+                },
+            });
+            return;
+        },
+    };
+
+    try request.respond("{\"success\":true}", .{
+        .status = .ok,
+        .extra_headers = &.{
+            .{ .name = "content-type", .value = "application/json" },
+        },
+    });
+}
+

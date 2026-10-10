@@ -1237,3 +1237,85 @@ test "SratimStorage: getMoviesByLibrary sorts titles ignoring leading articles (
     }
 }
 
+test "storage: deleteLibrary cascades removal of movies, shows, episodes, and credits" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_delete_lib_cascade.json";
+    const wal_path = "tmp/test_delete_lib_cascade.wal";
+    const persons_dir = "tmp/test_delete_lib_cascade_persons";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
+
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
+    defer storage.deinit();
+
+    // 1. Create a movie library with a movie and credit
+    const mov_lib = try storage.addLibrary("Action Movies", "/path/to/movies", .Movies);
+    const movie_id = try storage.addOrUpdateMovie(.{
+        .id = 0,
+        .library_id = mov_lib.id,
+        .file_path = "/path/to/movies/Movie.mkv",
+        .clean_name = "Movie",
+        .title = "Action Movie",
+        .is_present = true,
+    });
+    _ = try storage.addMovieCredit(.{
+        .id = 0,
+        .movie_id = movie_id,
+        .person_id = 100,
+        .name = "Actor One",
+        .is_cast = true,
+    });
+
+    // 2. Create a shows library with a show, episode, and credit
+    const show_lib = try storage.addLibrary("TV Shows", "/path/to/shows", .Shows);
+    const show_id = try storage.addOrUpdateShow(.{
+        .id = 0,
+        .library_id = show_lib.id,
+        .path = "/path/to/shows/Show",
+        .title = "Action Show",
+        .is_present = true,
+    });
+    _ = try storage.addOrUpdateEpisode(.{
+        .id = 0,
+        .show_id = show_id,
+        .file_path = "/path/to/shows/Show/S01E01.mkv",
+        .season = 1,
+        .episode = 1,
+        .is_present = true,
+    });
+    _ = try storage.addShowCredit(.{
+        .id = 0,
+        .show_id = show_id,
+        .person_id = 200,
+        .name = "Actor Two",
+        .is_cast = true,
+    });
+
+    try testing.expectEqual(@as(usize, 2), storage.countLibraries());
+    try testing.expectEqual(@as(usize, 1), storage.countMovies());
+    try testing.expectEqual(@as(usize, 1), storage.countShows());
+    try testing.expectEqual(@as(usize, 1), storage.countEpisodes());
+
+    // Delete movie library
+    try storage.deleteLibrary(mov_lib.id);
+
+    try testing.expectEqual(@as(usize, 1), storage.countLibraries());
+    try testing.expectEqual(@as(usize, 0), storage.countMovies());
+    try testing.expectEqual(@as(usize, 1), storage.countShows());
+    try testing.expectEqual(@as(usize, 1), storage.countEpisodes());
+
+    // Verify calling deleteLibrary on already deleted library returns error.LibraryNotFound
+    try testing.expectError(error.LibraryNotFound, storage.deleteLibrary(mov_lib.id));
+
+    // Delete shows library
+    try storage.deleteLibrary(show_lib.id);
+
+    try testing.expectEqual(@as(usize, 0), storage.countLibraries());
+    try testing.expectEqual(@as(usize, 0), storage.countShows());
+    try testing.expectEqual(@as(usize, 0), storage.countEpisodes());
+}
+
+

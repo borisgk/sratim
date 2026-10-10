@@ -108,9 +108,104 @@ pub fn renameLibrary(self: *SratimStorage, id: i64, new_name: []const u8) !void 
     }
 }
 
-pub fn deleteLibrary(self: *SratimStorage, id: i64) void {
+pub fn deleteLibrary(self: *SratimStorage, id: i64) !void {
     self.writeLock();
     defer self.writeUnlock();
+
+    if (self.libraries.get(id) == null) {
+        return error.LibraryNotFound;
+    }
+
+    // 1. Collect and delete movies in this library (and their credits)
+    var movie_ids = std.ArrayList(i64).empty;
+    defer movie_ids.deinit(self.allocator);
+
+    var m_it = self.movies.iterator();
+    while (m_it.next()) |e| {
+        if (e.value_ptr.library_id == id) {
+            try movie_ids.append(self.allocator, e.key_ptr.*);
+        }
+    }
+
+    for (movie_ids.items) |movie_id| {
+        var credit_ids = std.ArrayList(i64).empty;
+        defer credit_ids.deinit(self.allocator);
+
+        var c_it = self.movie_credits.iterator();
+        while (c_it.next()) |ce| {
+            if (ce.value_ptr.movie_id == movie_id) {
+                try credit_ids.append(self.allocator, ce.key_ptr.*);
+            }
+        }
+
+        for (credit_ids.items) |cid| {
+            if (self.movie_credits.fetchRemove(cid)) |entry| {
+                var c = entry.value;
+                c.deinit(self.allocator);
+            }
+        }
+
+        if (self.movies.fetchRemove(movie_id)) |entry| {
+            var m = entry.value;
+            m.deinit(self.allocator);
+        }
+    }
+
+    // 2. Collect and delete shows in this library (and their episodes & credits)
+    var show_ids = std.ArrayList(i64).empty;
+    defer show_ids.deinit(self.allocator);
+
+    var s_it = self.shows.iterator();
+    while (s_it.next()) |e| {
+        if (e.value_ptr.library_id == id) {
+            try show_ids.append(self.allocator, e.key_ptr.*);
+        }
+    }
+
+    for (show_ids.items) |show_id| {
+        // Collect and delete episodes for this show
+        var episode_ids = std.ArrayList(i64).empty;
+        defer episode_ids.deinit(self.allocator);
+
+        var ep_it = self.episodes.iterator();
+        while (ep_it.next()) |ee| {
+            if (ee.value_ptr.show_id == show_id) {
+                try episode_ids.append(self.allocator, ee.key_ptr.*);
+            }
+        }
+
+        for (episode_ids.items) |epid| {
+            if (self.episodes.fetchRemove(epid)) |entry| {
+                var ep = entry.value;
+                ep.deinit(self.allocator);
+            }
+        }
+
+        // Collect and delete credits for this show
+        var credit_ids = std.ArrayList(i64).empty;
+        defer credit_ids.deinit(self.allocator);
+
+        var sc_it = self.show_credits.iterator();
+        while (sc_it.next()) |ce| {
+            if (ce.value_ptr.show_id == show_id) {
+                try credit_ids.append(self.allocator, ce.key_ptr.*);
+            }
+        }
+
+        for (credit_ids.items) |cid| {
+            if (self.show_credits.fetchRemove(cid)) |entry| {
+                var c = entry.value;
+                c.deinit(self.allocator);
+            }
+        }
+
+        if (self.shows.fetchRemove(show_id)) |entry| {
+            var s = entry.value;
+            s.deinit(self.allocator);
+        }
+    }
+
+    // 3. Remove and deinit the library record itself
     if (self.libraries.fetchRemove(id)) |kv| {
         var val = kv.value;
         val.deinit(self.allocator);

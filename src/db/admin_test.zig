@@ -139,3 +139,82 @@ test "library_mod: renameLibrary via Database layer updates name and snapshot" {
     }
     try testing.expectEqualStrings("Renamed Name", fetched.name);
 }
+
+test "library_mod: deleteLibrary via Database layer removes catalog items without deleting files on disk" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_db_delete_lib.json";
+    const wal_path = "tmp/test_db_delete_lib.wal";
+    const persons_dir = "tmp/test_db_delete_lib_persons";
+    const dummy_media_dir = "tmp/test_db_delete_lib_media";
+    const dummy_file_path = "tmp/test_db_delete_lib_media/movie.mp4";
+
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, dummy_media_dir) catch {};
+
+    // Create dummy media dir and file on disk
+    std.Io.Dir.cwd().createDirPath(testing.io, dummy_media_dir) catch {};
+    var dummy_file = try std.Io.Dir.cwd().createFile(testing.io, dummy_file_path, .{});
+    dummy_file.close(testing.io);
+
+    // Verify media file exists on disk
+    _ = try std.Io.Dir.cwd().statFile(testing.io, dummy_file_path, .{});
+
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
+    defer storage.deinit();
+
+    var db = db_mod.Database.forCatalog(&storage);
+
+    const library_mod = @import("library.zig");
+    try library_mod.addLibrary(&db, "Test Media", dummy_media_dir, .Movies);
+
+    const libs = try library_mod.getLibraries(&db, allocator);
+    defer {
+        for (libs) |l| {
+            allocator.free(l.name);
+            allocator.free(l.path);
+            allocator.free(l.metadata_language);
+            if (l.ignore_patterns) |p| allocator.free(p);
+        }
+        allocator.free(libs);
+    }
+    try testing.expectEqual(@as(usize, 1), libs.len);
+    const lib_id = libs[0].id;
+
+    // Add movie entry to catalog
+    _ = try storage.addOrUpdateMovie(.{
+        .id = 0,
+        .library_id = lib_id,
+        .file_path = dummy_file_path,
+        .clean_name = "movie",
+        .title = "Movie",
+        .is_present = true,
+    });
+
+    try testing.expectEqual(@as(usize, 1), storage.countMovies());
+
+    // Delete library via DB layer
+    try library_mod.deleteLibrary(&db, lib_id);
+
+    // Verify library is deleted from catalog
+    const remaining_libs = try library_mod.getLibraries(&db, allocator);
+    defer {
+        for (remaining_libs) |l| {
+            allocator.free(l.name);
+            allocator.free(l.path);
+            allocator.free(l.metadata_language);
+            if (l.ignore_patterns) |p| allocator.free(p);
+        }
+        allocator.free(remaining_libs);
+    }
+    try testing.expectEqual(@as(usize, 0), remaining_libs.len);
+    try testing.expectEqual(@as(usize, 0), storage.countMovies());
+
+    // CRITICAL: Verify the media file on disk was NOT deleted!
+    const file_stat = try std.Io.Dir.cwd().statFile(testing.io, dummy_file_path, .{});
+    try testing.expect(file_stat.kind == .file);
+}
+

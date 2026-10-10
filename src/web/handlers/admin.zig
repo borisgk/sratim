@@ -78,12 +78,15 @@ pub fn serveAdminPage(request: *std.http.Server.Request, allocator: std.mem.Allo
                 \\        <button type="button" class="admin-rename-btn" data-id="{d}" style="padding: 6px 14px; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 10px; color: #c084fc; cursor: pointer; font-size: 0.85rem; margin-right: 8px;">
                 \\            Rename
                 \\        </button>
-                \\        <a href="/library?id={d}" style="display: inline-block; padding: 6px 14px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 10px; color: #d1d5db; text-decoration: none; font-size: 0.85rem;">
+                \\        <a href="/library?id={d}" style="display: inline-block; padding: 6px 14px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 10px; color: #d1d5db; text-decoration: none; font-size: 0.85rem; margin-right: 8px;">
                 \\            Browse
                 \\        </a>
+                \\        <button type="button" class="admin-delete-btn" data-id="{d}" style="padding: 6px 14px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 10px; color: #f87171; cursor: pointer; font-size: 0.85rem;">
+                \\            Delete
+                \\        </button>
                 \\    </td>
                 \\</tr>
-            , .{ lib.id, escaped_name.items, lib.lib_type.toString(), escaped_path.items, lib.id, lib.id });
+            , .{ lib.id, escaped_name.items, lib.lib_type.toString(), escaped_path.items, lib.id, lib.id, lib.id });
             defer allocator.free(row);
             try rows_buf.appendSlice(allocator, row);
         }

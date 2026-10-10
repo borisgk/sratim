@@ -148,6 +148,58 @@ pub fn handleLibraryRename(
     }) catch return;
 }
 
+const LibraryDeletePayload = struct {
+    library_id: i64,
+};
+
+/// Handles POST /api/library/delete — deletes an existing library without deleting disk content (admin only).
+pub fn handleLibraryDelete(
+    request: *std.http.Server.Request,
+    allocator: std.mem.Allocator,
+    database: *db_mod.Database,
+    is_admin: bool,
+    body_buf: *[8192]u8,
+) !void {
+    if (!is_admin) {
+        request.respond("Forbidden: Admin access required", .{ .status = .forbidden }) catch return;
+        return;
+    }
+
+    const body_data = utils.readRequestBody(request, allocator, body_buf) catch {
+        request.respond("Bad Request: Invalid body", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    defer allocator.free(body_data);
+
+    const parsed = std.json.parseFromSlice(LibraryDeletePayload, allocator, body_data, .{
+        .ignore_unknown_fields = true,
+    }) catch |err| {
+        std.debug.print("Failed to parse library delete JSON: {any}\n", .{err});
+        request.respond("Bad Request: Invalid JSON body", .{ .status = .bad_request }) catch return;
+        return;
+    };
+    defer parsed.deinit();
+
+    library_mod.deleteLibrary(database, parsed.value.library_id) catch |err| switch (err) {
+        error.LibraryNotFound => {
+            request.respond("Not Found: Library not found", .{ .status = .not_found }) catch return;
+            return;
+        },
+        else => {
+            std.debug.print("Failed to delete library {d}: {}\n", .{ parsed.value.library_id, err });
+            request.respond("Error deleting library.", .{ .status = .internal_server_error }) catch return;
+            return;
+        },
+    };
+
+    request.respond("{\"success\":true}", .{
+        .status = .ok,
+        .extra_headers = &.{
+            .{ .name = "content-type", .value = "application/json" },
+        },
+    }) catch return;
+}
+
 /// Handles GET /api/library/updates — returns JSON diff of items and remaining pending count for library.
 pub fn handleApiLibraryUpdates(request: *std.http.Server.Request, allocator: std.mem.Allocator, database: *db_mod.Database) !void {
     const lib_id = utils.parseQueryInt(i64, request.head.target, "id") orelse {

@@ -30,3 +30,11 @@ pub fn renameLibrary(database: *db_mod.Database, id: i64, new_name: []const u8) 
     try cat.renameLibrary(id, new_name);
     cat.snapshot() catch {};
 }
+
+/// Deletes a library and all its associated catalog items, then snapshots the changes to disk.
+pub fn deleteLibrary(database: *db_mod.Database, id: i64) !void {
+    const cat = database.catalog orelse return error.CatalogNotConfigured;
+    try cat.deleteLibrary(id);
+    cat.snapshot() catch {};
+}
+
