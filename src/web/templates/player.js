@@ -1046,24 +1046,80 @@
                 }
             });
 
-            function handleBack() {
-                WatchTracker.sendEvent('stop', getAbsoluteTime());
-                if (document.fullscreenElement) {
-                    document.exitFullscreen().catch(() => {});
+            let isNavigatingBack = false;
+
+            function executeNavigation() {
+                if (isNavigatingBack) return;
+                isNavigatingBack = true;
+
+                try {
+                    if (video && !video.paused) {
+                        video.pause();
+                    }
+                    if (abortController) {
+                        abortController.abort();
+                    }
+                } catch (_) {}
+
+                const targetUrl = (RETURN_URL && RETURN_URL !== '/' && RETURN_URL !== '')
+                    ? RETURN_URL
+                    : (document.referrer && document.referrer.includes(window.location.host) && !document.referrer.includes('/player'))
+                        ? document.referrer
+                        : (RETURN_URL || '/');
+
+                try {
+                    window.location.assign(targetUrl);
+                } catch (_) {
+                    window.location.href = targetUrl;
                 }
-                if (RETURN_URL && RETURN_URL !== '/' && RETURN_URL !== '') {
-                    window.location.href = RETURN_URL;
-                } else if (document.referrer && document.referrer.includes(window.location.host) && !document.referrer.includes('/player')) {
-                    window.location.href = document.referrer;
+
+                // Resilient fallback in case browser delayed navigation during transitions
+                setTimeout(() => {
+                    try {
+                        window.location.href = targetUrl;
+                    } catch (_) {}
+                }, 100);
+            }
+
+            async function handleBack() {
+                try {
+                    WatchTracker.sendEvent('stop', getAbsoluteTime());
+                } catch (e) {
+                    console.warn('WatchTracker sendEvent error:', e);
+                }
+
+                if (document.fullscreenElement) {
+                    let navigated = false;
+                    const finish = () => {
+                        if (!navigated) {
+                            navigated = true;
+                            executeNavigation();
+                        }
+                    };
+
+                    // Safety timeout: never let exitFullscreen hang navigation longer than 150ms
+                    const timer = setTimeout(finish, 150);
+
+                    try {
+                        await document.exitFullscreen();
+                    } catch (_) {
+                    } finally {
+                        clearTimeout(timer);
+                        finish();
+                    }
                 } else {
-                    window.location.href = RETURN_URL || '/';
+                    executeNavigation();
                 }
             }
 
             if (btnBack) {
                 btnBack.addEventListener('click', (e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     handleBack();
+                });
+                btnBack.addEventListener('pointerdown', (e) => {
+                    e.stopPropagation();
                 });
             }
 
@@ -1093,13 +1149,45 @@
             playerWrapper.addEventListener('pointerdown', resetInactivityTimer);
             if (topBar) {
                 topBar.addEventListener('mouseenter', () => {
-                    if (inactivityTimeout) clearTimeout(inactivityTimeout);
+                    if (topBar) topBar.classList.remove('inactive');
+                    if (controls) controls.classList.remove('inactive');
+                    playerWrapper.classList.remove('hide-cursor');
+                    if (inactivityTimeout) {
+                        clearTimeout(inactivityTimeout);
+                        inactivityTimeout = null;
+                    }
+                });
+                topBar.addEventListener('mousemove', (e) => {
+                    e.stopPropagation();
+                    if (topBar) topBar.classList.remove('inactive');
+                    if (controls) controls.classList.remove('inactive');
+                    playerWrapper.classList.remove('hide-cursor');
+                    if (inactivityTimeout) {
+                        clearTimeout(inactivityTimeout);
+                        inactivityTimeout = null;
+                    }
                 });
                 topBar.addEventListener('mouseleave', resetInactivityTimer);
             }
             if (controls) {
                 controls.addEventListener('mouseenter', () => {
-                    if (inactivityTimeout) clearTimeout(inactivityTimeout);
+                    if (topBar) topBar.classList.remove('inactive');
+                    if (controls) controls.classList.remove('inactive');
+                    playerWrapper.classList.remove('hide-cursor');
+                    if (inactivityTimeout) {
+                        clearTimeout(inactivityTimeout);
+                        inactivityTimeout = null;
+                    }
+                });
+                controls.addEventListener('mousemove', (e) => {
+                    e.stopPropagation();
+                    if (topBar) topBar.classList.remove('inactive');
+                    if (controls) controls.classList.remove('inactive');
+                    playerWrapper.classList.remove('hide-cursor');
+                    if (inactivityTimeout) {
+                        clearTimeout(inactivityTimeout);
+                        inactivityTimeout = null;
+                    }
                 });
                 controls.addEventListener('mouseleave', resetInactivityTimer);
             }

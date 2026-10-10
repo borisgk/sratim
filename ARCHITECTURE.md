@@ -126,6 +126,7 @@ The `src/db/` module exposes ergonomic, thread-safe functions that abstract `Sra
   - `cards.zig`: Reusable media card HTML generation.
 - **Templates (`src/web/templates/`)**:
   - Responsive HTML templates (`admin.html`, `library_view.html`, `movie_details.html`, `show_details.html`, `person_details.html`, `login.html`, `dashboard.html`).
+  - Web player frontend (`player.html`, `player.js`, `player.css`, `stats.js`, `stats.css`): In-browser MSE video streaming engine, subtitle/audio track managers, Chromecast integration, and resilient back navigation supporting fullscreen exits and auto-hide controls.
 - **Styling (`src/web/style.css`)**:
   - Unified CSS stylesheet using modern dark UI aesthetics, glassmorphism, responsive grids, and clean action buttons.
 
