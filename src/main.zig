@@ -201,6 +201,7 @@ test {
     _ = @import("db/analytics_test.zig");
     _ = @import("db/admin.zig");
     _ = @import("db/admin_test.zig");
+    _ = @import("storage/sort.zig");
     _ = @import("web/utils.zig");
     _ = @import("web/utils_test.zig");
     _ = @import("web/handlers/analytics_admin.zig");

@@ -2,6 +2,7 @@ const std = @import("std");
 const schema = @import("../schema.zig");
 const engine = @import("../engine.zig");
 const SratimStorage = engine.SratimStorage;
+const sort_mod = @import("../sort.zig");
 
 pub fn addOrUpdateShow(self: *SratimStorage, show: schema.Show) !i64 {
     self.writeLock();
@@ -81,7 +82,7 @@ pub fn getShowsByLibrary(self: *SratimStorage, allocator: std.mem.Allocator, lib
 
     std.sort.pdq(schema.Show, list.items, {}, struct {
         fn lessThan(_: void, a: schema.Show, b: schema.Show) bool {
-            return std.mem.order(u8, a.title, b.title) == .lt;
+            return sort_mod.titleLessThan(a.title, b.title);
         }
     }.lessThan);
 

@@ -1176,3 +1176,64 @@ test "SratimStorage: getCreditsByPerson and getMoviePeopleNamesMap exclude absen
         try testing.expectEqual(@as(usize, 0), credits.len);
     }
 }
+
+test "SratimStorage: getMoviesByLibrary sorts titles ignoring leading articles (A, An, The) and case" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const snap_path = "tmp/test_sort_movies.json";
+    const wal_path = "tmp/test_sort_movies.wal";
+    const persons_dir = "tmp/test_sort_movies_persons";
+    defer {
+        std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+        std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+        std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
+    }
+
+    var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
+    defer storage.deinit();
+
+    const lib = try storage.addLibrary("Movies", "/movies", .Movies);
+
+    const test_titles = [_][]const u8{
+        "The Dark Knight",
+        "Die Hard",
+        "A Beautiful Mind",
+        "Batman",
+        "Alien",
+        "An Inconvenient Truth",
+    };
+
+    for (test_titles, 1..) |title, i| {
+        _ = try storage.addOrUpdateMovie(.{
+            .id = @intCast(i),
+            .library_id = lib.id,
+            .file_path = title,
+            .clean_name = title,
+            .title = title,
+            .is_present = true,
+        });
+    }
+
+    const movies = try storage.getMoviesByLibrary(allocator, lib.id);
+    defer {
+        for (movies) |*m| m.deinit(allocator);
+        allocator.free(movies);
+    }
+
+    try testing.expectEqual(@as(usize, 6), movies.len);
+
+    const expected_order = [_][]const u8{
+        "Alien",
+        "Batman",
+        "A Beautiful Mind",
+        "The Dark Knight",
+        "Die Hard",
+        "An Inconvenient Truth",
+    };
+
+    for (movies, expected_order) |m, expected| {
+        try testing.expectEqualStrings(expected, m.title.?);
+    }
+}
+

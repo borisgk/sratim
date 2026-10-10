@@ -2,6 +2,7 @@ const std = @import("std");
 const schema = @import("../schema.zig");
 const engine = @import("../engine.zig");
 const SratimStorage = engine.SratimStorage;
+const sort_mod = @import("../sort.zig");
 
 pub fn addOrUpdateMovie(self: *SratimStorage, movie: schema.Movie) !i64 {
     self.writeLock();
@@ -93,7 +94,7 @@ pub fn getMoviesByLibrary(self: *SratimStorage, allocator: std.mem.Allocator, li
         fn lessThan(_: void, a: schema.Movie, b: schema.Movie) bool {
             const name_a = a.title orelse a.clean_name;
             const name_b = b.title orelse b.clean_name;
-            return std.mem.order(u8, name_a, name_b) == .lt;
+            return sort_mod.titleLessThan(name_a, name_b);
         }
     }.lessThan);
 

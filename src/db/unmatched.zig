@@ -1,5 +1,6 @@
 const std = @import("std");
 const db_mod = @import("db.zig");
+const sort_mod = @import("../storage/sort.zig");
 
 pub const UnmatchedItem = struct {
     id: i64,
@@ -64,7 +65,7 @@ pub fn getUnmatchedItems(database: *db_mod.Database, allocator: std.mem.Allocato
 
     std.sort.pdq(UnmatchedItem, list.items, {}, struct {
         fn lessThan(_: void, a: UnmatchedItem, b: UnmatchedItem) bool {
-            return std.mem.order(u8, a.title, b.title) == .lt;
+            return sort_mod.titleLessThan(a.title, b.title);
         }
     }.lessThan);
 
