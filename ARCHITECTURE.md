@@ -101,7 +101,7 @@ All database state is stored in memory using `zembed.Table` and persisted via JS
 The `src/db/` module exposes ergonomic, thread-safe functions that abstract `SratimStorage` and `LogsStorage` for web handlers:
 - **[`src/db/db.zig`](file:///Users/borisk/Programming/Zig/sratim/src/db/db.zig)**: Struct `Database` holding pointers to `catalog: ?*SratimStorage` and `logs: ?*LogsStorage`.
 - **[`src/db/library.zig`](file:///Users/borisk/Programming/Zig/sratim/src/db/library.zig)**: `addLibrary`, `getLibraries`, `getLibraryById`, `renameLibrary`, `deleteLibrary`. Automatically persists snapshots.
-- **[`src/db/scanner.zig`](file:///Users/borisk/Programming/Zig/sratim/src/db/scanner.zig)**: Iterates local filesystem directories to ingest media into catalog tables.
+- **[`src/db/scanner.zig`](file:///Users/borisk/Programming/Zig/sratim/src/db/scanner.zig)** & **[`src/utils/parser.zig`](file:///Users/borisk/Programming/Zig/sratim/src/utils/parser.zig)**: Resiliently traverses local filesystem directories (including symlinked and `DT_UNKNOWN` entries on Linux filesystems while skipping hidden dot-files and unreadable subdirectories) to ingest media into catalog tables, and extracts season/episode numbers from both relative season directory paths and filenames.
 - **[`src/db/admin.zig`](file:///Users/borisk/Programming/Zig/sratim/src/db/admin.zig)**: Calculates aggregate counts (movies, shows, episodes, actors, directors, storage bytes).
 - **[`src/db/logging.zig`](file:///Users/borisk/Programming/Zig/sratim/src/db/logging.zig)**: User playback progress and position persistence.
 - **[`src/db/metadata.zig`](file:///Users/borisk/Programming/Zig/sratim/src/db/metadata.zig)**: TMDb search and manual matching.

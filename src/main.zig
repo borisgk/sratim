@@ -197,6 +197,9 @@ test {
     _ = @import("media/native/audio/dts/subband_test.zig");
     _ = @import("media/native/audio/dts/synthesis_test.zig");
     _ = @import("storage/storage_test.zig");
+    _ = @import("utils/parser.zig");
+    _ = @import("db/scanner.zig");
+    _ = @import("db/scanner_test.zig");
     _ = @import("db/analytics.zig");
     _ = @import("db/analytics_test.zig");
     _ = @import("db/admin.zig");

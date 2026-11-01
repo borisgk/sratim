@@ -346,13 +346,17 @@ fn refreshPersonDetails(allocator: std.mem.Allocator, io: std.Io, database: *db_
     std.debug.print("TMDB fetcher found {d} persons needing details backfill or refresh.\n", .{refresh_people.len});
     var stale_count: usize = 0;
     const max_stale_per_pass: usize = 10;
+    var fetched_count: usize = 0;
+    const max_total_per_pass: usize = 20;
 
     for (refresh_people, 0..) |person, idx| {
+        if (fetched_count >= max_total_per_pass) break;
         const is_stale = person.details_fetched;
         if (is_stale) {
             if (stale_count >= max_stale_per_pass) continue;
             stale_count += 1;
         }
+        fetched_count += 1;
 
         std.debug.print("TMDB {s} person details [{d}/{d}]: {s} (ID {d})\n", .{
             if (is_stale) "refreshing" else "backfilling",

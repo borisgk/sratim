@@ -253,6 +253,7 @@ pub fn addOrUpdateEpisode(self: *SratimStorage, episode: schema.Episode) !i64 {
     }
 
     if (self.episodes.getPtr(final_id)) |existing| {
+        const season_or_ep_changed = existing.season != episode.season or existing.episode != episode.episode;
         existing.is_present = episode.is_present;
         existing.file_size = episode.file_size;
         existing.season = episode.season;
@@ -271,6 +272,8 @@ pub fn addOrUpdateEpisode(self: *SratimStorage, episode: schema.Episode) !i64 {
                 if (existing.still_path) |old_s| self.allocator.free(old_s);
                 existing.still_path = try self.allocator.dupe(u8, s);
             }
+        } else if (season_or_ep_changed) {
+            existing.tmdb_id = null;
         }
         return final_id;
     }
