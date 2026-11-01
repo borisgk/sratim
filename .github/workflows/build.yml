@@ -47,6 +47,7 @@ jobs:
         uses: mlugg/setup-zig@v2.2.1
         with:
           version: 0.17.0
+          use-cache: false
 
       - name: Cache Zig Build Artifacts
         uses: actions/cache@v6
