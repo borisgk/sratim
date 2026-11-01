@@ -589,14 +589,21 @@ pub const Ac3Decoder = struct {
 
             if ((try reader.readBit()) == 1) { // deltbaie
                 do_bit_alloc = 0xFF;
-                if (self.chincpl != 0) _ = try reader.readBits(u2, 2);
+                var cpl_deltbae: u2 = tables.DELTA_BIT_NONE;
+                if (self.chincpl != 0) cpl_deltbae = try reader.readBits(u2, 2);
+                var ch_deltbae: [5]u2 = @splat(tables.DELTA_BIT_NONE);
                 for (0..nfchans) |i| {
-                    const deltbae = try reader.readBits(u2, 2);
-                    if (deltbae == tables.DELTA_BIT_NEW) {
+                    ch_deltbae[i] = try reader.readBits(u2, 2);
+                }
+                if (self.chincpl != 0 and cpl_deltbae == tables.DELTA_BIT_NEW) {
+                    var dummy_deltba: [50]i8 = undefined;
+                    try parseDeltba(&reader, &dummy_deltba);
+                }
+                for (0..nfchans) |i| {
+                    if (ch_deltbae[i] == tables.DELTA_BIT_NEW) {
                         var dummy_deltba: [50]i8 = undefined;
                         try parseDeltba(&reader, &dummy_deltba);
                     }
-                    _ = i;
                 }
             }
 

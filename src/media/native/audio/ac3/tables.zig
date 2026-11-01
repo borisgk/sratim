@@ -22,9 +22,9 @@ pub const EXP_D15 = 1;
 pub const EXP_D25 = 2;
 pub const EXP_D45 = 3;
 
-pub const DELTA_BIT_NONE = 0;
-pub const DELTA_BIT_REUSE = 1;
-pub const DELTA_BIT_NEW = 2;
+pub const DELTA_BIT_REUSE = 0;
+pub const DELTA_BIT_NEW = 1;
+pub const DELTA_BIT_NONE = 2;
 pub const DELTA_BIT_RESERVED = 3;
 
 pub const EXP_1: [128]i8 = .{ -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 25, 25, 25 };

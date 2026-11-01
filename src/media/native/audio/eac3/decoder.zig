@@ -6,7 +6,7 @@ const bit_allocation = @import("../ac3/bit_allocation.zig");
 const imdct = @import("../imdct.zig");
 
 pub const BitReader = bit_reader.BitReader;
-const bitAllocateDirect = bit_allocation.bitAllocateDirect;
+const bitAllocateDirectWithTab = bit_allocation.bitAllocateDirectWithTab;
 
 pub const Eac3Decoder = struct {
     sample_rate: u32 = 48000,
@@ -50,6 +50,29 @@ pub const Eac3Decoder = struct {
     phsflginu: bool = false,
     phase_flags: [18]bool = @splat(false),
     cpl_band_sizes: [18]u8 = @splat(0),
+    cpl_band_struct: [18]u1 = tables.DEFAULT_CPL_BAND_STRUCT,
+
+    // Spectral Extension (SPX) state
+    spx_in_use: bool = false,
+    channel_uses_spx: [5]bool = @splat(false),
+    spx_atten_code: [5]i8 = @splat(-1),
+    spx_dst_start_freq: usize = 0,
+    spx_src_start_freq: usize = 0,
+    spx_dst_end_freq: usize = 0,
+    num_spx_bands: usize = 0,
+    spx_band_struct: [17]u1 = tables.DEFAULT_SPX_BAND_STRUCT,
+    spx_band_sizes: [17]u8 = @splat(0),
+    spx_noise_blend: [5][17]f32 = @splat(@splat(0.0)),
+    spx_signal_blend: [5][17]f32 = @splat(@splat(0.0)),
+
+    // Delta bit allocation state across blocks
+    cpl_deltbae: u2 = tables.DELTA_BIT_NONE,
+    cpldeltba: [50]i8 = @splat(0),
+    deltbae: [5]u2 = @splat(tables.DELTA_BIT_NONE),
+    deltba: [5][50]i8 = @splat(@splat(0)),
+
+    // Adaptive Hybrid Transform (AHT) pre-mantissa buffer: [channel 0..7][bin 0..256][blk 0..6]
+    pre_mantissa: [7][256][6]i32 = @splat(@splat(@splat(0))),
 
     pub fn init() Eac3Decoder {
         return .{};
@@ -112,48 +135,49 @@ pub const Eac3Decoder = struct {
             if ((try reader.readBit()) == 1) { // chanmape
                 _ = try reader.readBits(u16, 16); // chanmap
             }
-        } else {
-            if ((try reader.readBit()) == 1) { // mixmdate
-                if (self.acmod > 2) {
-                    _ = try reader.readBits(u2, 2); // dmixmod
+        }
+
+        if ((try reader.readBit()) == 1) { // mixmdate
+            if (self.acmod > 2) {
+                _ = try reader.readBits(u2, 2); // dmixmod
+            }
+            if ((self.acmod & 1) != 0 and self.acmod > 2) { // three front channels exist
+                _ = try reader.readBits(u3, 3); // ltrtcmixlev
+                _ = try reader.readBits(u3, 3); // lorocmixlev
+            }
+            if ((self.acmod & 4) != 0) { // surround channels exist
+                _ = try reader.readBits(u3, 3); // ltrtsurmixlev
+                _ = try reader.readBits(u3, 3); // lorosurmixlev
+            }
+            if (self.lfeon == 1) {
+                if ((try reader.readBit()) == 1) {
+                    _ = try reader.readBits(u5, 5); // lfemixlevcod
                 }
-                if ((self.acmod & 1) != 0 and self.acmod > 1) { // center channel exists
-                    _ = try reader.readBits(u3, 3); // ltrtcmixlev
-                    _ = try reader.readBits(u3, 3); // lorocmixlev
+            }
+            if (strmtyp == 0) {
+                if ((try reader.readBit()) == 1) _ = try reader.readBits(u6, 6); // pgmscl
+                if (self.acmod == 0 and (try reader.readBit()) == 1) _ = try reader.readBits(u6, 6); // pgmscl2
+                if ((try reader.readBit()) == 1) _ = try reader.readBits(u6, 6); // extpgmscl
+                const mixdef = try reader.readBits(u2, 2);
+                switch (mixdef) {
+                    0 => {},
+                    1 => _ = try reader.readBits(u5, 5),
+                    2 => _ = try reader.readBits(u12, 12),
+                    3 => {
+                        const mixdeflen = (@as(usize, try reader.readBits(u5, 5)) + 2) * 8;
+                        for (0..mixdeflen) |_| _ = try reader.readBit();
+                    },
                 }
-                if ((self.acmod & 4) != 0) { // surround channels exist
-                    _ = try reader.readBits(u3, 3); // ltrtsurmixlev
-                    _ = try reader.readBits(u3, 3); // lorosurmixlev
-                }
-                if (self.lfeon == 1) {
-                    if ((try reader.readBit()) == 1) {
-                        _ = try reader.readBits(u5, 5); // lfemixlevcod
-                    }
-                }
-                if (strmtyp == 0) {
-                    if ((try reader.readBit()) == 1) _ = try reader.readBits(u8, 8); // pgmclsube
-                    if (self.acmod == 0 and (try reader.readBit()) == 1) _ = try reader.readBits(u8, 8); // pgmclsub2e
-                    if ((try reader.readBit()) == 1) _ = try reader.readBits(u8, 8); // extpgmclsube
-                    const mixdatae = try reader.readBit();
-                    if (mixdatae == 1) {
-                        var mixdeflen = try reader.readBits(usize, 5);
-                        if (mixdeflen == 31) {
-                            mixdeflen += try reader.readBits(usize, 6);
-                            if (mixdeflen == 31 + 63) {
-                                mixdeflen += try reader.readBits(usize, 8);
-                            }
-                        }
-                        for (0..mixdeflen) |_| _ = try reader.readBits(u8, 8);
-                    }
+                if (self.acmod < 2) {
                     if ((try reader.readBit()) == 1) _ = try reader.readBits(u14, 14); // paninfo
                     if (self.acmod == 0 and (try reader.readBit()) == 1) _ = try reader.readBits(u14, 14); // paninfo2
-                    if ((try reader.readBit()) == 1) { // frmmixcfginfoe
-                        if (self.num_blocks == 1) {
-                            _ = try reader.readBits(u5, 5);
-                        } else {
-                            for (0..self.num_blocks) |_| {
-                                if ((try reader.readBit()) == 1) _ = try reader.readBits(u5, 5);
-                            }
+                }
+                if ((try reader.readBit()) == 1) { // frmmixcfginfoe
+                    if (self.num_blocks == 1) {
+                        _ = try reader.readBits(u5, 5);
+                    } else {
+                        for (0..self.num_blocks) |_| {
+                            if ((try reader.readBit()) == 1) _ = try reader.readBits(u5, 5);
                         }
                     }
                 }
@@ -172,20 +196,19 @@ pub const Eac3Decoder = struct {
             if (self.acmod >= 6) {
                 _ = try reader.readBits(u2, 2); // dsurexmod
             }
-            if ((try reader.readBit()) == 1) _ = try reader.readBits(u7, 7); // audprodie
-            if (self.acmod == 0 and (try reader.readBit()) == 1) _ = try reader.readBits(u7, 7); // audprodi2e
-            _ = try reader.readBit(); // sourcefscod
+            if ((try reader.readBit()) == 1) _ = try reader.readBits(u8, 8); // audprodie (mixlevel:5 + roomtyp:2 + adconvtyp:1)
+            if (self.acmod == 0 and (try reader.readBit()) == 1) _ = try reader.readBits(u8, 8); // audprodi2e (mixlevel2:5 + roomtyp2:2 + adconvtyp2:1)
+            if (fscod != 3) {
+                _ = try reader.readBit(); // sourcefscod
+            }
         }
 
         if (strmtyp == 0 and self.num_blocks != 6) {
             _ = try reader.readBit(); // convsync (only present when num_blocks != 6)
         }
 
-        if (strmtyp == 2) {
-            if ((try reader.readBit()) == 1) { // blkstrtinfoe
-                const blkstrtinfo_len = if (self.num_blocks == 6) @as(usize, 44) else @as(usize, self.num_blocks * 8);
-                for (0..blkstrtinfo_len) |_| _ = try reader.readBit();
-            }
+        if (strmtyp == 2 and (self.num_blocks == 6 or (try reader.readBit()) == 1)) {
+            _ = try reader.readBits(u6, 6); // blkid / frmsizecod
         }
 
         const addbsie = (try reader.readBit()) == 1;
@@ -265,6 +288,7 @@ pub const Eac3Decoder = struct {
         }
 
         // AHT info
+        var channel_uses_aht: [7]bool = @splat(false);
         if (parse_aht_info == 1) {
             const start_ch: usize = if (num_cpl_blocks != 6) 1 else 0;
             for (start_ch..self.channels + 1) |ch| {
@@ -275,7 +299,7 @@ pub const Eac3Decoder = struct {
                         break;
                     }
                 }
-                if (use_aht) _ = try reader.readBit();
+                if (use_aht) channel_uses_aht[ch] = (try reader.readBit()) == 1;
             }
         }
 
@@ -297,9 +321,11 @@ pub const Eac3Decoder = struct {
         }
 
         // Spectral extension attenuation data
-        for (0..nfchans) |_| {
+        for (0..nfchans) |ch| {
             if (parse_spx_atten_data and (try reader.readBit()) == 1) {
-                _ = try reader.readBits(u5, 5);
+                self.spx_atten_code[ch] = @intCast(try reader.readBits(u5, 5));
+            } else {
+                self.spx_atten_code[ch] = -1;
             }
         }
 
@@ -318,7 +344,9 @@ pub const Eac3Decoder = struct {
             self.bai = (2 << 9) | (1 << 7) | (1 << 5) | (2 << 3) | 7;
         }
 
+        var first_spx_coords: [5]bool = @splat(true);
         var first_cpl_coords: [5]bool = @splat(true);
+        var first_cpl_leak: bool = true;
 
         // --- Process Audio Blocks ---
         for (0..self.num_blocks) |blk| {
@@ -335,14 +363,96 @@ pub const Eac3Decoder = struct {
             if ((try reader.readBit()) == 1) _ = try reader.readBits(u8, 8); // dynrnge
             if (self.acmod == 0 and (try reader.readBit()) == 1) _ = try reader.readBits(u8, 8); // dynrng2e
 
-            // Spectral extension in use per block
+            // Spectral extension strategy per block
             if (blk == 0 or (try reader.readBit()) == 1) {
-                const spx_in_use = (try reader.readBit()) == 1;
-                if (spx_in_use) {
-                    // SPX strategy
-                    for (0..nfchans) |_| _ = try reader.readBit();
-                    _ = try reader.readBits(u5, 5); // spxbegf
-                    _ = try reader.readBits(u5, 5); // spxendf
+                self.spx_in_use = (try reader.readBit()) == 1;
+                if (self.spx_in_use) {
+                    if (self.acmod == 1) {
+                        self.channel_uses_spx[0] = true;
+                    } else {
+                        for (0..nfchans) |ch| {
+                            self.channel_uses_spx[ch] = (try reader.readBit()) == 1;
+                        }
+                    }
+                    const dst_start_freq_code = try reader.readBits(usize, 2);
+                    var start_subband = (try reader.readBits(usize, 3)) + 2;
+                    if (start_subband > 7) start_subband += start_subband - 7;
+                    var end_subband = (try reader.readBits(usize, 3)) + 5;
+                    if (end_subband > 7) end_subband += end_subband - 7;
+                    const dst_start_freq = dst_start_freq_code * 12 + 25;
+                    const src_start_freq = start_subband * 12 + 25;
+                    const dst_end_freq = end_subband * 12 + 25;
+                    if (start_subband >= end_subband) return error.InvalidBitstream;
+                    if (dst_start_freq >= src_start_freq) return error.InvalidBitstream;
+                    self.spx_dst_start_freq = dst_start_freq;
+                    self.spx_src_start_freq = src_start_freq;
+                    self.spx_dst_end_freq = dst_end_freq;
+
+                    const n_subbands = end_subband - start_subband;
+                    if (blk == 0) {
+                        self.spx_band_struct = tables.DEFAULT_SPX_BAND_STRUCT;
+                    }
+                    if ((try reader.readBit()) == 1) {
+                        for (0..n_subbands - 1) |subbnd| {
+                            self.spx_band_struct[start_subband + 1 + subbnd] = try reader.readBit();
+                        }
+                    }
+                    var n_bands = n_subbands;
+                    self.spx_band_sizes[0] = 12;
+                    var bnd: usize = 0;
+                    for (1..n_subbands) |subbnd| {
+                        if (self.spx_band_struct[start_subband + subbnd] != 0) {
+                            n_bands -= 1;
+                            self.spx_band_sizes[bnd] += 12;
+                        } else {
+                            bnd += 1;
+                            self.spx_band_sizes[bnd] = 12;
+                        }
+                    }
+                    self.num_spx_bands = n_bands;
+                }
+            }
+            if (!self.spx_in_use) {
+                for (0..nfchans) |ch| {
+                    self.channel_uses_spx[ch] = false;
+                    first_spx_coords[ch] = true;
+                }
+            }
+
+            // Spectral extension coordinates
+            if (self.spx_in_use) {
+                for (0..nfchans) |ch| {
+                    if (self.channel_uses_spx[ch]) {
+                        if (first_spx_coords[ch] or (try reader.readBit()) == 1) {
+                            first_spx_coords[ch] = false;
+                            const spx_blend = @as(f32, @floatFromInt(try reader.readBits(u5, 5))) * (1.0 / 32.0);
+                            const master_spx_coord = @as(usize, try reader.readBits(u2, 2)) * 3;
+                            var bin = self.spx_src_start_freq;
+                            for (0..self.num_spx_bands) |bnd| {
+                                const bandsize: usize = self.spx_band_sizes[bnd];
+                                var nratio = (@as(f32, @floatFromInt(bin + (bandsize >> 1))) / @as(f32, @floatFromInt(self.spx_dst_end_freq))) - spx_blend;
+                                nratio = std.math.clamp(nratio, 0.0, 1.0);
+                                const nblend = @sqrt(3.0 * nratio);
+                                const sblend = @sqrt(1.0 - nratio);
+                                bin += bandsize;
+
+                                const spx_coord_exp = try reader.readBits(usize, 4);
+                                var spx_coord_mant = try reader.readBits(usize, 2);
+                                if (spx_coord_exp == 15) {
+                                    spx_coord_mant <<= 1;
+                                } else {
+                                    spx_coord_mant += 4;
+                                }
+                                const shift_amt: u5 = @intCast(25 - spx_coord_exp - master_spx_coord);
+                                spx_coord_mant <<= shift_amt;
+                                const spx_coord = @as(f32, @floatFromInt(spx_coord_mant)) * (1.0 / @as(f32, @floatFromInt(@as(u32, 1) << 23)));
+                                self.spx_noise_blend[ch][bnd] = nblend * spx_coord;
+                                self.spx_signal_blend[ch][bnd] = sblend * spx_coord;
+                            }
+                        }
+                    } else {
+                        first_spx_coords[ch] = true;
+                    }
                 }
             }
 
@@ -369,7 +479,10 @@ pub const Eac3Decoder = struct {
                     }
 
                     const cpl_start_subband = try reader.readBits(usize, 4);
-                    const cpl_end_subband = (try reader.readBits(usize, 4)) + 3;
+                    const cpl_end_subband = if (self.spx_in_use)
+                        (self.spx_src_start_freq - 37) / 12
+                    else
+                        (try reader.readBits(usize, 4)) + 3;
                     if (cpl_start_subband >= cpl_end_subband) return error.InvalidBitstream;
 
                     self.cplbegf = cpl_start_subband;
@@ -379,19 +492,18 @@ pub const Eac3Decoder = struct {
                     self.cplendmant = cpl_end_subband * 12 + 37;
 
                     const ncplsubnd = cpl_end_subband - cpl_start_subband;
-                    var cpl_bnd_struct: [18]u1 = undefined;
-                    for (cpl_start_subband..cpl_end_subband - 1) |sb| {
-                        cpl_bnd_struct[sb - cpl_start_subband] = tables.DEFAULT_CPL_BAND_STRUCT[sb];
+                    if (blk == 0) {
+                        self.cpl_band_struct = tables.DEFAULT_CPL_BAND_STRUCT;
                     }
                     if ((try reader.readBit()) == 1) { // decode band structure
                         for (0..ncplsubnd - 1) |i| {
-                            cpl_bnd_struct[i] = try reader.readBit();
+                            self.cpl_band_struct[cpl_start_subband + 1 + i] = try reader.readBit();
                         }
                     }
 
                     var cplbndstrc: u32 = 0;
                     for (0..ncplsubnd - 1) |i| {
-                        if (cpl_bnd_struct[i] == 1) cplbndstrc |= @as(u32, 1) << @intCast(i);
+                        if (self.cpl_band_struct[cpl_start_subband + 1 + i] == 1) cplbndstrc |= @as(u32, 1) << @intCast(i);
                     }
                     self.cplbndstrc = cplbndstrc;
 
@@ -399,7 +511,7 @@ pub const Eac3Decoder = struct {
                     self.cpl_band_sizes[0] = 12;
                     var cur_bnd: usize = 0;
                     for (1..ncplsubnd) |subbnd| {
-                        if (cpl_bnd_struct[subbnd - 1] == 1) {
+                        if (self.cpl_band_struct[cpl_start_subband + subbnd] == 1) {
                             n_bands -= 1;
                             self.cpl_band_sizes[cur_bnd] += 12;
                         } else {
@@ -411,6 +523,7 @@ pub const Eac3Decoder = struct {
                 } else {
                     self.chincpl = 0;
                     for (0..nfchans) |i| first_cpl_coords[i] = true;
+                    first_cpl_leak = true;
                     self.phsflginu = false;
                 }
             }
@@ -454,6 +567,8 @@ pub const Eac3Decoder = struct {
                     var nrematbnd: usize = 4;
                     if (cpl_in_use[blk] and self.cplstrtmant <= 61) {
                         nrematbnd -= 1 + @as(usize, if (self.cplstrtmant == 37) 1 else 0);
+                    } else if (self.spx_in_use and self.spx_src_start_freq <= 61) {
+                        nrematbnd -= 1;
                     }
                     self.rematflg = 0;
                     for (0..nrematbnd) |r_idx| {
@@ -467,13 +582,15 @@ pub const Eac3Decoder = struct {
                 if (exp_strategy[blk][ch + 1] != tables.EXP_REUSE) {
                     if (((self.chincpl >> @intCast(ch)) & 1) != 0) {
                         self.endmant[ch] = self.cplstrtmant;
+                    } else if (self.channel_uses_spx[ch]) {
+                        self.endmant[ch] = self.spx_src_start_freq;
                     } else {
                         const chbwcod = try reader.readBits(usize, 6);
                         if (chbwcod > 60) return error.InvalidBitstream;
                         self.endmant[ch] = chbwcod * 3 + 73;
                     }
                 } else if (self.endmant[ch] == 0) {
-                    self.endmant[ch] = if (((self.chincpl >> @intCast(ch)) & 1) != 0) self.cplstrtmant else 253;
+                    self.endmant[ch] = if (((self.chincpl >> @intCast(ch)) & 1) != 0) self.cplstrtmant else if (self.channel_uses_spx[ch]) self.spx_src_start_freq else 253;
                 }
             }
 
@@ -513,8 +630,8 @@ pub const Eac3Decoder = struct {
                 }
             }
 
-            if (snr_offset_strategy != 0) {
-                if (blk == 0 or (try reader.readBit()) == 1) {
+            if (blk == 0 and snr_offset_strategy != 0) {
+                if ((try reader.readBit()) == 1) {
                     const csnr = (@as(i32, @intCast(try reader.readBits(u32, 6))) - 15) << 4;
                     var snr: i32 = 0;
                     const start_ch: usize = if (cpl_in_use[blk]) 0 else 1;
@@ -543,72 +660,86 @@ pub const Eac3Decoder = struct {
 
             // Coupling leak
             if (cpl_in_use[blk]) {
-                if (blk == 0 or (try reader.readBit()) == 1) {
+                if (first_cpl_leak or (try reader.readBit()) == 1) {
                     const fl = try reader.readBits(i32, 3);
                     const sl = try reader.readBits(i32, 3);
                     self.cplfleak = (9 - fl) << 8;
                     self.cplsleak = (9 - sl) << 8;
                 }
+                first_cpl_leak = false;
             }
 
             // Delta bit allocation
-            var deltba: [5][50]i8 = @splat(@splat(0));
-            var cpldeltba: [50]i8 = @splat(0);
-            var cpl_deltbae: usize = tables.DELTA_BIT_NONE;
-            if (dba_syntax) {
+            if (dba_syntax and (try reader.readBit()) == 1) {
                 if (cpl_in_use[blk]) {
-                    cpl_deltbae = try reader.readBits(usize, 2);
-                    if (cpl_deltbae == tables.DELTA_BIT_NEW) try ac3_dec.parseDeltba(&reader, &cpldeltba);
+                    self.cpl_deltbae = try reader.readBits(u2, 2);
+                    if (self.cpl_deltbae == tables.DELTA_BIT_RESERVED) return error.InvalidBitstream;
                 }
                 for (0..nfchans) |i| {
-                    const deltbae_ch = try reader.readBits(usize, 2);
-                    if (deltbae_ch == tables.DELTA_BIT_NEW) try ac3_dec.parseDeltba(&reader, &deltba[i]);
+                    self.deltbae[i] = try reader.readBits(u2, 2);
+                    if (self.deltbae[i] == tables.DELTA_BIT_RESERVED) return error.InvalidBitstream;
                 }
+                if (cpl_in_use[blk] and self.cpl_deltbae == tables.DELTA_BIT_NEW) {
+                    try ac3_dec.parseDeltba(&reader, &self.cpldeltba);
+                }
+                for (0..nfchans) |i| {
+                    if (self.deltbae[i] == tables.DELTA_BIT_NEW) {
+                        try ac3_dec.parseDeltba(&reader, &self.deltba[i]);
+                    }
+                }
+            } else if (blk == 0) {
+                self.cpl_deltbae = tables.DELTA_BIT_NONE;
+                for (0..nfchans) |i| self.deltbae[i] = tables.DELTA_BIT_NONE;
             }
 
-            // Compute BAPs via bitAllocateDirect
+            // Compute BAPs via bitAllocateDirectWithTab
             if (cpl_in_use[blk]) {
-                bitAllocateDirect(
+                const bap_tab = if (channel_uses_aht[0]) &tables.aht_tables.HEBAP_TAB else &tables.BAP_TAB;
+                bitAllocateDirectWithTab(
                     fscod,
                     halfrate,
                     self.bai,
                     self.snr_offset[0],
                     self.fast_gain[0],
-                    @intCast(cpl_deltbae),
-                    &cpldeltba,
+                    @intCast(self.cpl_deltbae),
+                    &self.cpldeltba,
                     self.cplstrtbnd,
                     self.cplstrtmant,
                     self.cplendmant,
                     self.cplfleak,
                     self.cplsleak,
                     &self.cpl_exp,
+                    bap_tab,
                     &self.cpl_bap,
                 );
             }
 
             for (0..nfchans) |ch| {
                 if (self.endmant[ch] > 0) {
-                    bitAllocateDirect(
+                    const bap_tab = if (channel_uses_aht[ch + 1]) &tables.aht_tables.HEBAP_TAB else &tables.BAP_TAB;
+                    bitAllocateDirectWithTab(
                         fscod,
                         halfrate,
                         self.bai,
                         self.snr_offset[ch + 1],
                         self.fast_gain[ch + 1],
-                        tables.DELTA_BIT_NONE,
-                        &tables.ZERO_DELTBA,
+                        @intCast(self.deltbae[ch]),
+                        &self.deltba[ch],
                         0,
                         0,
                         self.endmant[ch],
                         0,
                         0,
                         &self.fbw_exp[ch],
+                        bap_tab,
                         &self.fbw_bap[ch],
                     );
                 }
             }
 
             if (self.lfeon == 1) {
-                bitAllocateDirect(
+                const bap_tab = if (channel_uses_aht[self.channels]) &tables.aht_tables.HEBAP_TAB else &tables.BAP_TAB;
+                bitAllocateDirectWithTab(
                     fscod,
                     halfrate,
                     self.bai,
@@ -622,6 +753,7 @@ pub const Eac3Decoder = struct {
                     0,
                     0,
                     &self.lfe_exp,
+                    bap_tab,
                     &self.lfe_bap,
                 );
             }
@@ -638,23 +770,69 @@ pub const Eac3Decoder = struct {
 
             var done_cpl = false;
             for (0..nfchans) |i| {
-                try ac3_dec.coeffGet(&reader, &block_samples[i], &self.fbw_exp[i], &self.fbw_bap[i], &quantizer, 1.0, dithflag[i], self.endmant[i], &self.lfsr_state);
+                if (!channel_uses_aht[i + 1]) {
+                    try ac3_dec.coeffGet(&reader, &block_samples[i], &self.fbw_exp[i], &self.fbw_bap[i], &quantizer, 1.0, dithflag[i], self.endmant[i], &self.lfsr_state);
+                } else {
+                    if (blk == 0) {
+                        try self.decodeTransformCoeffsAhtCh(&reader, i + 1, 0, self.endmant[i], &self.fbw_bap[i]);
+                    }
+                    for (0..self.endmant[i]) |bin| {
+                        block_samples[i][bin] = @as(f32, @floatFromInt(self.pre_mantissa[i + 1][bin][blk])) * (1.0 / 256.0) * tables.SCALE_FACTOR[self.fbw_exp[i][bin]];
+                    }
+                }
                 if (cpl_in_use[blk] and ((self.chincpl >> @intCast(i)) & 1) != 0) {
                     if (!done_cpl) {
                         done_cpl = true;
                         const coeff_scale: [5]f32 = @splat(1.0);
-                        try ac3_dec.coeffGetCoupling(&reader, nfchans, &coeff_scale, &block_samples, &quantizer, &dithflag, self.chincpl, self.cplbndstrc, self.cplstrtmant, self.cplendmant, &self.cplco, &self.cpl_exp, &self.cpl_bap, &self.lfsr_state);
+                        var signed_cplco = self.cplco;
+                        if (self.acmod == 2) {
+                            for (0..self.ncplbnd) |b| {
+                                if (self.phase_flags[b]) signed_cplco[1][b] = -signed_cplco[1][b];
+                            }
+                        }
+                        if (!channel_uses_aht[0]) {
+                            try ac3_dec.coeffGetCoupling(&reader, nfchans, &coeff_scale, &block_samples, &quantizer, &dithflag, self.chincpl, self.cplbndstrc, self.cplstrtmant, self.cplendmant, &signed_cplco, &self.cpl_exp, &self.cpl_bap, &self.lfsr_state);
+                        } else {
+                            if (blk == 0) {
+                                try self.decodeTransformCoeffsAhtCh(&reader, 0, self.cplstrtmant, self.cplendmant, &self.cpl_bap);
+                            }
+                            var bin = self.cplstrtmant;
+                            for (0..self.ncplbnd) |bnd| {
+                                const band_end = bin + self.cpl_band_sizes[bnd];
+                                while (bin < band_end) : (bin += 1) {
+                                    const cpl_coeff = @as(f32, @floatFromInt(self.pre_mantissa[0][bin][blk])) * (1.0 / 256.0) * tables.SCALE_FACTOR[self.cpl_exp[bin]];
+                                    for (0..nfchans) |ch_idx| {
+                                        if (((self.chincpl >> @intCast(ch_idx)) & 1) != 0) {
+                                            if (self.cpl_bap[bin] == 0 and !dithflag[ch_idx]) {
+                                                block_samples[ch_idx][bin] = 0.0;
+                                            } else {
+                                                block_samples[ch_idx][bin] = cpl_coeff * signed_cplco[ch_idx][bnd];
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
 
             if (self.lfeon == 1) {
-                try ac3_dec.coeffGet(&reader, &block_samples[5], &self.lfe_exp, &self.lfe_bap, &quantizer, 1.0, false, 7, &self.lfsr_state);
+                if (!channel_uses_aht[self.channels]) {
+                    try ac3_dec.coeffGet(&reader, &block_samples[5], &self.lfe_exp, &self.lfe_bap, &quantizer, 1.0, false, 7, &self.lfsr_state);
+                } else {
+                    if (blk == 0) {
+                        try self.decodeTransformCoeffsAhtCh(&reader, self.channels, 0, 7, &self.lfe_bap);
+                    }
+                    for (0..7) |bin| {
+                        block_samples[5][bin] = @as(f32, @floatFromInt(self.pre_mantissa[self.channels][bin][blk])) * (1.0 / 256.0) * tables.SCALE_FACTOR[self.lfe_exp[bin]];
+                    }
+                }
             }
 
             // Rematrixing (ATSC A/52 Section 7.5.4)
             if (self.acmod == 2) {
-                const end_remat = if (cpl_in_use[blk] and self.chincpl != 0) self.cplstrtmant else self.endmant[0];
+                const end_remat = @min(self.endmant[0], self.endmant[1]);
                 const remat_starts = [4]usize{ 13, 25, 37, 61 };
                 const remat_ends = [4]usize{ 25, 37, 61, 253 };
                 for (0..4) |b| {
@@ -677,6 +855,11 @@ pub const Eac3Decoder = struct {
                         }
                     }
                 }
+            }
+
+            // Apply Spectral Extension (SPX) to high-frequency bins
+            if (self.spx_in_use) {
+                self.applySpectralExtension(nfchans, &block_samples);
             }
 
             // Inverse MDCT transform for each channel
@@ -747,5 +930,212 @@ pub const Eac3Decoder = struct {
         }
 
         return self.num_blocks * 256;
+    }
+
+    fn applySpectralExtension(self: *Eac3Decoder, nfchans: usize, block_samples: *[6][256]f32) void {
+        var wrapflag: [17]bool = @splat(false);
+        wrapflag[0] = true;
+        var copy_sizes: [17]usize = @splat(0);
+        var num_copy_sections: usize = 0;
+        var rms_energy: [17]f32 = @splat(0.0);
+
+        var bin = self.spx_dst_start_freq;
+        for (0..self.num_spx_bands) |bnd| {
+            const bandsize: usize = self.spx_band_sizes[bnd];
+            if (bin + bandsize > self.spx_src_start_freq) {
+                copy_sizes[num_copy_sections] = bin - self.spx_dst_start_freq;
+                num_copy_sections += 1;
+                bin = self.spx_dst_start_freq;
+                wrapflag[bnd] = true;
+            }
+            var i: usize = 0;
+            while (i < bandsize) {
+                if (bin == self.spx_src_start_freq) {
+                    copy_sizes[num_copy_sections] = bin - self.spx_dst_start_freq;
+                    num_copy_sections += 1;
+                    bin = self.spx_dst_start_freq;
+                }
+                const copysize = @min(bandsize - i, self.spx_src_start_freq - bin);
+                bin += copysize;
+                i += copysize;
+            }
+        }
+        copy_sizes[num_copy_sections] = bin - self.spx_dst_start_freq;
+        num_copy_sections += 1;
+
+        for (0..nfchans) |ch| {
+            if (!self.channel_uses_spx[ch]) continue;
+
+            // Copy coeffs from normal bands to extension bands
+            bin = self.spx_src_start_freq;
+            for (0..num_copy_sections) |i| {
+                const csize = copy_sizes[i];
+                if (csize > 0 and bin + csize <= 256 and self.spx_dst_start_freq + csize <= 256) {
+                    @memcpy(block_samples[ch][bin .. bin + csize], block_samples[ch][self.spx_dst_start_freq .. self.spx_dst_start_freq + csize]);
+                }
+                bin += csize;
+            }
+
+            // Calculate RMS energy for each SPX band
+            bin = self.spx_src_start_freq;
+            for (0..self.num_spx_bands) |bnd| {
+                const bandsize: usize = self.spx_band_sizes[bnd];
+                var accum: f32 = 0.0;
+                for (0..bandsize) |_| {
+                    const coeff = block_samples[ch][bin];
+                    bin += 1;
+                    accum += coeff * coeff;
+                }
+                rms_energy[bnd] = @sqrt(accum / @as(f32, @floatFromInt(bandsize)));
+            }
+
+            // Apply a 5-tap notch filter at transitions and wrap points
+            if (self.spx_atten_code[ch] >= 0) {
+                const atten_tab = tables.SPX_ATTEN_TAB[@intCast(self.spx_atten_code[ch])];
+                bin = self.spx_src_start_freq - 2;
+                for (0..self.num_spx_bands) |bnd| {
+                    if (wrapflag[bnd] and bin + 5 <= 256) {
+                        block_samples[ch][bin + 0] *= atten_tab[0];
+                        block_samples[ch][bin + 1] *= atten_tab[1];
+                        block_samples[ch][bin + 2] *= atten_tab[2];
+                        block_samples[ch][bin + 3] *= atten_tab[1];
+                        block_samples[ch][bin + 4] *= atten_tab[0];
+                    }
+                    bin += self.spx_band_sizes[bnd];
+                }
+            }
+
+            // Apply noise-blended coefficient scaling
+            bin = self.spx_src_start_freq;
+            for (0..self.num_spx_bands) |bnd| {
+                const nscale = self.spx_noise_blend[ch][bnd] * rms_energy[bnd] * (1.0 / 32768.0);
+                const sscale = self.spx_signal_blend[ch][bnd];
+                const bandsize: usize = self.spx_band_sizes[bnd];
+                for (0..bandsize) |_| {
+                    const noise = nscale * ac3_dec.ditherGen(&self.lfsr_state);
+                    block_samples[ch][bin] = block_samples[ch][bin] * sscale + noise;
+                    bin += 1;
+                }
+            }
+        }
+    }
+
+    fn idct6(pre_mant: *[6]i32) void {
+        const COEFF_0: i64 = 10273905;
+        const COEFF_1: i64 = 11863283;
+        const COEFF_2: i64 = 3070444;
+
+        const odd1: i32 = pre_mant[1] - pre_mant[3] - pre_mant[5];
+        var even2: i32 = @intCast((@as(i64, pre_mant[2]) * COEFF_0) >> 23);
+        var tmp: i32 = @intCast((@as(i64, pre_mant[4]) * COEFF_1) >> 23);
+        var odd0: i32 = @intCast((@as(i64, pre_mant[1] + pre_mant[5]) * COEFF_2) >> 23);
+
+        var even0: i32 = pre_mant[0] + (tmp >> 1);
+        const even1: i32 = pre_mant[0] - tmp;
+
+        tmp = even0;
+        even0 = tmp + even2;
+        even2 = tmp - even2;
+
+        tmp = odd0;
+        odd0 = tmp + pre_mant[1] + pre_mant[3];
+        const odd2: i32 = tmp + pre_mant[5] - pre_mant[3];
+
+        pre_mant[0] = even0 + odd0;
+        pre_mant[1] = even1 + odd1;
+        pre_mant[2] = even2 + odd2;
+        pre_mant[3] = even2 - odd2;
+        pre_mant[4] = even1 - odd1;
+        pre_mant[5] = even0 - odd0;
+    }
+
+    fn decodeTransformCoeffsAhtCh(
+        self: *Eac3Decoder,
+        reader: *BitReader,
+        ch: usize,
+        start_freq: usize,
+        end_freq: usize,
+        bap: *const [256]i8,
+    ) !void {
+        const gaq_mode = try reader.readBits(u2, 2);
+        const end_bap: i8 = if (gaq_mode < 2) 12 else 17;
+
+        var gaq_gain: [256]u8 = @splat(0);
+        var gs: usize = 0;
+
+        if (gaq_mode == 1 or gaq_mode == 2) {
+            for (start_freq..end_freq) |bin| {
+                if (bap[bin] > 7 and bap[bin] < end_bap) {
+                    gaq_gain[gs] = @as(u8, try reader.readBit()) << @intCast(gaq_mode - 1);
+                    gs += 1;
+                }
+            }
+        } else if (gaq_mode == 3) {
+            var gc: usize = 2;
+            for (start_freq..end_freq) |bin| {
+                if (bap[bin] > 7 and bap[bin] < 17) {
+                    if (gc == 2) {
+                        var group_code = try reader.readBits(usize, 5);
+                        if (group_code > 26) group_code = 26;
+                        if (gs + 2 < gaq_gain.len) {
+                            gaq_gain[gs] = @intCast(group_code / 9);
+                            gaq_gain[gs + 1] = @intCast((group_code % 9) / 3);
+                            gaq_gain[gs + 2] = @intCast(group_code % 3);
+                        }
+                        gs += 3;
+                        gc = 0;
+                    } else {
+                        gc += 1;
+                    }
+                }
+            }
+        }
+
+        gs = 0;
+        for (start_freq..end_freq) |bin| {
+            const hebap: usize = @intCast(@max(@as(i8, 0), bap[bin]));
+            const bits: usize = tables.aht_tables.BITS_VS_HEBAP[hebap];
+            if (hebap == 0) {
+                for (0..6) |blk| {
+                    const d = @as(i32, @intFromFloat(ac3_dec.ditherGen(&self.lfsr_state))) << 7;
+                    self.pre_mantissa[ch][bin][blk] = d;
+                }
+            } else if (hebap < 8) {
+                const v = try reader.readBits(usize, bits);
+                const vq_table = tables.aht_tables.MANTISSA_VQ[hebap];
+                for (0..6) |blk| {
+                    self.pre_mantissa[ch][bin][blk] = @as(i32, vq_table[v][blk]) << 8;
+                }
+            } else {
+                const log_gain: usize = if (gaq_mode != 0 and bap[bin] < end_bap) blk_lg: {
+                    const lg = gaq_gain[gs];
+                    gs += 1;
+                    break :blk_lg lg;
+                } else 0;
+                const gbits: usize = bits - log_gain;
+
+                for (0..6) |blk| {
+                    var mant: i32 = try reader.readSignedBits(gbits);
+                    if (log_gain != 0 and mant == -(@as(i32, 1) << @intCast(gbits - 1))) {
+                        const mbits: usize = bits - (2 - log_gain);
+                        mant = try reader.readSignedBits(mbits);
+                        mant = @bitCast(@as(u32, @bitCast(mant)) << @intCast(23 - (mbits - 1)));
+                        const b: i32 = if (mant >= 0)
+                            @as(i32, 1) << @intCast(23 - log_gain)
+                        else
+                            @as(i32, tables.aht_tables.GAQ_REMAP_2_4_B[hebap - 8][log_gain - 1]) << 8;
+                        mant += @intCast((@as(i64, tables.aht_tables.GAQ_REMAP_2_4_A[hebap - 8][log_gain - 1]) * @as(i64, mant)) >> 15);
+                        mant += b;
+                    } else {
+                        mant = @bitCast(@as(u32, @bitCast(mant)) << @intCast(24 - bits));
+                        if (log_gain == 0) {
+                            mant += @intCast((@as(i64, tables.aht_tables.GAQ_REMAP_1[hebap - 8]) * @as(i64, mant)) >> 15);
+                        }
+                    }
+                    self.pre_mantissa[ch][bin][blk] = mant;
+                }
+            }
+            idct6(&self.pre_mantissa[ch][bin]);
+        }
     }
 };

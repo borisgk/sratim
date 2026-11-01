@@ -17,6 +17,42 @@ pub fn bitAllocateDirect(
     exp: []const u8,
     bap: []i8,
 ) void {
+    bitAllocateDirectWithTab(
+        fscod,
+        halfrate,
+        bai,
+        snroffset_direct,
+        fast_gain_val,
+        deltbae,
+        deltba,
+        bndstart,
+        start,
+        end,
+        fastleak_init,
+        slowleak_init,
+        exp,
+        &tables.BAP_TAB,
+        bap,
+    );
+}
+
+pub fn bitAllocateDirectWithTab(
+    fscod: usize,
+    halfrate: usize,
+    bai: u32,
+    snroffset_direct: i32,
+    fast_gain_val: u3,
+    deltbae: u32,
+    deltba: []const i8,
+    bndstart: usize,
+    start: usize,
+    end: usize,
+    fastleak_init: i32,
+    slowleak_init: i32,
+    exp: []const u8,
+    bap_tab: *const [305]i8,
+    bap: []i8,
+) void {
     const fdecay = (63 + 20 * @as(i32, @intCast((bai >> 7) & 3))) >> @intCast(halfrate);
     const fgain = 128 + 128 * @as(i32, @intCast(fast_gain_val));
     const sdecay = (15 + 2 * @as(i32, @intCast(bai >> 9))) >> @intCast(halfrate);
@@ -57,7 +93,7 @@ pub fn bitAllocateDirect(
             mask -= floor_val;
 
             const bap_idx = mask + 4 * @as(i32, exp[i]) + 156;
-            bap[i] = if (bap_idx >= 0 and bap_idx < tables.BAP_TAB.len) tables.BAP_TAB[@intCast(bap_idx)] else 0;
+            bap[i] = if (bap_idx >= 0 and bap_idx < bap_tab.len) bap_tab[@intCast(bap_idx)] else 0;
             i += 1;
             if (!((i < 3) or ((i < 7) and (exp[i] > exp[i - 1])))) break;
         }
@@ -90,7 +126,7 @@ pub fn bitAllocateDirect(
             mask -= floor_val;
 
             const bap_idx = mask + 4 * @as(i32, exp[i]) + 156;
-            bap[i] = if (bap_idx >= 0 and bap_idx < tables.BAP_TAB.len) tables.BAP_TAB[@intCast(bap_idx)] else 0;
+            bap[i] = if (bap_idx >= 0 and bap_idx < bap_tab.len) bap_tab[@intCast(bap_idx)] else 0;
             i += 1;
         }
 
@@ -116,7 +152,7 @@ pub fn bitAllocateDirect(
             mask -= floor_val;
 
             const bap_idx = mask + 4 * @as(i32, exp[i]) + 156;
-            bap[i] = if (bap_idx >= 0 and bap_idx < tables.BAP_TAB.len) tables.BAP_TAB[@intCast(bap_idx)] else 0;
+            bap[i] = if (bap_idx >= 0 and bap_idx < bap_tab.len) bap_tab[@intCast(bap_idx)] else 0;
             i += 1;
         }
 
@@ -138,7 +174,7 @@ pub fn bitAllocateDirect(
             mask -= floor_val;
 
             const bap_idx = mask + 4 * @as(i32, exp[i]) + 156;
-            bap[i] = if (bap_idx >= 0 and bap_idx < tables.BAP_TAB.len) tables.BAP_TAB[@intCast(bap_idx)] else 0;
+            bap[i] = if (bap_idx >= 0 and bap_idx < bap_tab.len) bap_tab[@intCast(bap_idx)] else 0;
             i += 1;
         }
         j = i;
@@ -186,7 +222,7 @@ pub fn bitAllocateDirect(
         j = startband;
         while (j < endband) : (j += 1) {
             const bap_idx = mask + 4 * @as(i32, exp[j]) + 156;
-            bap[j] = if (bap_idx >= 0 and bap_idx < tables.BAP_TAB.len) tables.BAP_TAB[@intCast(bap_idx)] else 0;
+            bap[j] = if (bap_idx >= 0 and bap_idx < bap_tab.len) bap_tab[@intCast(bap_idx)] else 0;
         }
     }
 }

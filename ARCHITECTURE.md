@@ -133,8 +133,8 @@ The `src/db/` module exposes ergonomic, thread-safe functions that abstract `Sra
 ### `src/media/` — Streaming & Native Transcoding Pipeline
 - **[`src/media/native/mkv/`](file:///Users/borisk/Programming/Zig/sratim/src/media/native/mkv/)**:
   - Native Matroska (MKV) track parser and zero-copy video slicer producing fragmented MP4 (fMP4) on the fly for browser playback.
-- **Audio Transcoding**:
-  - Pure Zig decoders for AC-3, E-AC-3, and DTS that downmix/transcode to AAC-LC directly in memory without requiring external processes or libc dependencies.
+- **Audio Transcoding ([`src/media/native/audio/`](file:///Users/borisk/Programming/Zig/sratim/src/media/native/audio/))**:
+  - Pure Zig decoders for AC-3 ([`src/media/native/audio/ac3/`](file:///Users/borisk/Programming/Zig/sratim/src/media/native/audio/ac3/)), E-AC-3 ([`src/media/native/audio/eac3/`](file:///Users/borisk/Programming/Zig/sratim/src/media/native/audio/eac3/), including channel coupling, Spectral Extension `SPX`, and Adaptive Hybrid Transform `AHT` via [`aht_tables.zig`](file:///Users/borisk/Programming/Zig/sratim/src/media/native/audio/eac3/aht_tables.zig)), and DTS ([`src/media/native/audio/dts/`](file:///Users/borisk/Programming/Zig/sratim/src/media/native/audio/dts/)) that downmix and transcode to AAC-LC ([`src/media/native/audio/aac_enc/`](file:///Users/borisk/Programming/Zig/sratim/src/media/native/audio/aac_enc/)) directly in memory via [`StreamAudioTranscoder`](file:///Users/borisk/Programming/Zig/sratim/src/media/stream_audio_transcoder.zig) without external processes or libc dependencies.
 - **[`src/media/subtitles.zig`](file:///Users/borisk/Programming/Zig/sratim/src/media/subtitles.zig)**:
   - SRT and WebVTT subtitle extraction and streaming.
 - **[`src/media/tmdb/`](file:///Users/borisk/Programming/Zig/sratim/src/media/tmdb/)**:
