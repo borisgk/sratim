@@ -2,6 +2,7 @@ const std = @import("std");
 const tables = @import("tables.zig");
 const huffman = @import("huffman.zig");
 const mdct = @import("../mdct.zig");
+const dsp = @import("../dsp.zig");
 const bit_reader = @import("../bit_reader.zig");
 
 pub const config = @import("config.zig");
@@ -241,8 +242,8 @@ pub const AacDecoder = struct {
                 const c: @Vector(8, f32) = ch_pcm[2][s..][0..8].*;
                 const ls: @Vector(8, f32) = ch_pcm[4][s..][0..8].*;
                 const rs: @Vector(8, f32) = ch_pcm[5][s..][0..8].*;
-                const l_out = @mulAdd(@Vector(8, f32), c + ls, v_3db, l) * v_scale;
-                const r_out = @mulAdd(@Vector(8, f32), c + rs, v_3db, r) * v_scale;
+                const l_out = dsp.mulAdd(@Vector(8, f32), c + ls, v_3db, l) * v_scale;
+                const r_out = dsp.mulAdd(@Vector(8, f32), c + rs, v_3db, r) * v_scale;
                 out_stereo_pcm[s * 2 ..][0..16].* = @shuffle(
                     f32,
                     l_out,
@@ -613,7 +614,7 @@ pub const AacDecoder = struct {
                     const t0: @Vector(8, f32) = time_2048[i..][0..8].*;
                     const w0: @Vector(8, f32) = win_prev_long[i..][0..8].*;
                     const d0: @Vector(8, f32) = self.delay[ch][i..][0..8].*;
-                    out_pcm[i..][0..8].* = @mulAdd(@Vector(8, f32), t0, w0, d0);
+                    out_pcm[i..][0..8].* = dsp.mulAdd(@Vector(8, f32), t0, w0, d0);
 
                     const t1: @Vector(8, f32) = time_2048[1024 + i ..][0..8].*;
                     const w1: @Vector(8, f32) = win_curr_long[1024 + i ..][0..8].*;
@@ -630,7 +631,7 @@ pub const AacDecoder = struct {
                     const t0: @Vector(8, f32) = time_2048[i..][0..8].*;
                     const w0: @Vector(8, f32) = win_prev_long[i..][0..8].*;
                     const d0: @Vector(8, f32) = self.delay[ch][i..][0..8].*;
-                    out_pcm[i..][0..8].* = @mulAdd(@Vector(8, f32), t0, w0, d0);
+                    out_pcm[i..][0..8].* = dsp.mulAdd(@Vector(8, f32), t0, w0, d0);
                 }
                 // Right half (1024..2048): 448 ones, 128 short window (falling half), 448 zeros
                 @memcpy(self.delay[ch][0..448], time_2048[1024..1472]);
@@ -656,12 +657,12 @@ pub const AacDecoder = struct {
                         const tl: @Vector(8, f32) = time_256[i..][0..8].*;
                         const wl: @Vector(8, f32) = win_left[i..][0..8].*;
                         const sl: @Vector(8, f32) = short_buf[offset + i ..][0..8].*;
-                        short_buf[offset + i ..][0..8].* = @mulAdd(@Vector(8, f32), tl, wl, sl);
+                        short_buf[offset + i ..][0..8].* = dsp.mulAdd(@Vector(8, f32), tl, wl, sl);
 
                         const tr: @Vector(8, f32) = time_256[128 + i ..][0..8].*;
                         const wr: @Vector(8, f32) = win_curr_short[128 + i ..][0..8].*;
                         const sr: @Vector(8, f32) = short_buf[offset + 128 + i ..][0..8].*;
-                        short_buf[offset + 128 + i ..][0..8].* = @mulAdd(@Vector(8, f32), tr, wr, sr);
+                        short_buf[offset + 128 + i ..][0..8].* = dsp.mulAdd(@Vector(8, f32), tr, wr, sr);
                     }
                 }
 
@@ -684,7 +685,7 @@ pub const AacDecoder = struct {
                     const t0: @Vector(8, f32) = time_2048[448 + i ..][0..8].*;
                     const w0: @Vector(8, f32) = win_prev_short[i..][0..8].*;
                     const d0: @Vector(8, f32) = self.delay[ch][448 + i ..][0..8].*;
-                    out_pcm[448 + i ..][0..8].* = @mulAdd(@Vector(8, f32), t0, w0, d0);
+                    out_pcm[448 + i ..][0..8].* = dsp.mulAdd(@Vector(8, f32), t0, w0, d0);
                 }
                 i = 576;
                 while (i < 1024) : (i += 8) {

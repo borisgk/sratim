@@ -4,6 +4,7 @@ const ac3_dec = @import("../ac3/decoder.zig");
 const bit_reader = @import("../bit_reader.zig");
 const bit_allocation = @import("../ac3/bit_allocation.zig");
 const imdct = @import("../imdct.zig");
+const dsp = @import("../dsp.zig");
 
 pub const BitReader = bit_reader.BitReader;
 const bitAllocateDirectWithTab = bit_allocation.bitAllocateDirectWithTab;
@@ -936,7 +937,7 @@ pub const Eac3Decoder = struct {
                 var j: usize = 0;
                 while (j + 4 <= bandsize) : (j += 4) {
                     const v: V4f = block_samples[ch][bin + j ..][0..4].*;
-                    accum_vec = @mulAdd(V4f, v, v, accum_vec);
+                    accum_vec = dsp.mulAdd(V4f, v, v, accum_vec);
                 }
                 var accum = @reduce(.Add, accum_vec);
                 while (j < bandsize) : (j += 1) {
@@ -979,7 +980,7 @@ pub const Eac3Decoder = struct {
                         ac3_dec.ditherGen(&self.lfsr_state),
                     };
                     const s_vec: V4f = block_samples[ch][bin + j ..][0..4].*;
-                    block_samples[ch][bin + j ..][0..4].* = @mulAdd(V4f, s_vec, v_sscale, d_vec * v_nscale);
+                    block_samples[ch][bin + j ..][0..4].* = dsp.mulAdd(V4f, s_vec, v_sscale, d_vec * v_nscale);
                 }
                 while (j < bandsize) : (j += 1) {
                     const noise = nscale * ac3_dec.ditherGen(&self.lfsr_state);

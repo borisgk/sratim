@@ -1,4 +1,25 @@
 const std = @import("std");
+const builtin = @import("builtin");
+
+/// Compile-time check for whether the target CPU has native hardware vector FMA instructions.
+/// On x86_64 baseline (SSE2 without FMA3), @mulAdd on @Vector(N, f32) scalarizes into calls
+/// to compiler_rt's software fmaf; using `a * b + c` instead emits inlined packed SSE2 mulps + addps.
+pub const HAS_HW_FMA = switch (builtin.cpu.arch) {
+    .aarch64, .aarch64_be => true,
+    .x86_64, .x86 => std.Target.x86.featureSetHas(builtin.cpu.features, .fma),
+    else => false,
+};
+
+/// Target-aware SIMD multiply-add: uses hardware single-rounding @mulAdd when available
+/// (ARM64 NEON fmla / x86_64_v3 vfmaddps) and inlined packed `a * b + c` (SSE2 mulps + addps)
+/// when hardware FMA is absent.
+pub inline fn mulAdd(comptime T: type, a: T, b: T, c: T) T {
+    if (comptime HAS_HW_FMA) {
+        return @mulAdd(T, a, b, c);
+    } else {
+        return a * b + c;
+    }
+}
 
 /// Channel configuration for multi-channel audio.
 pub const ChannelLayout = enum {

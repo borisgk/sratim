@@ -1,4 +1,5 @@
 const std = @import("std");
+const dsp = @import("dsp.zig");
 
 /// Complex number structure for FFT and MDCT computations.
 pub const Complex = struct {
@@ -138,8 +139,8 @@ pub fn fftComptime(comptime N: usize, data: *[N]Complex) void {
                 const v_re = @shuffle(f32, v_raw, undefined, [4]i32{ 0, 2, 4, 6 });
                 const v_im = @shuffle(f32, v_raw, undefined, [4]i32{ 1, 3, 5, 7 });
 
-                const vw_re = @mulAdd(@Vector(4, f32), v_re, w_re, -(v_im * w_im));
-                const vw_im = @mulAdd(@Vector(4, f32), v_re, w_im, v_im * w_re);
+                const vw_re = dsp.mulAdd(@Vector(4, f32), v_re, w_re, -(v_im * w_im));
+                const vw_im = dsp.mulAdd(@Vector(4, f32), v_re, w_im, v_im * w_re);
 
                 const out_u_re = u_re + vw_re;
                 const out_u_im = u_im + vw_im;
@@ -346,8 +347,8 @@ pub const MdctEngine = struct {
 
             const tc0: @Vector(4, f32) = tcos[i..][0..4].*;
             const ts0: @Vector(4, f32) = tsin[i..][0..4].*;
-            const x0_re = @mulAdd(@Vector(4, f32), re0, -tc0, -(im0 * ts0));
-            const x0_im = @mulAdd(@Vector(4, f32), re0, ts0, im0 * (-tc0));
+            const x0_re = dsp.mulAdd(@Vector(4, f32), re0, -tc0, -(im0 * ts0));
+            const x0_im = dsp.mulAdd(@Vector(4, f32), re0, ts0, im0 * (-tc0));
             x_f32[2 * i ..][0..8].* = @shuffle(f32, x0_re, x0_im, [8]i32{ 0, -1, 1, -2, 2, -3, 3, -4 });
 
             const a1: @Vector(8, f32) = in[2 * i ..][0..8].*;
@@ -360,8 +361,8 @@ pub const MdctEngine = struct {
 
             const tc1: @Vector(4, f32) = tcos[n8 + i ..][0..4].*;
             const ts1: @Vector(4, f32) = tsin[n8 + i ..][0..4].*;
-            const x1_re = @mulAdd(@Vector(4, f32), re1, -tc1, -(im1 * ts1));
-            const x1_im = @mulAdd(@Vector(4, f32), re1, ts1, im1 * (-tc1));
+            const x1_re = dsp.mulAdd(@Vector(4, f32), re1, -tc1, -(im1 * ts1));
+            const x1_im = dsp.mulAdd(@Vector(4, f32), re1, ts1, im1 * (-tc1));
             x_f32[2 * (n8 + i) ..][0..8].* = @shuffle(f32, x1_re, x1_im, [8]i32{ 0, -1, 1, -2, 2, -3, 3, -4 });
         }
 
@@ -419,8 +420,8 @@ pub const MdctEngine = struct {
             const x1 = @shuffle(f32, in_fwd, undefined, [4]i32{ 0, 2, 4, 6 });
             const x2 = @shuffle(f32, in_rev, undefined, [4]i32{ 7, 5, 3, 1 });
 
-            const re = @mulAdd(@Vector(4, f32), x2, c, -(x1 * s));
-            const im = @mulAdd(@Vector(4, f32), x1, c, x2 * s);
+            const re = dsp.mulAdd(@Vector(4, f32), x2, c, -(x1 * s));
+            const im = dsp.mulAdd(@Vector(4, f32), x1, c, x2 * s);
             z1_f32[2 * k ..][0..8].* = @shuffle(f32, re, im, [8]i32{ 0, -1, 1, -2, 2, -3, 3, -4 });
         }
 
@@ -439,8 +440,8 @@ pub const MdctEngine = struct {
             const rx = @shuffle(f32, z_raw, undefined, [4]i32{ 0, 2, 4, 6 });
             const ix = @shuffle(f32, z_raw, undefined, [4]i32{ 1, 3, 5, 7 });
 
-            const re = @mulAdd(@Vector(4, f32), rx, c, -(ix * s));
-            const im = @mulAdd(@Vector(4, f32), ix, c, rx * s);
+            const re = dsp.mulAdd(@Vector(4, f32), rx, c, -(ix * s));
+            const im = dsp.mulAdd(@Vector(4, f32), ix, c, rx * s);
             z1_f32[2 * k ..][0..8].* = @shuffle(f32, re, im, [8]i32{ 0, -1, 1, -2, 2, -3, 3, -4 });
         }
 

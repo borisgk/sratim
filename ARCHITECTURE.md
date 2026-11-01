@@ -167,3 +167,8 @@ The `src/db/` module exposes ergonomic, thread-safe functions that abstract `Sra
    - All tests must use `tmp/` for temporary test files, snapshots, and WAL logs.
    - All temporary files and test directories must be cleanly removed in `defer` blocks.
    - Tests are run via `zig build test --summary all`.
+
+7. **SIMD & `comptime` DSP Optimization Standards**:
+   - Precompute trigonometric twiddles, window functions, non-linear dequantization curves (`x^(4/3)`), scale-factor powers, and Huffman/group unpacking tables at `comptime` in `f64` precision and store them as `f32` / integer lookup tables.
+   - **Target-Aware FMA ([`dsp.mulAdd`](file:///Users/borisk/Programming/Zig/sratim/src/media/native/audio/dsp.zig#L16-L22))**: Never call raw `@mulAdd` directly on `@Vector(N, f32)` in DSP code. On `x86_64` `-Dcpu=baseline` (SSE2 without FMA3), LLVM cannot lower IEEE-754 single-rounding `@mulAdd` to `mulps` + `addps` and instead scalarizes the vector into calls to `compiler_rt`'s software `fmaf` (`cvtss2sd` + `mulsd` + `addsd` + `cvtsd2ss`). Always use `dsp.mulAdd`, which checks `HAS_HW_FMA` at `comptime` to emit `@mulAdd` on `aarch64` NEON and `x86_64_v3` (FMA3), and inlined packed `a * b + c` (`mulps` + `addps`) on `x86_64` `baseline`.
+   - Keep hot DSP math in native `f32` (`@log2`, `@exp2`, `@sqrt`, `@round`) rather than promoting to `f64`.

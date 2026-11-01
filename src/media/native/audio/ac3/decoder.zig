@@ -3,6 +3,7 @@ const tables = @import("tables.zig");
 const bit_reader = @import("bit_reader.zig");
 const bit_allocation = @import("bit_allocation.zig");
 const imdct = @import("../imdct.zig");
+const dsp = @import("../dsp.zig");
 
 pub const BitReader = bit_reader.BitReader;
 const bitAllocate = bit_allocation.bitAllocate;
@@ -664,8 +665,8 @@ pub inline fn downmixBlockToStereo(
                 const ls: V8 = block_samples[3][s..][0..8].*;
                 const rs: V8 = block_samples[4][s..][0..8].*;
 
-                const left_8 = @mulAdd(V8, c + ls, v_lev, l);
-                const right_8 = @mulAdd(V8, c + rs, v_lev, r);
+                const left_8 = dsp.mulAdd(V8, c + ls, v_lev, l);
+                const right_8 = dsp.mulAdd(V8, c + rs, v_lev, r);
 
                 out_stereo[s * 2 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_lo);
                 out_stereo[s * 2 + 8 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_hi);
@@ -677,8 +678,8 @@ pub inline fn downmixBlockToStereo(
                 const l: V8 = block_samples[0][s..][0..8].*;
                 const c: V8 = block_samples[1][s..][0..8].*;
                 const r: V8 = block_samples[2][s..][0..8].*;
-                const left_8 = @mulAdd(V8, c, v_lev, l);
-                const right_8 = @mulAdd(V8, c, v_lev, r);
+                const left_8 = dsp.mulAdd(V8, c, v_lev, l);
+                const right_8 = dsp.mulAdd(V8, c, v_lev, r);
                 out_stereo[s * 2 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_lo);
                 out_stereo[s * 2 + 8 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_hi);
             }
@@ -689,8 +690,8 @@ pub inline fn downmixBlockToStereo(
                 const l: V8 = block_samples[0][s..][0..8].*;
                 const r: V8 = block_samples[1][s..][0..8].*;
                 const sur: V8 = block_samples[2][s..][0..8].*;
-                const left_8 = @mulAdd(V8, sur, v_lev, l);
-                const right_8 = @mulAdd(V8, sur, v_lev, r);
+                const left_8 = dsp.mulAdd(V8, sur, v_lev, l);
+                const right_8 = dsp.mulAdd(V8, sur, v_lev, r);
                 out_stereo[s * 2 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_lo);
                 out_stereo[s * 2 + 8 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_hi);
             }
@@ -716,8 +717,8 @@ pub inline fn downmixBlockToStereo(
                 const r: V8 = block_samples[1][s..][0..8].*;
                 const ls: V8 = block_samples[2][s..][0..8].*;
                 const rs: V8 = block_samples[3][s..][0..8].*;
-                const left_8 = @mulAdd(V8, ls, v_lev, l);
-                const right_8 = @mulAdd(V8, rs, v_lev, r);
+                const left_8 = dsp.mulAdd(V8, ls, v_lev, l);
+                const right_8 = dsp.mulAdd(V8, rs, v_lev, r);
                 out_stereo[s * 2 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_lo);
                 out_stereo[s * 2 + 8 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_hi);
             }

@@ -148,11 +148,10 @@ pub fn quantizeChannel(spec: []const f32, sf: []u8, quant: []i16) void {
     }
     const global_max = @reduce(.Max, v_max);
 
-    const SF_OFFSET: f64 = 80.0;
+    const SF_OFFSET: f32 = 80.0;
 
     const init_sf: u8 = if (global_max > 1e-4) blk: {
-        const log2_m = std.math.log2(@as(f64, global_max));
-        const raw = @as(i32, @intFromFloat(std.math.round(SF_OFFSET + 4.0 * log2_m)));
+        const raw = @as(i32, @intFromFloat(@round(SF_OFFSET + 4.0 * @log2(global_max))));
         break :blk @intCast(std.math.clamp(raw, 10, 240));
     } else 100;
 
@@ -183,8 +182,7 @@ pub fn quantizeChannel(spec: []const f32, sf: []u8, quant: []i16) void {
             continue;
         }
 
-        const log2_max = std.math.log2(@as(f64, max_val));
-        const raw_sf = @as(i32, @intFromFloat(std.math.round(SF_OFFSET + 4.0 * log2_max)));
+        const raw_sf = @as(i32, @intFromFloat(@round(SF_OFFSET + 4.0 * @log2(max_val))));
         const target_sf: u8 = @intCast(std.math.clamp(raw_sf, 10, 240));
 
         // Allow full Huffman codebook range for band deltas (±60)
