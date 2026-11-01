@@ -232,26 +232,50 @@ pub const AacDecoder = struct {
             // R_out = (R + C * 0.7071 + Rs * 0.7071) / (1 + sqrt(2))
             const NORM_51: f32 = 1.0 / (1.0 + 2.0 * tables.LEVEL_3DB);
             const scale = INV_PCM_SCALE * NORM_51;
-            for (0..1024) |s| {
-                const l = ch_pcm[0][s];
-                const r = ch_pcm[1][s];
-                const c = ch_pcm[2][s];
-                const ls = ch_pcm[4][s];
-                const rs = ch_pcm[5][s];
-                out_stereo_pcm[s * 2 + 0] = (l + c * tables.LEVEL_3DB + ls * tables.LEVEL_3DB) * scale;
-                out_stereo_pcm[s * 2 + 1] = (r + c * tables.LEVEL_3DB + rs * tables.LEVEL_3DB) * scale;
+            const v_scale: @Vector(8, f32) = @splat(scale);
+            const v_3db: @Vector(8, f32) = @splat(tables.LEVEL_3DB);
+            var s: usize = 0;
+            while (s < 1024) : (s += 8) {
+                const l: @Vector(8, f32) = ch_pcm[0][s..][0..8].*;
+                const r: @Vector(8, f32) = ch_pcm[1][s..][0..8].*;
+                const c: @Vector(8, f32) = ch_pcm[2][s..][0..8].*;
+                const ls: @Vector(8, f32) = ch_pcm[4][s..][0..8].*;
+                const rs: @Vector(8, f32) = ch_pcm[5][s..][0..8].*;
+                const l_out = @mulAdd(@Vector(8, f32), c + ls, v_3db, l) * v_scale;
+                const r_out = @mulAdd(@Vector(8, f32), c + rs, v_3db, r) * v_scale;
+                out_stereo_pcm[s * 2 ..][0..16].* = @shuffle(
+                    f32,
+                    l_out,
+                    r_out,
+                    [16]i32{ 0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, -6, 6, -7, 7, -8 },
+                );
             }
         } else if (has_ch[0] and has_ch[1]) {
             // Stereo
-            for (0..1024) |s| {
-                out_stereo_pcm[s * 2 + 0] = ch_pcm[0][s] * INV_PCM_SCALE;
-                out_stereo_pcm[s * 2 + 1] = ch_pcm[1][s] * INV_PCM_SCALE;
+            const v_scale: @Vector(8, f32) = @splat(INV_PCM_SCALE);
+            var s: usize = 0;
+            while (s < 1024) : (s += 8) {
+                const l = @as(@Vector(8, f32), ch_pcm[0][s..][0..8].*) * v_scale;
+                const r = @as(@Vector(8, f32), ch_pcm[1][s..][0..8].*) * v_scale;
+                out_stereo_pcm[s * 2 ..][0..16].* = @shuffle(
+                    f32,
+                    l,
+                    r,
+                    [16]i32{ 0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, -6, 6, -7, 7, -8 },
+                );
             }
         } else if (has_ch[0]) {
             // Mono
-            for (0..1024) |s| {
-                out_stereo_pcm[s * 2 + 0] = ch_pcm[0][s] * INV_PCM_SCALE;
-                out_stereo_pcm[s * 2 + 1] = ch_pcm[0][s] * INV_PCM_SCALE;
+            const v_scale: @Vector(8, f32) = @splat(INV_PCM_SCALE);
+            var s: usize = 0;
+            while (s < 1024) : (s += 8) {
+                const m = @as(@Vector(8, f32), ch_pcm[0][s..][0..8].*) * v_scale;
+                out_stereo_pcm[s * 2 ..][0..16].* = @shuffle(
+                    f32,
+                    m,
+                    m,
+                    [16]i32{ 0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, -6, 6, -7, 7, -8 },
+                );
             }
         } else {
             // Zero fill
@@ -378,17 +402,21 @@ pub const AacDecoder = struct {
                         const end = w_base + swb_offset[sfb + 1];
 
                         if (cb_r == 14 or cb_r == 15) {
-                            // Intensity Stereo
-                            for (start..end) |k| {
-                                spec_r[k] = spec_l[k] * is_scale;
+                            // Intensity Stereo (SWB offsets are multiples of 4)
+                            const v_is_scale: @Vector(4, f32) = @splat(is_scale);
+                            var k: usize = start;
+                            while (k < end) : (k += 4) {
+                                const vl: @Vector(4, f32) = spec_l[k..][0..4].*;
+                                spec_r[k..][0..4].* = vl * v_is_scale;
                             }
                         } else if (ms_mask[g][sfb]) {
-                            // Mid/Side (M/S) stereo
-                            for (start..end) |k| {
-                                const m = spec_l[k];
-                                const s = spec_r[k];
-                                spec_l[k] = m + s;
-                                spec_r[k] = m - s;
+                            // Mid/Side (M/S) stereo (SWB offsets are multiples of 4)
+                            var k: usize = start;
+                            while (k < end) : (k += 4) {
+                                const vm: @Vector(4, f32) = spec_l[k..][0..4].*;
+                                const vs: @Vector(4, f32) = spec_r[k..][0..4].*;
+                                spec_l[k..][0..4].* = vm + vs;
+                                spec_r[k..][0..4].* = vm - vs;
                             }
                         }
                     }
@@ -519,20 +547,26 @@ pub const AacDecoder = struct {
                     if (cb > 0 and cb <= 11) {
                         _ = try huffman.decodeSpectralBins(reader, cb, q_buf[0..len]);
                         const cur_sf = sfb_sf[g][sfb];
-                        const sf_scale = @exp2(@as(f32, @floatFromInt(cur_sf - 100)) * 0.25);
+                        const sf_scale = if (cur_sf >= 0 and cur_sf < 256)
+                            tables.SF_DEQUANT_TAB[@intCast(cur_sf)]
+                        else
+                            @exp2(@as(f32, @floatFromInt(cur_sf - 100)) * 0.25);
+                        const v_sf_scale: @Vector(4, f32) = @splat(sf_scale);
 
-                        for (0..len) |i| {
-                            const val = q_buf[i];
-                            if (val == 0) {
-                                spectrum[w_base + start + i] = 0.0;
-                            } else {
-                                const abs_v: usize = @intCast(if (val < 0) -val else val);
-                                const v43 = if (abs_v < tables.POW43.len) tables.POW43[abs_v] else std.math.pow(f32, @as(f32, @floatFromInt(abs_v)), 4.0 / 3.0);
-                                const signed_v = if (val < 0) -v43 else v43;
-                                const out_val = signed_v * sf_scale;
-
-                                spectrum[w_base + start + i] = out_val;
-                            }
+                        var i: usize = 0;
+                        while (i < len) : (i += 4) {
+                            const q_vec: @Vector(4, i32) = q_buf[i..][0..4].*;
+                            const abs_vec: @Vector(4, u32) = @abs(q_vec);
+                            const clamped_abs = @min(abs_vec, @as(@Vector(4, u32), @splat(8191)));
+                            const v43 = @Vector(4, f32){
+                                tables.POW43[clamped_abs[0]],
+                                tables.POW43[clamped_abs[1]],
+                                tables.POW43[clamped_abs[2]],
+                                tables.POW43[clamped_abs[3]],
+                            };
+                            const is_neg = q_vec < @as(@Vector(4, i32), @splat(0));
+                            const signed_v = @select(f32, is_neg, -v43, v43);
+                            spectrum[w_base + start + i ..][0..4].* = signed_v * v_sf_scale;
                         }
                     } else if (cb == 13) {
                         // Perceptual Noise Substitution (PNS) - zeroed to prevent amplitude distortion
@@ -574,29 +608,39 @@ pub const AacDecoder = struct {
                 var time_2048: [2048]f32 = undefined;
                 mdct.MdctEngine.imdct(1024, spectrum, &time_2048);
 
-                for (0..1024) |i| time_2048[i] *= win_prev_long[i];
-                for (1024..2048) |i| time_2048[i] *= win_curr_long[i];
+                var i: usize = 0;
+                while (i < 1024) : (i += 8) {
+                    const t0: @Vector(8, f32) = time_2048[i..][0..8].*;
+                    const w0: @Vector(8, f32) = win_prev_long[i..][0..8].*;
+                    const d0: @Vector(8, f32) = self.delay[ch][i..][0..8].*;
+                    out_pcm[i..][0..8].* = @mulAdd(@Vector(8, f32), t0, w0, d0);
 
-                for (0..1024) |i| {
-                    out_pcm[i] = self.delay[ch][i] + time_2048[i];
-                    self.delay[ch][i] = time_2048[1024 + i];
+                    const t1: @Vector(8, f32) = time_2048[1024 + i ..][0..8].*;
+                    const w1: @Vector(8, f32) = win_curr_long[1024 + i ..][0..8].*;
+                    self.delay[ch][i..][0..8].* = t1 * w1;
                 }
             },
             1 => { // LONG_START_SEQUENCE
                 var time_2048: [2048]f32 = undefined;
                 mdct.MdctEngine.imdct(1024, spectrum, &time_2048);
 
-                // Left half (0..1024): long window
-                for (0..1024) |i| time_2048[i] *= win_prev_long[i];
-                // Right half (1024..2048): 448 ones, 128 short window (falling half), 448 zeros
-                // 1024..1472: multiply by 1.0 (no-op)
-                for (1472..1600) |i| time_2048[i] *= win_curr_short[128 + (i - 1472)];
-                for (1600..2048) |i| time_2048[i] = 0.0;
-
-                for (0..1024) |i| {
-                    out_pcm[i] = self.delay[ch][i] + time_2048[i];
-                    self.delay[ch][i] = time_2048[1024 + i];
+                // Left half (0..1024): long window + overlap-add
+                var i: usize = 0;
+                while (i < 1024) : (i += 8) {
+                    const t0: @Vector(8, f32) = time_2048[i..][0..8].*;
+                    const w0: @Vector(8, f32) = win_prev_long[i..][0..8].*;
+                    const d0: @Vector(8, f32) = self.delay[ch][i..][0..8].*;
+                    out_pcm[i..][0..8].* = @mulAdd(@Vector(8, f32), t0, w0, d0);
                 }
+                // Right half (1024..2048): 448 ones, 128 short window (falling half), 448 zeros
+                @memcpy(self.delay[ch][0..448], time_2048[1024..1472]);
+                i = 0;
+                while (i < 128) : (i += 8) {
+                    const t1: @Vector(8, f32) = time_2048[1472 + i ..][0..8].*;
+                    const w1: @Vector(8, f32) = win_curr_short[128 + i ..][0..8].*;
+                    self.delay[ch][448 + i ..][0..8].* = t1 * w1;
+                }
+                @memset(self.delay[ch][576..1024], 0.0);
             },
             2 => { // EIGHT_SHORT_SEQUENCE
                 var short_buf: [2048]f32 = @splat(0.0);
@@ -605,16 +649,28 @@ pub const AacDecoder = struct {
                     var time_256: [256]f32 = undefined;
                     mdct.MdctEngine.imdct(128, spectrum[w * 128 .. (w + 1) * 128], &time_256);
                     const win_left = if (w == 0) win_prev_short else win_curr_short;
-                    for (0..128) |i| time_256[i] *= win_left[i];
-                    for (128..256) |i| time_256[i] *= win_curr_short[i];
-
                     const offset = 448 + w * 128;
-                    for (0..256) |i| short_buf[offset + i] += time_256[i];
+
+                    var i: usize = 0;
+                    while (i < 128) : (i += 8) {
+                        const tl: @Vector(8, f32) = time_256[i..][0..8].*;
+                        const wl: @Vector(8, f32) = win_left[i..][0..8].*;
+                        const sl: @Vector(8, f32) = short_buf[offset + i ..][0..8].*;
+                        short_buf[offset + i ..][0..8].* = @mulAdd(@Vector(8, f32), tl, wl, sl);
+
+                        const tr: @Vector(8, f32) = time_256[128 + i ..][0..8].*;
+                        const wr: @Vector(8, f32) = win_curr_short[128 + i ..][0..8].*;
+                        const sr: @Vector(8, f32) = short_buf[offset + 128 + i ..][0..8].*;
+                        short_buf[offset + 128 + i ..][0..8].* = @mulAdd(@Vector(8, f32), tr, wr, sr);
+                    }
                 }
 
-                for (0..1024) |i| {
-                    out_pcm[i] = self.delay[ch][i] + short_buf[i];
-                    self.delay[ch][i] = short_buf[1024 + i];
+                var i: usize = 0;
+                while (i < 1024) : (i += 8) {
+                    const d0: @Vector(8, f32) = self.delay[ch][i..][0..8].*;
+                    const s0: @Vector(8, f32) = short_buf[i..][0..8].*;
+                    out_pcm[i..][0..8].* = d0 + s0;
+                    self.delay[ch][i..][0..8].* = short_buf[1024 + i ..][0..8].*;
                 }
             },
             3 => { // LONG_STOP_SEQUENCE
@@ -622,15 +678,26 @@ pub const AacDecoder = struct {
                 mdct.MdctEngine.imdct(1024, spectrum, &time_2048);
 
                 // Left half (0..1024): 448 zeros, 128 short window (rising half), 448 ones
-                for (0..448) |i| time_2048[i] = 0.0;
-                for (448..576) |i| time_2048[i] *= win_prev_short[i - 448];
-                // 576..1024: multiply by 1.0 (no-op)
+                @memcpy(out_pcm[0..448], self.delay[ch][0..448]);
+                var i: usize = 0;
+                while (i < 128) : (i += 8) {
+                    const t0: @Vector(8, f32) = time_2048[448 + i ..][0..8].*;
+                    const w0: @Vector(8, f32) = win_prev_short[i..][0..8].*;
+                    const d0: @Vector(8, f32) = self.delay[ch][448 + i ..][0..8].*;
+                    out_pcm[448 + i ..][0..8].* = @mulAdd(@Vector(8, f32), t0, w0, d0);
+                }
+                i = 576;
+                while (i < 1024) : (i += 8) {
+                    const t0: @Vector(8, f32) = time_2048[i..][0..8].*;
+                    const d0: @Vector(8, f32) = self.delay[ch][i..][0..8].*;
+                    out_pcm[i..][0..8].* = d0 + t0;
+                }
                 // Right half (1024..2048): long window
-                for (1024..2048) |i| time_2048[i] *= win_curr_long[i];
-
-                for (0..1024) |i| {
-                    out_pcm[i] = self.delay[ch][i] + time_2048[i];
-                    self.delay[ch][i] = time_2048[1024 + i];
+                i = 0;
+                while (i < 1024) : (i += 8) {
+                    const t1: @Vector(8, f32) = time_2048[1024 + i ..][0..8].*;
+                    const w1: @Vector(8, f32) = win_curr_long[1024 + i ..][0..8].*;
+                    self.delay[ch][i..][0..8].* = t1 * w1;
                 }
             },
         }

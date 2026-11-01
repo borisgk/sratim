@@ -40,25 +40,23 @@ pub const AacEncoder = struct {
         std.debug.assert(in_r.len >= 1024);
 
         // 1. Prepare 2048-point windowed time samples scaled to 16-bit PCM domain (32768.0)
-        const PCM_SCALE: f32 = 32768.0;
         var windowed_l: [2048]f32 = undefined;
         var windowed_r: [2048]f32 = undefined;
 
-        const V4 = @Vector(4, f32);
-        const v_scale: V4 = @splat(PCM_SCALE);
+        const V8 = @Vector(8, f32);
         var win_i: usize = 0;
-        while (win_i < 1024) : (win_i += 4) {
-            const v_win0: V4 = tables.SINE_WINDOW_2048[win_i..][0..4].*;
-            const v_win1: V4 = tables.SINE_WINDOW_2048[1024 + win_i ..][0..4].*;
-            const v_prev_l: V4 = self.prev_samples_l[win_i..][0..4].*;
-            const v_prev_r: V4 = self.prev_samples_r[win_i..][0..4].*;
-            const v_in_l: V4 = in_l[win_i..][0..4].*;
-            const v_in_r: V4 = in_r[win_i..][0..4].*;
+        while (win_i < 1024) : (win_i += 8) {
+            const v_win0: V8 = tables.SINE_WINDOW_2048_SCALED[win_i..][0..8].*;
+            const v_win1: V8 = tables.SINE_WINDOW_2048_SCALED[1024 + win_i ..][0..8].*;
+            const v_prev_l: V8 = self.prev_samples_l[win_i..][0..8].*;
+            const v_prev_r: V8 = self.prev_samples_r[win_i..][0..8].*;
+            const v_in_l: V8 = in_l[win_i..][0..8].*;
+            const v_in_r: V8 = in_r[win_i..][0..8].*;
 
-            windowed_l[win_i..][0..4].* = v_prev_l * v_scale * v_win0;
-            windowed_r[win_i..][0..4].* = v_prev_r * v_scale * v_win0;
-            windowed_l[1024 + win_i ..][0..4].* = v_in_l * v_scale * v_win1;
-            windowed_r[1024 + win_i ..][0..4].* = v_in_r * v_scale * v_win1;
+            windowed_l[win_i..][0..8].* = v_prev_l * v_win0;
+            windowed_r[win_i..][0..8].* = v_prev_r * v_win0;
+            windowed_l[1024 + win_i ..][0..8].* = v_in_l * v_win1;
+            windowed_r[1024 + win_i ..][0..8].* = v_in_r * v_win1;
         }
 
         // Save current samples for next frame's overlap
@@ -142,10 +140,10 @@ pub const AacEncoder = struct {
 
 pub fn quantizeChannel(spec: []const f32, sf: []u8, quant: []i16) void {
     // Determine overall peak to seed initial global gain (vectorized @max + @reduce)
-    var v_max: @Vector(4, f32) = @splat(0.0);
+    var v_max: @Vector(8, f32) = @splat(0.0);
     var p_i: usize = 0;
-    while (p_i < 1024) : (p_i += 4) {
-        const v_chunk: @Vector(4, f32) = spec[p_i..][0..4].*;
+    while (p_i < 1024) : (p_i += 8) {
+        const v_chunk: @Vector(8, f32) = spec[p_i..][0..8].*;
         v_max = @max(v_max, @abs(v_chunk));
     }
     const global_max = @reduce(.Max, v_max);
@@ -167,19 +165,21 @@ pub fn quantizeChannel(spec: []const f32, sf: []u8, quant: []i16) void {
         // Zero out ultrasonic frequencies > 18 kHz (band 42+) to save bitrate and prevent noise
         if (b >= 42) {
             sf[b] = prev_sf;
-            for (start..end) |k| quant[k] = 0;
+            @memset(quant[start..end], 0);
             continue;
         }
 
-        var max_val: f32 = 0.0;
-        for (start..end) |k| {
-            const val = @abs(spec[k]);
-            if (val > max_val) max_val = val;
+        var band_v_max: @Vector(4, f32) = @splat(0.0);
+        var pk: usize = start;
+        while (pk < end) : (pk += 4) {
+            const v_c: @Vector(4, f32) = spec[pk..][0..4].*;
+            band_v_max = @max(band_v_max, @abs(v_c));
         }
+        const max_val = @reduce(.Max, band_v_max);
 
         if (max_val < 1e-4) {
             sf[b] = prev_sf;
-            for (start..end) |k| quant[k] = 0;
+            @memset(quant[start..end], 0);
             continue;
         }
 
@@ -196,8 +196,8 @@ pub fn quantizeChannel(spec: []const f32, sf: []u8, quant: []i16) void {
         sf[b] = clamped_sf;
         prev_sf = clamped_sf;
 
-        // step_scale = 2^(-0.25 * (sf - 100))
-        const step_scale = @as(f32, @floatCast(std.math.pow(f64, 2.0, -0.25 * (@as(f64, @floatFromInt(clamped_sf)) - 100.0))));
+        // step_scale = 2^(-0.25 * (sf - 100)) from comptime table
+        const step_scale = tables.SF_QUANT_STEP_TAB[clamped_sf];
 
         const V = @Vector(4, f32);
         const VI = @Vector(4, i32);
@@ -227,18 +227,6 @@ pub fn quantizeChannel(spec: []const f32, sf: []u8, quant: []i16) void {
             const v_final = @select(i32, is_small, v_zero_i, v_signed);
 
             quant[k..][0..4].* = @as(@Vector(4, i16), @intCast(v_final));
-        }
-
-        while (k < end) : (k += 1) {
-            const s = spec[k];
-            const scaled = @abs(s) * step_scale;
-            if (scaled < 0.01) {
-                quant[k] = 0;
-            } else {
-                const q_float = std.math.pow(f32, scaled, 0.75) + 0.4054;
-                const q = std.math.clamp(@as(i32, @intFromFloat(q_float)), 0, 8191);
-                quant[k] = if (s < 0.0) @intCast(-q) else @intCast(q);
-            }
         }
     }
 }

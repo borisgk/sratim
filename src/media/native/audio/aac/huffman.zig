@@ -411,6 +411,84 @@ pub fn decodeEscape(reader: *BitReader) !i32 {
     return @intCast((@as(u32, 1) << @as(u5, @intCast(count + 4))) + val);
 }
 
+pub const CB1_2_UNPACK: [81][4]i32 = blk: {
+    @setEvalBranchQuota(5000);
+    var tab: [81][4]i32 = undefined;
+    for (0..81) |sym| {
+        var s = sym;
+        const z: i32 = @as(i32, @intCast(s % 3)) - 1;
+        s /= 3;
+        const y: i32 = @as(i32, @intCast(s % 3)) - 1;
+        s /= 3;
+        const x: i32 = @as(i32, @intCast(s % 3)) - 1;
+        s /= 3;
+        const w: i32 = @as(i32, @intCast(s % 3)) - 1;
+        tab[sym] = .{ w, x, y, z };
+    }
+    break :blk tab;
+};
+
+pub const CB3_4_UNPACK: [81][4]i32 = blk: {
+    @setEvalBranchQuota(5000);
+    var tab: [81][4]i32 = undefined;
+    for (0..81) |sym| {
+        var s = sym;
+        const z: i32 = @intCast(s % 3);
+        s /= 3;
+        const y: i32 = @intCast(s % 3);
+        s /= 3;
+        const x: i32 = @intCast(s % 3);
+        s /= 3;
+        const w: i32 = @intCast(s % 3);
+        tab[sym] = .{ w, x, y, z };
+    }
+    break :blk tab;
+};
+
+pub const CB5_6_UNPACK: [81][2]i32 = blk: {
+    @setEvalBranchQuota(5000);
+    var tab: [81][2]i32 = undefined;
+    for (0..81) |sym| {
+        const y: i32 = @as(i32, @intCast(sym % 9)) - 4;
+        const x: i32 = @as(i32, @intCast(sym / 9)) - 4;
+        tab[sym] = .{ x, y };
+    }
+    break :blk tab;
+};
+
+pub const CB7_8_UNPACK: [64][2]i32 = blk: {
+    @setEvalBranchQuota(5000);
+    var tab: [64][2]i32 = undefined;
+    for (0..64) |sym| {
+        const y: i32 = @intCast(sym % 8);
+        const x: i32 = @intCast(sym / 8);
+        tab[sym] = .{ x, y };
+    }
+    break :blk tab;
+};
+
+pub const CB9_10_UNPACK: [169][2]i32 = blk: {
+    @setEvalBranchQuota(5000);
+    var tab: [169][2]i32 = undefined;
+    for (0..169) |sym| {
+        const y: i32 = @intCast(sym % 13);
+        const x: i32 = @intCast(sym / 13);
+        tab[sym] = .{ x, y };
+    }
+    break :blk tab;
+};
+
+pub const CB11_UNPACK: [289][2]i32 = blk: {
+    @setEvalBranchQuota(10000);
+    var tab: [289][2]i32 = undefined;
+    for (0..289) |sym| {
+        const x: i32 = @intCast(sym / 17);
+        const y: i32 = @intCast(sym % 17);
+        tab[sym] = .{ x, y };
+    }
+    break :blk tab;
+};
+
 /// Decodes spectral bins for a given codebook into `out_bins` slice.
 /// Returns number of bins filled.
 pub fn decodeSpectralBins(reader: *BitReader, cb: u4, out_bins: []i32) !usize {
@@ -423,18 +501,7 @@ pub fn decodeSpectralBins(reader: *BitReader, cb: u4, out_bins: []i32) !usize {
             var idx: usize = 0;
             while (idx + 4 <= out_bins.len) : (idx += 4) {
                 const sym = try decodeSymbol(reader, &CB1_TRIE);
-                var s = sym;
-                const z: i32 = @as(i32, @intCast(s % 3)) - 1;
-                s /= 3;
-                const y: i32 = @as(i32, @intCast(s % 3)) - 1;
-                s /= 3;
-                const x: i32 = @as(i32, @intCast(s % 3)) - 1;
-                s /= 3;
-                const w: i32 = @as(i32, @intCast(s % 3)) - 1;
-                out_bins[idx + 0] = w;
-                out_bins[idx + 1] = x;
-                out_bins[idx + 2] = y;
-                out_bins[idx + 3] = z;
+                out_bins[idx..][0..4].* = CB1_2_UNPACK[sym];
             }
             return idx;
         },
@@ -442,18 +509,7 @@ pub fn decodeSpectralBins(reader: *BitReader, cb: u4, out_bins: []i32) !usize {
             var idx: usize = 0;
             while (idx + 4 <= out_bins.len) : (idx += 4) {
                 const sym = try decodeSymbol(reader, &CB2_TRIE);
-                var s = sym;
-                const z: i32 = @as(i32, @intCast(s % 3)) - 1;
-                s /= 3;
-                const y: i32 = @as(i32, @intCast(s % 3)) - 1;
-                s /= 3;
-                const x: i32 = @as(i32, @intCast(s % 3)) - 1;
-                s /= 3;
-                const w: i32 = @as(i32, @intCast(s % 3)) - 1;
-                out_bins[idx + 0] = w;
-                out_bins[idx + 1] = x;
-                out_bins[idx + 2] = y;
-                out_bins[idx + 3] = z;
+                out_bins[idx..][0..4].* = CB1_2_UNPACK[sym];
             }
             return idx;
         },
@@ -461,22 +517,12 @@ pub fn decodeSpectralBins(reader: *BitReader, cb: u4, out_bins: []i32) !usize {
             var idx: usize = 0;
             while (idx + 4 <= out_bins.len) : (idx += 4) {
                 const sym = try decodeSymbol(reader, &CB3_TRIE);
-                var s = sym;
-                var z: i32 = @intCast(s % 3);
-                s /= 3;
-                var y: i32 = @intCast(s % 3);
-                s /= 3;
-                var x: i32 = @intCast(s % 3);
-                s /= 3;
-                var w: i32 = @intCast(s % 3);
-                if (w > 0 and (try reader.readBit()) == 1) w = -w;
-                if (x > 0 and (try reader.readBit()) == 1) x = -x;
-                if (y > 0 and (try reader.readBit()) == 1) y = -y;
-                if (z > 0 and (try reader.readBit()) == 1) z = -z;
-                out_bins[idx + 0] = w;
-                out_bins[idx + 1] = x;
-                out_bins[idx + 2] = y;
-                out_bins[idx + 3] = z;
+                var t = CB3_4_UNPACK[sym];
+                if (t[0] > 0 and (try reader.readBit()) == 1) t[0] = -t[0];
+                if (t[1] > 0 and (try reader.readBit()) == 1) t[1] = -t[1];
+                if (t[2] > 0 and (try reader.readBit()) == 1) t[2] = -t[2];
+                if (t[3] > 0 and (try reader.readBit()) == 1) t[3] = -t[3];
+                out_bins[idx..][0..4].* = t;
             }
             return idx;
         },
@@ -484,22 +530,12 @@ pub fn decodeSpectralBins(reader: *BitReader, cb: u4, out_bins: []i32) !usize {
             var idx: usize = 0;
             while (idx + 4 <= out_bins.len) : (idx += 4) {
                 const sym = try decodeSymbol(reader, &CB4_TRIE);
-                var s = sym;
-                var z: i32 = @intCast(s % 3);
-                s /= 3;
-                var y: i32 = @intCast(s % 3);
-                s /= 3;
-                var x: i32 = @intCast(s % 3);
-                s /= 3;
-                var w: i32 = @intCast(s % 3);
-                if (w > 0 and (try reader.readBit()) == 1) w = -w;
-                if (x > 0 and (try reader.readBit()) == 1) x = -x;
-                if (y > 0 and (try reader.readBit()) == 1) y = -y;
-                if (z > 0 and (try reader.readBit()) == 1) z = -z;
-                out_bins[idx + 0] = w;
-                out_bins[idx + 1] = x;
-                out_bins[idx + 2] = y;
-                out_bins[idx + 3] = z;
+                var t = CB3_4_UNPACK[sym];
+                if (t[0] > 0 and (try reader.readBit()) == 1) t[0] = -t[0];
+                if (t[1] > 0 and (try reader.readBit()) == 1) t[1] = -t[1];
+                if (t[2] > 0 and (try reader.readBit()) == 1) t[2] = -t[2];
+                if (t[3] > 0 and (try reader.readBit()) == 1) t[3] = -t[3];
+                out_bins[idx..][0..4].* = t;
             }
             return idx;
         },
@@ -507,10 +543,7 @@ pub fn decodeSpectralBins(reader: *BitReader, cb: u4, out_bins: []i32) !usize {
             var idx: usize = 0;
             while (idx + 2 <= out_bins.len) : (idx += 2) {
                 const sym = try decodeSymbol(reader, &CB5_TRIE);
-                const y: i32 = @as(i32, @intCast(sym % 9)) - 4;
-                const x: i32 = @as(i32, @intCast(sym / 9)) - 4;
-                out_bins[idx + 0] = x;
-                out_bins[idx + 1] = y;
+                out_bins[idx..][0..2].* = CB5_6_UNPACK[sym];
             }
             return idx;
         },
@@ -518,10 +551,7 @@ pub fn decodeSpectralBins(reader: *BitReader, cb: u4, out_bins: []i32) !usize {
             var idx: usize = 0;
             while (idx + 2 <= out_bins.len) : (idx += 2) {
                 const sym = try decodeSymbol(reader, &CB6_TRIE);
-                const y: i32 = @as(i32, @intCast(sym % 9)) - 4;
-                const x: i32 = @as(i32, @intCast(sym / 9)) - 4;
-                out_bins[idx + 0] = x;
-                out_bins[idx + 1] = y;
+                out_bins[idx..][0..2].* = CB5_6_UNPACK[sym];
             }
             return idx;
         },
@@ -529,12 +559,10 @@ pub fn decodeSpectralBins(reader: *BitReader, cb: u4, out_bins: []i32) !usize {
             var idx: usize = 0;
             while (idx + 2 <= out_bins.len) : (idx += 2) {
                 const sym = try decodeSymbol(reader, &CB7_TRIE);
-                var y: i32 = @intCast(sym % 8);
-                var x: i32 = @intCast(sym / 8);
-                if (x > 0 and (try reader.readBit()) == 1) x = -x;
-                if (y > 0 and (try reader.readBit()) == 1) y = -y;
-                out_bins[idx + 0] = x;
-                out_bins[idx + 1] = y;
+                var t = CB7_8_UNPACK[sym];
+                if (t[0] > 0 and (try reader.readBit()) == 1) t[0] = -t[0];
+                if (t[1] > 0 and (try reader.readBit()) == 1) t[1] = -t[1];
+                out_bins[idx..][0..2].* = t;
             }
             return idx;
         },
@@ -542,12 +570,10 @@ pub fn decodeSpectralBins(reader: *BitReader, cb: u4, out_bins: []i32) !usize {
             var idx: usize = 0;
             while (idx + 2 <= out_bins.len) : (idx += 2) {
                 const sym = try decodeSymbol(reader, &CB8_TRIE);
-                var y: i32 = @intCast(sym % 8);
-                var x: i32 = @intCast(sym / 8);
-                if (x > 0 and (try reader.readBit()) == 1) x = -x;
-                if (y > 0 and (try reader.readBit()) == 1) y = -y;
-                out_bins[idx + 0] = x;
-                out_bins[idx + 1] = y;
+                var t = CB7_8_UNPACK[sym];
+                if (t[0] > 0 and (try reader.readBit()) == 1) t[0] = -t[0];
+                if (t[1] > 0 and (try reader.readBit()) == 1) t[1] = -t[1];
+                out_bins[idx..][0..2].* = t;
             }
             return idx;
         },
@@ -555,12 +581,10 @@ pub fn decodeSpectralBins(reader: *BitReader, cb: u4, out_bins: []i32) !usize {
             var idx: usize = 0;
             while (idx + 2 <= out_bins.len) : (idx += 2) {
                 const sym = try decodeSymbol(reader, &CB9_TRIE);
-                var y: i32 = @intCast(sym % 13);
-                var x: i32 = @intCast(sym / 13);
-                if (x > 0 and (try reader.readBit()) == 1) x = -x;
-                if (y > 0 and (try reader.readBit()) == 1) y = -y;
-                out_bins[idx + 0] = x;
-                out_bins[idx + 1] = y;
+                var t = CB9_10_UNPACK[sym];
+                if (t[0] > 0 and (try reader.readBit()) == 1) t[0] = -t[0];
+                if (t[1] > 0 and (try reader.readBit()) == 1) t[1] = -t[1];
+                out_bins[idx..][0..2].* = t;
             }
             return idx;
         },
@@ -568,12 +592,10 @@ pub fn decodeSpectralBins(reader: *BitReader, cb: u4, out_bins: []i32) !usize {
             var idx: usize = 0;
             while (idx + 2 <= out_bins.len) : (idx += 2) {
                 const sym = try decodeSymbol(reader, &CB10_TRIE);
-                var y: i32 = @intCast(sym % 13);
-                var x: i32 = @intCast(sym / 13);
-                if (x > 0 and (try reader.readBit()) == 1) x = -x;
-                if (y > 0 and (try reader.readBit()) == 1) y = -y;
-                out_bins[idx + 0] = x;
-                out_bins[idx + 1] = y;
+                var t = CB9_10_UNPACK[sym];
+                if (t[0] > 0 and (try reader.readBit()) == 1) t[0] = -t[0];
+                if (t[1] > 0 and (try reader.readBit()) == 1) t[1] = -t[1];
+                out_bins[idx..][0..2].* = t;
             }
             return idx;
         },
@@ -581,8 +603,9 @@ pub fn decodeSpectralBins(reader: *BitReader, cb: u4, out_bins: []i32) !usize {
             var idx: usize = 0;
             while (idx + 2 <= out_bins.len) : (idx += 2) {
                 const sym = try decodeSymbol(reader, &CB11_TRIE);
-                var x: i32 = @intCast(sym / 17);
-                var y: i32 = @intCast(sym % 17);
+                const t = CB11_UNPACK[sym];
+                var x = t[0];
+                var y = t[1];
                 const x_sign = if (x != 0) ((try reader.readBit()) == 1) else false;
                 const y_sign = if (y != 0) ((try reader.readBit()) == 1) else false;
                 if (x == 16) x = try decodeEscape(reader);

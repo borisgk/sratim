@@ -203,14 +203,48 @@ pub fn computeKbdWindow(comptime N: usize, comptime alpha: f64) [N]f32 {
 pub const KBD_WINDOW_2048 = computeKbdWindow(2048, 4.0);
 pub const KBD_WINDOW_256 = computeKbdWindow(256, 6.0);
 
-/// Precomputed x^(4/3) for values 0..16
-pub const POW43 = blk: {
+/// Precomputed 2048-point Sine window pre-scaled by 32768.0 for the AAC encoder.
+pub const SINE_WINDOW_2048_SCALED: [2048]f32 = blk: {
     @setEvalBranchQuota(5000);
-    var p: [17]f32 = undefined;
-    for (0..17) |i| {
-        p[i] = @floatCast(std.math.pow(f64, @as(f64, @floatFromInt(i)), 4.0 / 3.0));
+    var w: [2048]f32 = undefined;
+    for (0..2048) |i| {
+        w[i] = SINE_WINDOW_2048[i] * 32768.0;
+    }
+    break :blk w;
+};
+
+/// Precomputed x^(4/3) for the full 13-bit AAC quantized range 0..8191.
+pub const POW43: [8192]f32 = blk: {
+    @setEvalBranchQuota(50000);
+    var p: [8192]f32 = undefined;
+    p[0] = 0.0;
+    for (1..8192) |i| {
+        const x: f64 = @floatFromInt(i);
+        p[i] = @floatCast(@exp2(@log2(x) * (4.0 / 3.0)));
     }
     break :blk p;
+};
+
+/// Precomputed dequantization scale factor table: 2^((sf - 100) * 0.25) for sf in 0..255.
+pub const SF_DEQUANT_TAB: [256]f32 = blk: {
+    @setEvalBranchQuota(5000);
+    var tab: [256]f32 = undefined;
+    for (0..256) |sf| {
+        const exp = (@as(f64, @floatFromInt(sf)) - 100.0) * 0.25;
+        tab[sf] = @floatCast(@exp2(exp));
+    }
+    break :blk tab;
+};
+
+/// Precomputed encoder quantization step table: 2^(-0.25 * (sf - 100)) for sf in 0..255.
+pub const SF_QUANT_STEP_TAB: [256]f32 = blk: {
+    @setEvalBranchQuota(5000);
+    var tab: [256]f32 = undefined;
+    for (0..256) |sf| {
+        const exp = -0.25 * (@as(f64, @floatFromInt(sf)) - 100.0);
+        tab[sf] = @floatCast(@exp2(exp));
+    }
+    break :blk tab;
 };
 
 /// Downmix coefficient for center and surround channels: 1 / sqrt(2) = -3dB
