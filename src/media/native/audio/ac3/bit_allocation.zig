@@ -36,6 +36,21 @@ pub fn bitAllocateDirect(
     );
 }
 
+inline fn computeSingleBap(
+    mask_in: i32,
+    snroffset: i32,
+    floor_val: i32,
+    d_val: i32,
+    exp_val: u8,
+    bap_tab: *const [305]i8,
+) i8 {
+    var mask = mask_in - (snroffset + 128 * d_val);
+    mask = if (mask > 0) 0 else ((-mask) >> 5);
+    mask -= floor_val;
+    const bap_idx: usize = @intCast(@max(0, @min(@as(i32, 304), mask + 4 * @as(i32, exp_val) + 156)));
+    return bap_tab[bap_idx];
+}
+
 pub fn bitAllocateDirectWithTab(
     fscod: usize,
     halfrate: usize,
@@ -88,12 +103,7 @@ pub fn bitAllocateDirectWithTab(
             const hth_idx = i >> @intCast(halfrate);
             if (hth_idx < 50 and mask > hth[hth_idx]) mask = hth[hth_idx];
             const d_val: i32 = if (i < deltba_slice.len) deltba_slice[i] else 0;
-            mask -= snroffset + 128 * d_val;
-            mask = if (mask > 0) 0 else ((-mask) >> 5);
-            mask -= floor_val;
-
-            const bap_idx = mask + 4 * @as(i32, exp[i]) + 156;
-            bap[i] = if (bap_idx >= 0 and bap_idx < bap_tab.len) bap_tab[@intCast(bap_idx)] else 0;
+            bap[i] = computeSingleBap(mask, snroffset, floor_val, d_val, exp[i], bap_tab);
             i += 1;
             if (!((i < 3) or ((i < 7) and (exp[i] > exp[i - 1])))) break;
         }
@@ -102,7 +112,7 @@ pub fn bitAllocateDirectWithTab(
         fastleak = psd_last + fgain;
         slowleak = psd_last + sgain;
 
-        while (i < 7) {
+        while (i < 7) : (i += 1) {
             if (i < j_end) {
                 if (@as(i32, exp[i + 1]) == @as(i32, exp[i]) - 2) {
                     lowcomp = 384;
@@ -111,74 +121,53 @@ pub fn bitAllocateDirectWithTab(
                 }
             }
             const psd = 128 * @as(i32, exp[i]);
-            fastleak += fdecay;
-            if (fastleak > psd + fgain) fastleak = psd + fgain;
-            slowleak += sdecay;
-            if (slowleak > psd + sgain) slowleak = psd + sgain;
+            fastleak = @min(fastleak + fdecay, psd + fgain);
+            slowleak = @min(slowleak + sdecay, psd + sgain);
 
-            var mask = if (fastleak + lowcomp < slowleak) fastleak + lowcomp else slowleak;
+            var mask = @min(fastleak + lowcomp, slowleak);
             if (psd > dbknee) mask -= (psd - dbknee) >> 2;
             const hth_idx = i >> @intCast(halfrate);
             if (hth_idx < 50 and mask > hth[hth_idx]) mask = hth[hth_idx];
             const d_val: i32 = if (i < deltba_slice.len) deltba_slice[i] else 0;
-            mask -= snroffset + 128 * d_val;
-            mask = if (mask > 0) 0 else ((-mask) >> 5);
-            mask -= floor_val;
-
-            const bap_idx = mask + 4 * @as(i32, exp[i]) + 156;
-            bap[i] = if (bap_idx >= 0 and bap_idx < bap_tab.len) bap_tab[@intCast(bap_idx)] else 0;
-            i += 1;
+            bap[i] = computeSingleBap(mask, snroffset, floor_val, d_val, exp[i], bap_tab);
         }
 
-        while (i < 20) {
+        while (i < 20) : (i += 1) {
             if (@as(i32, exp[i + 1]) == @as(i32, exp[i]) - 2) {
                 lowcomp = 320;
             } else if (lowcomp != 0 and exp[i + 1] > exp[i]) {
                 lowcomp -= 64;
             }
             const psd = 128 * @as(i32, exp[i]);
-            fastleak += fdecay;
-            if (fastleak > psd + fgain) fastleak = psd + fgain;
-            slowleak += sdecay;
-            if (slowleak > psd + sgain) slowleak = psd + sgain;
+            fastleak = @min(fastleak + fdecay, psd + fgain);
+            slowleak = @min(slowleak + sdecay, psd + sgain);
 
-            var mask = if (fastleak + lowcomp < slowleak) fastleak + lowcomp else slowleak;
+            var mask = @min(fastleak + lowcomp, slowleak);
             if (psd > dbknee) mask -= (psd - dbknee) >> 2;
             const hth_idx = i >> @intCast(halfrate);
             if (hth_idx < 50 and mask > hth[hth_idx]) mask = hth[hth_idx];
             const d_val: i32 = if (i < deltba_slice.len) deltba_slice[i] else 0;
-            mask -= snroffset + 128 * d_val;
-            mask = if (mask > 0) 0 else ((-mask) >> 5);
-            mask -= floor_val;
-
-            const bap_idx = mask + 4 * @as(i32, exp[i]) + 156;
-            bap[i] = if (bap_idx >= 0 and bap_idx < bap_tab.len) bap_tab[@intCast(bap_idx)] else 0;
-            i += 1;
+            bap[i] = computeSingleBap(mask, snroffset, floor_val, d_val, exp[i], bap_tab);
         }
 
-        while (lowcomp > 128) {
+        while (lowcomp > 128) : (i += 1) {
             lowcomp -= 128;
             const psd = 128 * @as(i32, exp[i]);
-            fastleak += fdecay;
-            if (fastleak > psd + fgain) fastleak = psd + fgain;
-            slowleak += sdecay;
-            if (slowleak > psd + sgain) slowleak = psd + sgain;
+            fastleak = @min(fastleak + fdecay, psd + fgain);
+            slowleak = @min(slowleak + sdecay, psd + sgain);
 
-            var mask = if (fastleak + lowcomp < slowleak) fastleak + lowcomp else slowleak;
+            var mask = @min(fastleak + lowcomp, slowleak);
             if (psd > dbknee) mask -= (psd - dbknee) >> 2;
             const hth_idx = i >> @intCast(halfrate);
             if (hth_idx < 50 and mask > hth[hth_idx]) mask = hth[hth_idx];
             const d_val: i32 = if (i < deltba_slice.len) deltba_slice[i] else 0;
-            mask -= snroffset + 128 * d_val;
-            mask = if (mask > 0) 0 else ((-mask) >> 5);
-            mask -= floor_val;
-
-            const bap_idx = mask + 4 * @as(i32, exp[i]) + 156;
-            bap[i] = if (bap_idx >= 0 and bap_idx < bap_tab.len) bap_tab[@intCast(bap_idx)] else 0;
-            i += 1;
+            bap[i] = computeSingleBap(mask, snroffset, floor_val, d_val, exp[i], bap_tab);
         }
         j = i;
     }
+
+    const v_zero: @Vector(4, i32) = @splat(0);
+    const v_max: @Vector(4, i32) = @splat(304);
 
     while (i < 50) {
         const startband = j;
@@ -204,12 +193,10 @@ pub fn bitAllocateDirectWithTab(
             }
         }
 
-        fastleak += fdecay;
-        if (fastleak > psd + fgain) fastleak = psd + fgain;
-        slowleak += sdecay;
-        if (slowleak > psd + sgain) slowleak = psd + sgain;
+        fastleak = @min(fastleak + fdecay, psd + fgain);
+        slowleak = @min(slowleak + sdecay, psd + sgain);
 
-        var mask = if (fastleak < slowleak) fastleak else slowleak;
+        var mask = @min(fastleak, slowleak);
         if (psd > dbknee) mask -= (psd - dbknee) >> 2;
         const hth_idx = i >> @intCast(halfrate);
         if (hth_idx < 50 and mask > hth[hth_idx]) mask = hth[hth_idx];
@@ -218,11 +205,26 @@ pub fn bitAllocateDirectWithTab(
         mask = if (mask > 0) 0 else ((-mask) >> 5);
         mask -= floor_val;
 
+        const mask_offset = mask + 156;
+        const v_mask_off: @Vector(4, i32) = @splat(mask_offset);
+
         i += 1;
         j = startband;
+        while (j + 4 <= endband) : (j += 4) {
+            const exp_u8: @Vector(4, u8) = exp[j..][0..4].*;
+            const exp_i32: @Vector(4, i32) = exp_u8;
+            const bap_idx_vec = @max(v_zero, @min(v_max, v_mask_off + (exp_i32 << @splat(2))));
+            const idx_arr: [4]i32 = bap_idx_vec;
+            bap[j..][0..4].* = .{
+                bap_tab[@intCast(idx_arr[0])],
+                bap_tab[@intCast(idx_arr[1])],
+                bap_tab[@intCast(idx_arr[2])],
+                bap_tab[@intCast(idx_arr[3])],
+            };
+        }
         while (j < endband) : (j += 1) {
-            const bap_idx = mask + 4 * @as(i32, exp[j]) + 156;
-            bap[j] = if (bap_idx >= 0 and bap_idx < bap_tab.len) bap_tab[@intCast(bap_idx)] else 0;
+            const bap_idx: usize = @intCast(@max(0, @min(@as(i32, 304), mask_offset + 4 * @as(i32, exp[j]))));
+            bap[j] = bap_tab[bap_idx];
         }
     }
 }

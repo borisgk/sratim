@@ -71,8 +71,8 @@ pub const Eac3Decoder = struct {
     deltbae: [5]u2 = @splat(tables.DELTA_BIT_NONE),
     deltba: [5][50]i8 = @splat(@splat(0)),
 
-    // Adaptive Hybrid Transform (AHT) pre-mantissa buffer: [channel 0..7][bin 0..256][blk 0..6]
-    pre_mantissa: [7][256][6]i32 = @splat(@splat(@splat(0))),
+    // Adaptive Hybrid Transform (AHT) pre-mantissa buffer: [channel 0..7][blk 0..6][bin 0..256]
+    pre_mantissa: [7][6][256]i32 = @splat(@splat(@splat(0))),
 
     pub fn init() Eac3Decoder {
         return .{};
@@ -769,6 +769,12 @@ pub const Eac3Decoder = struct {
             quantizer.reset();
 
             var done_cpl = false;
+            const V4i = @Vector(4, i32);
+            const V4f = @Vector(4, f32);
+            const V4b = @Vector(4, i8);
+            const v_zero_bap: V4b = @splat(0);
+            const v_zero_f: V4f = @splat(0.0);
+
             for (0..nfchans) |i| {
                 if (!channel_uses_aht[i + 1]) {
                     try ac3_dec.coeffGet(&reader, &block_samples[i], &self.fbw_exp[i], &self.fbw_bap[i], &quantizer, 1.0, dithflag[i], self.endmant[i], &self.lfsr_state);
@@ -776,8 +782,23 @@ pub const Eac3Decoder = struct {
                     if (blk == 0) {
                         try self.decodeTransformCoeffsAhtCh(&reader, i + 1, 0, self.endmant[i], &self.fbw_bap[i]);
                     }
-                    for (0..self.endmant[i]) |bin| {
-                        block_samples[i][bin] = @as(f32, @floatFromInt(self.pre_mantissa[i + 1][bin][blk])) * (1.0 / 256.0) * tables.SCALE_FACTOR[self.fbw_exp[i][bin]];
+                    const end_m = self.endmant[i];
+                    const pm_blk = &self.pre_mantissa[i + 1][blk];
+                    const exp_ch = &self.fbw_exp[i];
+                    var bin: usize = 0;
+                    while (bin + 4 <= end_m) : (bin += 4) {
+                        const pm_vec: V4i = pm_blk[bin..][0..4].*;
+                        const pm_f: V4f = @floatFromInt(pm_vec);
+                        const sf_vec = V4f{
+                            tables.AHT_SCALE_FACTOR[exp_ch[bin + 0]],
+                            tables.AHT_SCALE_FACTOR[exp_ch[bin + 1]],
+                            tables.AHT_SCALE_FACTOR[exp_ch[bin + 2]],
+                            tables.AHT_SCALE_FACTOR[exp_ch[bin + 3]],
+                        };
+                        block_samples[i][bin..][0..4].* = pm_f * sf_vec;
+                    }
+                    while (bin < end_m) : (bin += 1) {
+                        block_samples[i][bin] = @as(f32, @floatFromInt(pm_blk[bin])) * tables.AHT_SCALE_FACTOR[exp_ch[bin]];
                     }
                 }
                 if (cpl_in_use[blk] and ((self.chincpl >> @intCast(i)) & 1) != 0) {
@@ -796,18 +817,30 @@ pub const Eac3Decoder = struct {
                             if (blk == 0) {
                                 try self.decodeTransformCoeffsAhtCh(&reader, 0, self.cplstrtmant, self.cplendmant, &self.cpl_bap);
                             }
+                            const pm_cpl = &self.pre_mantissa[0][blk];
                             var bin = self.cplstrtmant;
                             for (0..self.ncplbnd) |bnd| {
                                 const band_end = bin + self.cpl_band_sizes[bnd];
-                                while (bin < band_end) : (bin += 1) {
-                                    const cpl_coeff = @as(f32, @floatFromInt(self.pre_mantissa[0][bin][blk])) * (1.0 / 256.0) * tables.SCALE_FACTOR[self.cpl_exp[bin]];
+                                while (bin + 4 <= band_end) : (bin += 4) {
+                                    const pm_vec: V4i = pm_cpl[bin..][0..4].*;
+                                    const pm_f: V4f = @floatFromInt(pm_vec);
+                                    const sf_vec = V4f{
+                                        tables.AHT_SCALE_FACTOR[self.cpl_exp[bin + 0]],
+                                        tables.AHT_SCALE_FACTOR[self.cpl_exp[bin + 1]],
+                                        tables.AHT_SCALE_FACTOR[self.cpl_exp[bin + 2]],
+                                        tables.AHT_SCALE_FACTOR[self.cpl_exp[bin + 3]],
+                                    };
+                                    const cpl_vec = pm_f * sf_vec;
+                                    const bap_vec: V4b = self.cpl_bap[bin..][0..4].*;
+                                    const is_zero_bap = bap_vec == v_zero_bap;
                                     for (0..nfchans) |ch_idx| {
                                         if (((self.chincpl >> @intCast(ch_idx)) & 1) != 0) {
-                                            if (self.cpl_bap[bin] == 0 and !dithflag[ch_idx]) {
-                                                block_samples[ch_idx][bin] = 0.0;
-                                            } else {
-                                                block_samples[ch_idx][bin] = cpl_coeff * signed_cplco[ch_idx][bnd];
-                                            }
+                                            const cplco_vec: V4f = @splat(signed_cplco[ch_idx][bnd]);
+                                            const scaled = cpl_vec * cplco_vec;
+                                            block_samples[ch_idx][bin..][0..4].* = if (dithflag[ch_idx])
+                                                scaled
+                                            else
+                                                @select(f32, is_zero_bap, v_zero_f, scaled);
                                         }
                                     }
                                 }
@@ -820,41 +853,15 @@ pub const Eac3Decoder = struct {
             if (self.lfeon == 1) {
                 if (!channel_uses_aht[self.channels]) {
                     try ac3_dec.coeffGet(&reader, &block_samples[5], &self.lfe_exp, &self.lfe_bap, &quantizer, 1.0, false, 7, &self.lfsr_state);
-                } else {
-                    if (blk == 0) {
-                        try self.decodeTransformCoeffsAhtCh(&reader, self.channels, 0, 7, &self.lfe_bap);
-                    }
-                    for (0..7) |bin| {
-                        block_samples[5][bin] = @as(f32, @floatFromInt(self.pre_mantissa[self.channels][bin][blk])) * (1.0 / 256.0) * tables.SCALE_FACTOR[self.lfe_exp[bin]];
-                    }
+                } else if (blk == 0) {
+                    try self.decodeTransformCoeffsAhtCh(&reader, self.channels, 0, 7, &self.lfe_bap);
                 }
             }
 
             // Rematrixing (ATSC A/52 Section 7.5.4)
             if (self.acmod == 2) {
                 const end_remat = @min(self.endmant[0], self.endmant[1]);
-                const remat_starts = [4]usize{ 13, 25, 37, 61 };
-                const remat_ends = [4]usize{ 25, 37, 61, 253 };
-                for (0..4) |b| {
-                    if (remat_starts[b] >= end_remat) break;
-                    if (((self.rematflg >> @intCast(b)) & 1) != 0) {
-                        var j = remat_starts[b];
-                        const endband = @min(remat_ends[b], end_remat);
-                        const V = @Vector(4, f32);
-                        while (j + 4 <= endband) : (j += 4) {
-                            const left: V = block_samples[0][j..][0..4].*;
-                            const right: V = block_samples[1][j..][0..4].*;
-                            block_samples[0][j..][0..4].* = left + right;
-                            block_samples[1][j..][0..4].* = left - right;
-                        }
-                        while (j < endband) : (j += 1) {
-                            const left = block_samples[0][j];
-                            const right = block_samples[1][j];
-                            block_samples[0][j] = left + right;
-                            block_samples[1][j] = left - right;
-                        }
-                    }
-                }
+                ac3_dec.rematrixStereo(self.rematflg, end_remat, &block_samples);
             }
 
             // Apply Spectral Extension (SPX) to high-frequency bins
@@ -862,71 +869,14 @@ pub const Eac3Decoder = struct {
                 self.applySpectralExtension(nfchans, &block_samples);
             }
 
-            // Inverse MDCT transform for each channel
+            // Inverse MDCT transform for each full-bandwidth channel (LFE is not used in stereo downmix)
             for (0..nfchans) |i| {
                 imdct.imdct512(&block_samples[i], &self.delay[i]);
-            }
-            if (self.lfeon == 1) {
-                imdct.imdct512(&block_samples[5], &self.delay[5]);
             }
 
             // Downmix to Stereo Interleaved PCM for this block
             const blk_offset = blk * 256 * 2;
-            const V = @Vector(4, f32);
-            const mask_0_1 = @Vector(4, i32){ 0, -1, 1, -2 };
-            const mask_2_3 = @Vector(4, i32){ 2, -3, 3, -4 };
-            switch (self.acmod) {
-                2 => { // 2.0 Stereo
-                    var s: usize = 0;
-                    while (s < 256) : (s += 4) {
-                        const l: V = block_samples[0][s..][0..4].*;
-                        const r: V = block_samples[1][s..][0..4].*;
-                        const pair_0_1 = @shuffle(f32, l, r, mask_0_1);
-                        const pair_2_3 = @shuffle(f32, l, r, mask_2_3);
-                        out_stereo_pcm[blk_offset + s * 2 ..][0..4].* = pair_0_1;
-                        out_stereo_pcm[blk_offset + s * 2 + 4 ..][0..4].* = pair_2_3;
-                    }
-                },
-                1 => { // 1.0 Mono
-                    const mask_mono_0_1 = @Vector(4, i32){ 0, 0, 1, 1 };
-                    const mask_mono_2_3 = @Vector(4, i32){ 2, 2, 3, 3 };
-                    var s: usize = 0;
-                    while (s < 256) : (s += 4) {
-                        const m: V = block_samples[0][s..][0..4].*;
-                        const pair_0_1 = @shuffle(f32, m, undefined, mask_mono_0_1);
-                        const pair_2_3 = @shuffle(f32, m, undefined, mask_mono_2_3);
-                        out_stereo_pcm[blk_offset + s * 2 ..][0..4].* = pair_0_1;
-                        out_stereo_pcm[blk_offset + s * 2 + 4 ..][0..4].* = pair_2_3;
-                    }
-                },
-                7 => { // 3/2 Surround (5.1 with LFE)
-                    const v_lev: V = @splat(tables.ac3_tables.LEVEL_3DB);
-                    var s: usize = 0;
-                    while (s < 256) : (s += 4) {
-                        const l: V = block_samples[0][s..][0..4].*;
-                        const c: V = block_samples[1][s..][0..4].*;
-                        const r: V = block_samples[2][s..][0..4].*;
-                        const ls: V = block_samples[3][s..][0..4].*;
-                        const rs: V = block_samples[4][s..][0..4].*;
-
-                        const c_lev = c * v_lev;
-                        const left_4 = l + c_lev + ls * v_lev;
-                        const right_4 = r + c_lev + rs * v_lev;
-
-                        const pair_0_1 = @shuffle(f32, left_4, right_4, mask_0_1);
-                        const pair_2_3 = @shuffle(f32, left_4, right_4, mask_2_3);
-
-                        out_stereo_pcm[blk_offset + s * 2 ..][0..4].* = pair_0_1;
-                        out_stereo_pcm[blk_offset + s * 2 + 4 ..][0..4].* = pair_2_3;
-                    }
-                },
-                else => {
-                    for (0..256) |s| {
-                        out_stereo_pcm[blk_offset + s * 2 + 0] = block_samples[0][s];
-                        out_stereo_pcm[blk_offset + s * 2 + 1] = if (nfchans > 1) block_samples[1][s] else block_samples[0][s];
-                    }
-                },
-            }
+            ac3_dec.downmixBlockToStereo(self.acmod, nfchans, &block_samples, out_stereo_pcm[blk_offset..][0..512]);
         }
 
         return self.num_blocks * 256;
@@ -963,6 +913,8 @@ pub const Eac3Decoder = struct {
         copy_sizes[num_copy_sections] = bin - self.spx_dst_start_freq;
         num_copy_sections += 1;
 
+        const V4f = @Vector(4, f32);
+
         for (0..nfchans) |ch| {
             if (!self.channel_uses_spx[ch]) continue;
 
@@ -976,51 +928,69 @@ pub const Eac3Decoder = struct {
                 bin += csize;
             }
 
-            // Calculate RMS energy for each SPX band
+            // Calculate RMS energy for each SPX band (bandsize is a multiple of 12, divisible by 4)
             bin = self.spx_src_start_freq;
             for (0..self.num_spx_bands) |bnd| {
                 const bandsize: usize = self.spx_band_sizes[bnd];
-                var accum: f32 = 0.0;
-                for (0..bandsize) |_| {
-                    const coeff = block_samples[ch][bin];
-                    bin += 1;
-                    accum += coeff * coeff;
+                var accum_vec: V4f = @splat(0.0);
+                var j: usize = 0;
+                while (j + 4 <= bandsize) : (j += 4) {
+                    const v: V4f = block_samples[ch][bin + j ..][0..4].*;
+                    accum_vec = @mulAdd(V4f, v, v, accum_vec);
                 }
+                var accum = @reduce(.Add, accum_vec);
+                while (j < bandsize) : (j += 1) {
+                    const c = block_samples[ch][bin + j];
+                    accum += c * c;
+                }
+                bin += bandsize;
                 rms_energy[bnd] = @sqrt(accum / @as(f32, @floatFromInt(bandsize)));
             }
 
             // Apply a 5-tap notch filter at transitions and wrap points
             if (self.spx_atten_code[ch] >= 0) {
                 const atten_tab = tables.SPX_ATTEN_TAB[@intCast(self.spx_atten_code[ch])];
+                const tap_vec = V4f{ atten_tab[0], atten_tab[1], atten_tab[2], atten_tab[1] };
                 bin = self.spx_src_start_freq - 2;
                 for (0..self.num_spx_bands) |bnd| {
                     if (wrapflag[bnd] and bin + 5 <= 256) {
-                        block_samples[ch][bin + 0] *= atten_tab[0];
-                        block_samples[ch][bin + 1] *= atten_tab[1];
-                        block_samples[ch][bin + 2] *= atten_tab[2];
-                        block_samples[ch][bin + 3] *= atten_tab[1];
+                        const cur_vec: V4f = block_samples[ch][bin..][0..4].*;
+                        block_samples[ch][bin..][0..4].* = cur_vec * tap_vec;
                         block_samples[ch][bin + 4] *= atten_tab[0];
                     }
                     bin += self.spx_band_sizes[bnd];
                 }
             }
 
-            // Apply noise-blended coefficient scaling
+            // Apply noise-blended coefficient scaling (bandsize is a multiple of 12, divisible by 4)
             bin = self.spx_src_start_freq;
             for (0..self.num_spx_bands) |bnd| {
                 const nscale = self.spx_noise_blend[ch][bnd] * rms_energy[bnd] * (1.0 / 32768.0);
                 const sscale = self.spx_signal_blend[ch][bnd];
+                const v_nscale: V4f = @splat(nscale);
+                const v_sscale: V4f = @splat(sscale);
                 const bandsize: usize = self.spx_band_sizes[bnd];
-                for (0..bandsize) |_| {
-                    const noise = nscale * ac3_dec.ditherGen(&self.lfsr_state);
-                    block_samples[ch][bin] = block_samples[ch][bin] * sscale + noise;
-                    bin += 1;
+                var j: usize = 0;
+                while (j + 4 <= bandsize) : (j += 4) {
+                    const d_vec = V4f{
+                        ac3_dec.ditherGen(&self.lfsr_state),
+                        ac3_dec.ditherGen(&self.lfsr_state),
+                        ac3_dec.ditherGen(&self.lfsr_state),
+                        ac3_dec.ditherGen(&self.lfsr_state),
+                    };
+                    const s_vec: V4f = block_samples[ch][bin + j ..][0..4].*;
+                    block_samples[ch][bin + j ..][0..4].* = @mulAdd(V4f, s_vec, v_sscale, d_vec * v_nscale);
                 }
+                while (j < bandsize) : (j += 1) {
+                    const noise = nscale * ac3_dec.ditherGen(&self.lfsr_state);
+                    block_samples[ch][bin + j] = block_samples[ch][bin + j] * sscale + noise;
+                }
+                bin += bandsize;
             }
         }
     }
 
-    fn idct6(pre_mant: *[6]i32) void {
+    inline fn idct6(pre_mant: *[6]i32) void {
         const COEFF_0: i64 = 10273905;
         const COEFF_1: i64 = 11863283;
         const COEFF_2: i64 = 3070444;
@@ -1064,9 +1034,10 @@ pub const Eac3Decoder = struct {
         var gs: usize = 0;
 
         if (gaq_mode == 1 or gaq_mode == 2) {
+            const shift: u3 = @intCast(gaq_mode - 1);
             for (start_freq..end_freq) |bin| {
                 if (bap[bin] > 7 and bap[bin] < end_bap) {
-                    gaq_gain[gs] = @as(u8, try reader.readBit()) << @intCast(gaq_mode - 1);
+                    gaq_gain[gs] = @as(u8, try reader.readBit()) << shift;
                     gs += 1;
                 }
             }
@@ -1075,12 +1046,9 @@ pub const Eac3Decoder = struct {
             for (start_freq..end_freq) |bin| {
                 if (bap[bin] > 7 and bap[bin] < 17) {
                     if (gc == 2) {
-                        var group_code = try reader.readBits(usize, 5);
-                        if (group_code > 26) group_code = 26;
+                        const group_code = try reader.readBits(usize, 5);
                         if (gs + 2 < gaq_gain.len) {
-                            gaq_gain[gs] = @intCast(group_code / 9);
-                            gaq_gain[gs + 1] = @intCast((group_code % 9) / 3);
-                            gaq_gain[gs + 2] = @intCast(group_code % 3);
+                            gaq_gain[gs..][0..3].* = tables.aht_tables.GAQ_UNGROUP_TAB[group_code];
                         }
                         gs += 3;
                         gc = 0;
@@ -1095,17 +1063,16 @@ pub const Eac3Decoder = struct {
         for (start_freq..end_freq) |bin| {
             const hebap: usize = @intCast(@max(@as(i8, 0), bap[bin]));
             const bits: usize = tables.aht_tables.BITS_VS_HEBAP[hebap];
+            var pre_mant: [6]i32 = undefined;
+
             if (hebap == 0) {
-                for (0..6) |blk| {
-                    const d = @as(i32, @intFromFloat(ac3_dec.ditherGen(&self.lfsr_state))) << 7;
-                    self.pre_mantissa[ch][bin][blk] = d;
+                inline for (0..6) |blk| {
+                    pre_mant[blk] = @as(i32, @intFromFloat(ac3_dec.ditherGen(&self.lfsr_state))) << 7;
                 }
             } else if (hebap < 8) {
                 const v = try reader.readBits(usize, bits);
-                const vq_table = tables.aht_tables.MANTISSA_VQ[hebap];
-                for (0..6) |blk| {
-                    self.pre_mantissa[ch][bin][blk] = @as(i32, vq_table[v][blk]) << 8;
-                }
+                const vq_vec: @Vector(6, i16) = tables.aht_tables.MANTISSA_VQ[hebap][v];
+                pre_mant = @as(@Vector(6, i32), vq_vec) << @splat(8);
             } else {
                 const log_gain: usize = if (gaq_mode != 0 and bap[bin] < end_bap) blk_lg: {
                     const lg = gaq_gain[gs];
@@ -1132,10 +1099,13 @@ pub const Eac3Decoder = struct {
                             mant += @intCast((@as(i64, tables.aht_tables.GAQ_REMAP_1[hebap - 8]) * @as(i64, mant)) >> 15);
                         }
                     }
-                    self.pre_mantissa[ch][bin][blk] = mant;
+                    pre_mant[blk] = mant;
                 }
             }
-            idct6(&self.pre_mantissa[ch][bin]);
+            idct6(&pre_mant);
+            inline for (0..6) |blk| {
+                self.pre_mantissa[ch][blk][bin] = pre_mant[blk];
+            }
         }
     }
 };

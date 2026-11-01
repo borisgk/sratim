@@ -27,11 +27,37 @@ pub const DELTA_BIT_NEW = 1;
 pub const DELTA_BIT_NONE = 2;
 pub const DELTA_BIT_RESERVED = 3;
 
-pub const EXP_1: [128]i8 = .{ -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 25, 25, 25 };
+pub const EXP_1: [128]i8 = initExpTable(0);
+pub const EXP_2: [128]i8 = initExpTable(1);
+pub const EXP_3: [128]i8 = initExpTable(2);
+pub const EXP_UNPACK: [128][3]i8 = initExpUnpackTable();
 
-pub const EXP_2: [128]i8 = .{ -2, -2, -2, -2, -2, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, -2, -2, -2, -2, -2, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, -2, -2, -2, -2, -2, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, -2, -2, -2, -2, -2, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, -2, -2, -2, -2, -2, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 25, 25, 25 };
+fn initExpTable(comptime comp: usize) [128]i8 {
+    var tab: [128]i8 = @splat(25);
+    for (0..125) |i| {
+        const v: usize = switch (comp) {
+            0 => i / 25,
+            1 => (i / 5) % 5,
+            2 => i % 5,
+            else => unreachable,
+        };
+        tab[i] = @as(i8, @intCast(v)) - 2;
+    }
+    return tab;
+}
 
-pub const EXP_3: [128]i8 = .{ -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2, 25, 25, 25 };
+fn initExpUnpackTable() [128][3]i8 {
+    var tab: [128][3]i8 = @splat(.{ 25, 25, 25 });
+    for (0..125) |i| {
+        const idx: usize = i;
+        tab[i] = .{
+            @as(i8, @intCast(idx / 25)) - 2,
+            @as(i8, @intCast((idx / 5) % 5)) - 2,
+            @as(i8, @intCast(idx % 5)) - 2,
+        };
+    }
+    return tab;
+}
 
 pub const DITHER_LUT: [256]u16 = .{
     0x0000, 0xa011, 0xe033, 0x4022, 0x6077, 0xc066, 0x8044, 0x2055,
@@ -108,6 +134,28 @@ fn initScaleFactor() [25]f32 {
 }
 
 pub const LEVEL_3DB: f32 = 0.7071067811865475;
+
+pub const AHT_SCALE_FACTOR: [25]f32 = initAhtScaleFactor();
+fn initAhtScaleFactor() [25]f32 {
+    var sf: [25]f32 = undefined;
+    var v: f64 = 1.0 / (32768.0 * 256.0);
+    for (0..25) |i| {
+        sf[i] = @floatCast(v);
+        v *= 0.5;
+    }
+    return sf;
+}
+
+pub const DITHER_SCALE_FACTOR: [25]f32 = initDitherScaleFactor();
+fn initDitherScaleFactor() [25]f32 {
+    var sf: [25]f32 = undefined;
+    var v: f64 = 0.7071067811865475 / 32768.0;
+    for (0..25) |i| {
+        sf[i] = @floatCast(v);
+        v *= 0.5;
+    }
+    return sf;
+}
 
 pub const Q_1_0 = makeQ1(0);
 pub const Q_1_1 = makeQ1(1);

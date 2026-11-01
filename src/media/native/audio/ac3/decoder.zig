@@ -10,90 +10,26 @@ const bitAllocate = bit_allocation.bitAllocate;
 pub fn parseExponents(reader: *BitReader, expstr: u2, ngrps: usize, exponent_in: u8, dest: []u8) !u8 {
     var exponent = exponent_in;
     var dest_idx: usize = 0;
-    var grp: usize = 0;
-    while (grp < ngrps) : (grp += 1) {
-        const exps = try reader.readBits(usize, 7);
-        if (exps >= 128) return error.InvalidExponentGroup;
 
-        var e = @as(i32, @intCast(exponent)) + tables.EXP_1[exps];
-        if (e < 0 or e > 24) return error.ExponentOutOfRange;
-        exponent = @intCast(e);
-        switch (expstr) {
-            tables.EXP_D45 => {
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-            },
-            tables.EXP_D25 => {
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-            },
-            tables.EXP_D15 => {
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-            },
-            else => unreachable,
-        }
-
-        e = @as(i32, @intCast(exponent)) + tables.EXP_2[exps];
-        if (e < 0 or e > 24) return error.ExponentOutOfRange;
-        exponent = @intCast(e);
-        switch (expstr) {
-            tables.EXP_D45 => {
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-            },
-            tables.EXP_D25 => {
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-            },
-            tables.EXP_D15 => {
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-            },
-            else => unreachable,
-        }
-
-        e = @as(i32, @intCast(exponent)) + tables.EXP_3[exps];
-        if (e < 0 or e > 24) return error.ExponentOutOfRange;
-        exponent = @intCast(e);
-        switch (expstr) {
-            tables.EXP_D45 => {
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-            },
-            tables.EXP_D25 => {
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-            },
-            tables.EXP_D15 => {
-                dest[dest_idx] = exponent;
-                dest_idx += 1;
-            },
-            else => unreachable,
+    inline for (.{ tables.EXP_D15, tables.EXP_D25, tables.EXP_D45 }) |strat| {
+        if (expstr == strat) {
+            const step: usize = @as(usize, 1) << (strat - 1);
+            for (0..ngrps) |_| {
+                const exps = try reader.readBits(usize, 7);
+                const deltas = tables.EXP_UNPACK[exps];
+                inline for (0..3) |k| {
+                    const e = @as(i32, exponent) + deltas[k];
+                    if (e < 0 or e > 24) return error.ExponentOutOfRange;
+                    exponent = @intCast(e);
+                    if (step == 1) {
+                        dest[dest_idx] = exponent;
+                    } else {
+                        dest[dest_idx..][0..step].* = @as(@Vector(step, u8), @splat(exponent));
+                    }
+                    dest_idx += step;
+                }
+            }
+            return exponent;
         }
     }
     return exponent;
@@ -150,61 +86,59 @@ pub fn coeffGet(
     end: usize,
     lfsr_state: *u32,
 ) !void {
-    var factor: [25]f32 = undefined;
-    for (0..25) |i| factor[i] = tables.SCALE_FACTOR[i] * level;
-
     for (0..end) |i| {
         const bapi = bap[i];
+        const sf = tables.SCALE_FACTOR[exp[i]] * level;
         switch (bapi) {
             0 => {
                 if (dither) {
-                    coeff[i] = ditherGen(lfsr_state) * tables.LEVEL_3DB * factor[exp[i]];
+                    coeff[i] = ditherGen(lfsr_state) * tables.DITHER_SCALE_FACTOR[exp[i]] * level;
                 } else {
                     coeff[i] = 0.0;
                 }
             },
             -1 => {
                 if (quantizer.q1_ptr >= 0) {
-                    coeff[i] = quantizer.q1[@intCast(quantizer.q1_ptr)] * factor[exp[i]];
+                    coeff[i] = quantizer.q1[@intCast(quantizer.q1_ptr)] * sf;
                     quantizer.q1_ptr -= 1;
                 } else {
                     const code = try reader.readBits(usize, 5);
                     quantizer.q1_ptr = 1;
                     quantizer.q1[0] = tables.Q_1_2[code];
                     quantizer.q1[1] = tables.Q_1_1[code];
-                    coeff[i] = tables.Q_1_0[code] * factor[exp[i]];
+                    coeff[i] = tables.Q_1_0[code] * sf;
                 }
             },
             -2 => {
                 if (quantizer.q2_ptr >= 0) {
-                    coeff[i] = quantizer.q2[@intCast(quantizer.q2_ptr)] * factor[exp[i]];
+                    coeff[i] = quantizer.q2[@intCast(quantizer.q2_ptr)] * sf;
                     quantizer.q2_ptr -= 1;
                 } else {
                     const code = try reader.readBits(usize, 7);
                     quantizer.q2_ptr = 1;
                     quantizer.q2[0] = tables.Q_2_2[code];
                     quantizer.q2[1] = tables.Q_2_1[code];
-                    coeff[i] = tables.Q_2_0[code] * factor[exp[i]];
+                    coeff[i] = tables.Q_2_0[code] * sf;
                 }
             },
             3 => {
                 const code = try reader.readBits(usize, 3);
-                coeff[i] = tables.Q_3[code] * factor[exp[i]];
+                coeff[i] = tables.Q_3[code] * sf;
             },
             -3 => {
                 if (quantizer.q4_ptr == 0) {
                     quantizer.q4_ptr = -1;
-                    coeff[i] = quantizer.q4 * factor[exp[i]];
+                    coeff[i] = quantizer.q4 * sf;
                 } else {
                     const code = try reader.readBits(usize, 7);
                     quantizer.q4_ptr = 0;
                     quantizer.q4 = tables.Q_4_1[code];
-                    coeff[i] = tables.Q_4_0[code] * factor[exp[i]];
+                    coeff[i] = tables.Q_4_0[code] * sf;
                 }
             },
             4 => {
                 const code = try reader.readBits(usize, 4);
-                coeff[i] = tables.Q_5[code] * factor[exp[i]];
+                coeff[i] = tables.Q_5[code] * sf;
             },
             else => {
                 if (bapi > 0) {
@@ -212,7 +146,7 @@ pub fn coeffGet(
                     const s_val = try reader.readSignedBits(ubap);
                     const shift: u5 = @intCast(16 - ubap);
                     const mant: f32 = @floatFromInt(s_val << shift);
-                    coeff[i] = mant * factor[exp[i]];
+                    coeff[i] = mant * sf;
                 } else {
                     coeff[i] = 0.0;
                 }
@@ -648,98 +582,151 @@ pub const Ac3Decoder = struct {
             // Rematrixing for 2/0 stereo (ATSC A/52 Section 7.5.4)
             if (self.acmod == 2) {
                 const end_remat = if (self.chincpl != 0) self.cplstrtmant else self.endmant[0];
-                const remat_starts = [4]usize{ 13, 25, 37, 61 };
-                const remat_ends = [4]usize{ 25, 37, 61, 253 };
-                for (0..4) |b| {
-                    if (remat_starts[b] >= end_remat) break;
-                    if (((self.rematflg >> @intCast(b)) & 1) != 0) {
-                        var j = remat_starts[b];
-                        const endband = @min(remat_ends[b], end_remat);
-                        const V = @Vector(4, f32);
-                        while (j + 4 <= endband) : (j += 4) {
-                            const left: V = block_samples[0][j..][0..4].*;
-                            const right: V = block_samples[1][j..][0..4].*;
-                            block_samples[0][j..][0..4].* = left + right;
-                            block_samples[1][j..][0..4].* = left - right;
-                        }
-                        while (j < endband) : (j += 1) {
-                            const left = block_samples[0][j];
-                            const right = block_samples[1][j];
-                            block_samples[0][j] = left + right;
-                            block_samples[1][j] = left - right;
-                        }
-                    }
-                }
+                rematrixStereo(self.rematflg, end_remat, &block_samples);
             }
 
-            // IMDCT transform for each channel
+            // IMDCT transform for each full-bandwidth channel (LFE is not used in stereo downmix)
             for (0..nfchans) |i| {
                 imdct.imdct512(&block_samples[i], &self.delay[i]);
-            }
-            if (self.lfeon == 1) {
-                imdct.imdct512(&block_samples[5], &self.delay[5]);
             }
 
             // Downmix block samples to stereo output
             const blk_offset = blk * 256 * 2;
-            const V = @Vector(4, f32);
-            const mask_0_1 = @Vector(4, i32){ 0, -1, 1, -2 };
-            const mask_2_3 = @Vector(4, i32){ 2, -3, 3, -4 };
-            switch (self.acmod) {
-                2 => { // 2.0 Stereo
-                    var s: usize = 0;
-                    while (s < 256) : (s += 4) {
-                        const l: V = block_samples[0][s..][0..4].*;
-                        const r: V = block_samples[1][s..][0..4].*;
-                        const pair_0_1 = @shuffle(f32, l, r, mask_0_1);
-                        const pair_2_3 = @shuffle(f32, l, r, mask_2_3);
-                        out_stereo_pcm[blk_offset + s * 2 ..][0..4].* = pair_0_1;
-                        out_stereo_pcm[blk_offset + s * 2 + 4 ..][0..4].* = pair_2_3;
-                    }
-                },
-                1 => { // 1.0 Mono
-                    const mask_mono_0_1 = @Vector(4, i32){ 0, 0, 1, 1 };
-                    const mask_mono_2_3 = @Vector(4, i32){ 2, 2, 3, 3 };
-                    var s: usize = 0;
-                    while (s < 256) : (s += 4) {
-                        const m: V = block_samples[0][s..][0..4].*;
-                        const pair_0_1 = @shuffle(f32, m, undefined, mask_mono_0_1);
-                        const pair_2_3 = @shuffle(f32, m, undefined, mask_mono_2_3);
-                        out_stereo_pcm[blk_offset + s * 2 ..][0..4].* = pair_0_1;
-                        out_stereo_pcm[blk_offset + s * 2 + 4 ..][0..4].* = pair_2_3;
-                    }
-                },
-                7 => { // 3/2 Surround (5.1 with LFE)
-                    const v_lev: V = @splat(tables.LEVEL_3DB);
-                    var s: usize = 0;
-                    while (s < 256) : (s += 4) {
-                        const l: V = block_samples[0][s..][0..4].*;
-                        const c: V = block_samples[1][s..][0..4].*;
-                        const r: V = block_samples[2][s..][0..4].*;
-                        const ls: V = block_samples[3][s..][0..4].*;
-                        const rs: V = block_samples[4][s..][0..4].*;
-
-                        const c_lev = c * v_lev;
-                        const left_4 = l + c_lev + ls * v_lev;
-                        const right_4 = r + c_lev + rs * v_lev;
-
-                        const pair_0_1 = @shuffle(f32, left_4, right_4, mask_0_1);
-                        const pair_2_3 = @shuffle(f32, left_4, right_4, mask_2_3);
-
-                        out_stereo_pcm[blk_offset + s * 2 ..][0..4].* = pair_0_1;
-                        out_stereo_pcm[blk_offset + s * 2 + 4 ..][0..4].* = pair_2_3;
-                    }
-                },
-                else => {
-                    // General downmix for other channel configurations
-                    for (0..256) |s| {
-                        out_stereo_pcm[blk_offset + s * 2 + 0] = block_samples[0][s];
-                        out_stereo_pcm[blk_offset + s * 2 + 1] = if (nfchans > 1) block_samples[1][s] else block_samples[0][s];
-                    }
-                },
-            }
+            downmixBlockToStereo(self.acmod, nfchans, &block_samples, out_stereo_pcm[blk_offset..][0..512]);
         }
 
         return 1536;
     }
 };
+
+pub inline fn rematrixStereo(rematflg: u32, end_remat: usize, block_samples: *[6][256]f32) void {
+    const remat_starts = [4]usize{ 13, 25, 37, 61 };
+    const remat_ends = [4]usize{ 25, 37, 61, 253 };
+    const V = @Vector(4, f32);
+    for (0..4) |b| {
+        if (remat_starts[b] >= end_remat) break;
+        if (((rematflg >> @intCast(b)) & 1) != 0) {
+            var j = remat_starts[b];
+            const endband = @min(remat_ends[b], end_remat);
+            while (j + 4 <= endband) : (j += 4) {
+                const left: V = block_samples[0][j..][0..4].*;
+                const right: V = block_samples[1][j..][0..4].*;
+                block_samples[0][j..][0..4].* = left + right;
+                block_samples[1][j..][0..4].* = left - right;
+            }
+            while (j < endband) : (j += 1) {
+                const left = block_samples[0][j];
+                const right = block_samples[1][j];
+                block_samples[0][j] = left + right;
+                block_samples[1][j] = left - right;
+            }
+        }
+    }
+}
+
+pub inline fn downmixBlockToStereo(
+    acmod: usize,
+    nfchans: usize,
+    block_samples: *const [6][256]f32,
+    out_stereo: *[512]f32,
+) void {
+    const V8 = @Vector(8, f32);
+    const mask_lo = @Vector(8, i32){ 0, -1, 1, -2, 2, -3, 3, -4 };
+    const mask_hi = @Vector(8, i32){ 4, -5, 5, -6, 6, -7, 7, -8 };
+    const v_lev: V8 = @splat(tables.LEVEL_3DB);
+
+    switch (acmod) {
+        2 => { // 2/0 Stereo (L, R)
+            var s: usize = 0;
+            while (s < 256) : (s += 8) {
+                const l: V8 = block_samples[0][s..][0..8].*;
+                const r: V8 = block_samples[1][s..][0..8].*;
+                out_stereo[s * 2 ..][0..8].* = @shuffle(f32, l, r, mask_lo);
+                out_stereo[s * 2 + 8 ..][0..8].* = @shuffle(f32, l, r, mask_hi);
+            }
+        },
+        1 => { // 1/0 Mono (C)
+            const mask_mono_lo = @Vector(8, i32){ 0, 0, 1, 1, 2, 2, 3, 3 };
+            const mask_mono_hi = @Vector(8, i32){ 4, 4, 5, 5, 6, 6, 7, 7 };
+            var s: usize = 0;
+            while (s < 256) : (s += 8) {
+                const m: V8 = block_samples[0][s..][0..8].*;
+                out_stereo[s * 2 ..][0..8].* = @shuffle(f32, m, undefined, mask_mono_lo);
+                out_stereo[s * 2 + 8 ..][0..8].* = @shuffle(f32, m, undefined, mask_mono_hi);
+            }
+        },
+        7 => { // 3/2 Surround (L, C, R, Ls, Rs)
+            var s: usize = 0;
+            while (s < 256) : (s += 8) {
+                const l: V8 = block_samples[0][s..][0..8].*;
+                const c: V8 = block_samples[1][s..][0..8].*;
+                const r: V8 = block_samples[2][s..][0..8].*;
+                const ls: V8 = block_samples[3][s..][0..8].*;
+                const rs: V8 = block_samples[4][s..][0..8].*;
+
+                const left_8 = @mulAdd(V8, c + ls, v_lev, l);
+                const right_8 = @mulAdd(V8, c + rs, v_lev, r);
+
+                out_stereo[s * 2 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_lo);
+                out_stereo[s * 2 + 8 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_hi);
+            }
+        },
+        3 => { // 3/0 Surround (L, C, R)
+            var s: usize = 0;
+            while (s < 256) : (s += 8) {
+                const l: V8 = block_samples[0][s..][0..8].*;
+                const c: V8 = block_samples[1][s..][0..8].*;
+                const r: V8 = block_samples[2][s..][0..8].*;
+                const left_8 = @mulAdd(V8, c, v_lev, l);
+                const right_8 = @mulAdd(V8, c, v_lev, r);
+                out_stereo[s * 2 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_lo);
+                out_stereo[s * 2 + 8 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_hi);
+            }
+        },
+        4 => { // 2/1 Surround (L, R, S)
+            var s: usize = 0;
+            while (s < 256) : (s += 8) {
+                const l: V8 = block_samples[0][s..][0..8].*;
+                const r: V8 = block_samples[1][s..][0..8].*;
+                const sur: V8 = block_samples[2][s..][0..8].*;
+                const left_8 = @mulAdd(V8, sur, v_lev, l);
+                const right_8 = @mulAdd(V8, sur, v_lev, r);
+                out_stereo[s * 2 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_lo);
+                out_stereo[s * 2 + 8 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_hi);
+            }
+        },
+        5 => { // 3/1 Surround (L, C, R, S)
+            var s: usize = 0;
+            while (s < 256) : (s += 8) {
+                const l: V8 = block_samples[0][s..][0..8].*;
+                const c: V8 = block_samples[1][s..][0..8].*;
+                const r: V8 = block_samples[2][s..][0..8].*;
+                const sur: V8 = block_samples[3][s..][0..8].*;
+                const cs = (c + sur) * v_lev;
+                const left_8 = l + cs;
+                const right_8 = r + cs;
+                out_stereo[s * 2 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_lo);
+                out_stereo[s * 2 + 8 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_hi);
+            }
+        },
+        6 => { // 2/2 Surround (L, R, Ls, Rs)
+            var s: usize = 0;
+            while (s < 256) : (s += 8) {
+                const l: V8 = block_samples[0][s..][0..8].*;
+                const r: V8 = block_samples[1][s..][0..8].*;
+                const ls: V8 = block_samples[2][s..][0..8].*;
+                const rs: V8 = block_samples[3][s..][0..8].*;
+                const left_8 = @mulAdd(V8, ls, v_lev, l);
+                const right_8 = @mulAdd(V8, rs, v_lev, r);
+                out_stereo[s * 2 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_lo);
+                out_stereo[s * 2 + 8 ..][0..8].* = @shuffle(f32, left_8, right_8, mask_hi);
+            }
+        },
+        else => {
+            for (0..256) |s| {
+                out_stereo[s * 2 + 0] = block_samples[0][s];
+                out_stereo[s * 2 + 1] = if (nfchans > 1) block_samples[1][s] else block_samples[0][s];
+            }
+        },
+    }
+}

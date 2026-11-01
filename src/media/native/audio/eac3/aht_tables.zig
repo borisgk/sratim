@@ -27,6 +27,22 @@ pub const BITS_VS_HEBAP: [20]u8 = .{
     5, 6, 7, 8, 9, 10, 11, 12, 14, 16,
 };
 
+/// Precomputed 5-bit GAQ group code unpacking table (gaq_mode == 3)
+pub const GAQ_UNGROUP_TAB: [32][3]u8 = initGaqUngroupTab();
+
+fn initGaqUngroupTab() [32][3]u8 {
+    var tab: [32][3]u8 = undefined;
+    for (0..32) |code| {
+        const c: u8 = @intCast(@min(code, 26));
+        tab[code] = .{
+            c / 9,
+            (c / 3) % 3,
+            c % 3,
+        };
+    }
+    return tab;
+}
+
 /// Table E3.6, Gk=1: No gain (Gk=1) inverse quantization remapping scale factors
 pub const GAQ_REMAP_1: [12]i16 = .{
     4681, 2185, 1057, 520, 258, 129, 64, 32, 16, 8, 2, 0,
