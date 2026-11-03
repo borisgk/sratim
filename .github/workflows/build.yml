@@ -3,10 +3,12 @@ name: Build & Semantic Release Multi-Arch Binaries
 on:
   push:
     branches: [ "main" ]
-    paths-ignore:
-      - "**.md"
-      - ".gitignore"
-      - "LICENSE"
+    paths:
+      - "src/**"
+      - "build.zig"
+      - "build.zig.zon"
+      - "scripts/**"
+      - ".github/workflows/**"
   workflow_dispatch:
 
 env:
