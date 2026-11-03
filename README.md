@@ -4,6 +4,8 @@ A modern, ultra-lightweight, and high-performance media server written in **pure
 
 Sratim automatically scans your movie and TV show libraries, fetches rich metadata and artwork from TMDb, and streams media directly to web browsers using custom, native in-process video slicing and audio transcoding.
 
+![Sratim Home Page screenshot](/screenshots/HomePage.png)
+
 ---
 
 ## ⚡ Core Advantages
