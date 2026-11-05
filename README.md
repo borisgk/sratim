@@ -52,6 +52,22 @@ curl -fsSL https://raw.githubusercontent.com/borisgk/sratim/main/scripts/install
 3. Prepares the persistent data directory at `/var/lib/sratim/`.
 4. Installs and starts the `sratim.service` systemd daemon under a dedicated dynamic system user.
 
+### macOS (Apple Silicon ARM64)
+
+Download and run the standalone binary directly:
+
+```bash
+# Download the binary
+curl -L -o sratim https://github.com/borisgk/sratim/releases/latest/download/sratim-macos-aarch64
+chmod +x sratim
+
+# If downloaded via a browser, clear Gatekeeper quarantine attribute:
+xattr -d com.apple.quarantine sratim 2>/dev/null || true
+
+# Run Sratim
+./sratim
+```
+
 ---
 
 ## ⚙️ Configuration
