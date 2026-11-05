@@ -21,6 +21,17 @@ if [ "$EUID" -ne 0 ]; then
   log_err "Please run as root (e.g. curl ... | sudo bash)"
 fi
 
+# Detect macOS and redirect to dedicated macOS installer
+if [ "$(uname -s)" = "Darwin" ]; then
+  log_info "Detected macOS. Forwarding to macOS installer..."
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+  if [ -n "$SCRIPT_DIR" ] && [ -f "${SCRIPT_DIR}/install-macos.sh" ]; then
+    exec bash "${SCRIPT_DIR}/install-macos.sh" "$@"
+  else
+    exec bash -c "$(curl -fsSL https://raw.githubusercontent.com/borisgk/sratim/main/scripts/install-macos.sh)"
+  fi
+fi
+
 # 1. OS & Architecture Check
 log_info "Checking system compatibility..."
 

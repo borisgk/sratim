@@ -38,35 +38,47 @@ Join our Telegram channel to stay updated with the latest releases, feature upda
 
 ---
 
-## 🚀 Quick Install (Linux Systemd)
+## 🚀 Quick Install
 
-You can automatically install Sratim on any systemd-based Linux distribution (Debian, Ubuntu, Arch Linux, etc.) using our universal installation script:
+### Linux (Systemd)
+
+Automatically install Sratim on any systemd-based Linux distribution (Debian, Ubuntu, Arch Linux, etc.) using our universal installation script:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/borisgk/sratim/main/scripts/install.sh | sudo bash
 ```
 
-### What the installer does:
+**What the Linux installer does:**
 1. Downloads the latest release binary to `/usr/local/bin/sratim`.
 2. Generates a default configuration file at `/etc/sratim/config.json`.
 3. Prepares the persistent data directory at `/var/lib/sratim/`.
 4. Installs and starts the `sratim.service` systemd daemon under a dedicated dynamic system user.
 
-### macOS (Apple Silicon ARM64)
+---
 
-Download and run the standalone binary directly:
+### macOS (Apple Silicon ARM64 LaunchDaemon)
+
+Automatically install Sratim on Apple Silicon macOS as an auto-starting background system daemon using Apple's native service supervisor (`launchd`):
 
 ```bash
-# Download the binary
-curl -L -o sratim https://github.com/borisgk/sratim/releases/latest/download/sratim-macos-aarch64
-chmod +x sratim
-
-# If downloaded via a browser, clear Gatekeeper quarantine attribute:
-xattr -d com.apple.quarantine sratim 2>/dev/null || true
-
-# Run Sratim
-./sratim
+curl -fsSL https://raw.githubusercontent.com/borisgk/sratim/main/scripts/install-macos.sh | sudo bash
 ```
+
+**What the macOS installer does:**
+1. Downloads the latest `sratim-macos-aarch64` binary to `/usr/local/bin/sratim`.
+2. Generates a default configuration file at `/etc/sratim/config.json`.
+3. Prepares the persistent data directory at `/var/lib/sratim/`.
+4. Installs and registers the `com.rus9n.sratim` LaunchDaemon in `/Library/LaunchDaemons/`.
+5. Starts the daemon under the invoking user account so media libraries across `/Users/...` folders and external drives are accessible without macOS permission blocks.
+
+#### Managing the macOS Daemon:
+- **Check Status**: `sudo launchctl print system/com.rus9n.sratim`
+- **Restart Daemon**: `sudo launchctl kickstart -k system/com.rus9n.sratim`
+- **Stop Daemon**: `sudo launchctl bootout system/com.rus9n.sratim`
+- **Start Daemon**: `sudo launchctl bootstrap system /Library/LaunchDaemons/com.rus9n.sratim.plist`
+- **View Live Logs**: `tail -f /var/log/sratim.log /var/log/sratim.err.log`
+
+*(Manual standalone execution without a daemon is also supported: `curl -L -o sratim https://github.com/borisgk/sratim/releases/latest/download/sratim-macos-aarch64 && chmod +x sratim && ./sratim`)*
 
 ---
 
