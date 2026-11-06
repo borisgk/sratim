@@ -61,10 +61,14 @@ curl -fsSL https://raw.githubusercontent.com/borisgk/sratim/main/scripts/install
 Install and manage Sratim as a native background service using Homebrew:
 
 ```bash
-# Install Sratim via Homebrew Tap
-brew install borisgk/sratim/sratim
+# 1. Tap and trust the repository
+brew tap borisgk/sratim
+brew trust borisgk/sratim
 
-# Start and enable the background service
+# 2. Install Sratim
+brew install sratim
+
+# 3. Start and enable the background service
 brew services start sratim
 ```
 

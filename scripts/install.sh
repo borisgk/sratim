@@ -25,7 +25,9 @@ fi
 if [ "$(uname -s)" = "Darwin" ]; then
   log_info "Detected macOS. Sratim is distributed and managed via Homebrew on macOS:"
   echo ""
-  echo "  brew install borisgk/sratim/sratim"
+  echo "  brew tap borisgk/sratim"
+  echo "  brew trust borisgk/sratim"
+  echo "  brew install sratim"
   echo "  brew services start sratim"
   echo ""
   exit 0
