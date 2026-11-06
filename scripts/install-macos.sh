@@ -64,13 +64,15 @@ xattr -d com.apple.quarantine /usr/local/bin/sratim 2>/dev/null || true
 log_info "Installed to /usr/local/bin/sratim"
 
 # 3. System Preparation
-log_info "Setting up configuration and data directories..."
+log_info "Setting up configuration, data, and shared media directories..."
 mkdir -p /etc/sratim
 mkdir -p /var/lib/sratim
 mkdir -p /var/log
+mkdir -p /Users/Shared/Media
 
-# Ensure data directory ownership
+# Ensure data and media directory ownership
 chown -R "$TARGET_USER:$TARGET_GROUP" /var/lib/sratim
+chown -R "$TARGET_USER:$TARGET_GROUP" /Users/Shared/Media 2>/dev/null || true
 
 # Create a default config if it doesn't exist
 if [ ! -f /etc/sratim/config.json ]; then

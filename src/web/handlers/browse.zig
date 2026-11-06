@@ -1,4 +1,8 @@
 const std = @import("std");
+const builtin = @import("builtin");
+
+const is_macos = builtin.os.tag == .macos;
+const macos_root = "/Users/Shared";
 
 /// Lists subdirectories of a given path for the file browser modal.
 pub fn handleApiBrowse(request: *std.http.Server.Request, allocator: std.mem.Allocator, io: std.Io) !void {
@@ -22,14 +26,22 @@ pub fn handleApiBrowse(request: *std.http.Server.Request, allocator: std.mem.All
         target_path = "";
     }
 
+    const default_root = if (is_macos) macos_root else "/";
+
     var resolved_path: []const u8 = undefined;
     if (target_path.len == 0) {
-        resolved_path = try allocator.dupe(u8, "/");
+        resolved_path = try allocator.dupe(u8, default_root);
     } else {
         if (std.fs.path.resolve(allocator, &[_][]const u8{target_path})) |res| {
-            resolved_path = res;
+            // On macOS, confine browsing to /Users/Shared to prevent triggering TCC permission prompts
+            if (is_macos and !std.mem.startsWith(u8, res, macos_root)) {
+                allocator.free(res);
+                resolved_path = try allocator.dupe(u8, macos_root);
+            } else {
+                resolved_path = res;
+            }
         } else |_| {
-            resolved_path = try allocator.dupe(u8, "/");
+            resolved_path = try allocator.dupe(u8, default_root);
         }
     }
 
@@ -65,7 +77,20 @@ pub fn handleApiBrowse(request: *std.http.Server.Request, allocator: std.mem.All
 }
 
 pub fn serveBrowseJson(request: *std.http.Server.Request, allocator: std.mem.Allocator, current: []const u8, dirs: []const []const u8) !void {
-    const parent = std.fs.path.dirname(current) orelse "";
+    const parent_opt: ?[]const u8 = blk: {
+        if (is_macos and std.mem.eql(u8, current, macos_root)) {
+            break :blk null;
+        }
+        if (std.fs.path.dirname(current)) |p| {
+            if (p.len > 0) {
+                if (is_macos and !std.mem.startsWith(u8, p, macos_root)) {
+                    break :blk null;
+                }
+                break :blk p;
+            }
+        }
+        break :blk null;
+    };
 
     var json = std.ArrayList(u8).empty;
     defer json.deinit(allocator);
@@ -73,7 +98,7 @@ pub fn serveBrowseJson(request: *std.http.Server.Request, allocator: std.mem.All
     try json.appendSlice(allocator, "{\"current\":\"");
     try escapeJsonString(&json, allocator, current);
     try json.appendSlice(allocator, "\",\"parent\":");
-    if (parent.len > 0) {
+    if (parent_opt) |parent| {
         try json.appendSlice(allocator, "\"");
         try escapeJsonString(&json, allocator, parent);
         try json.appendSlice(allocator, "\"");
