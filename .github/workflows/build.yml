@@ -142,6 +142,45 @@ jobs:
           body: ${{ steps.release_notes.outputs.changelog }}
           files: ./artifacts/*
 
+      - name: Update Homebrew Tap Formula
+        env:
+          HOMEBREW_TAP_SSH_KEY: ${{ secrets.HOMEBREW_TAP_SSH_KEY }}
+          TAG: ${{ steps.tag_version.outputs.new_tag }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_SSH_KEY" ]; then
+            echo "HOMEBREW_TAP_SSH_KEY secret not found, skipping Homebrew tap update."
+            exit 0
+          fi
+
+          MACOS_BIN="./artifacts/sratim-macos-aarch64"
+          if [ ! -f "$MACOS_BIN" ]; then
+            echo "sratim-macos-aarch64 artifact not found, skipping tap update."
+            exit 0
+          fi
+
+          SHA256=$(sha256sum "$MACOS_BIN" | awk '{print $1}')
+          echo "Bumping Homebrew formula to $TAG ($SHA256)..."
+
+          mkdir -p ~/.ssh
+          echo "$HOMEBREW_TAP_SSH_KEY" > ~/.ssh/tap_deploy_key
+          chmod 600 ~/.ssh/tap_deploy_key
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_deploy_key -o StrictHostKeyChecking=no"
+
+          git clone git@github.com:borisgk/homebrew-sratim.git /tmp/homebrew-sratim
+          node scripts/bump-formula.js /tmp/homebrew-sratim/Formula/sratim.rb "$TAG" "$SHA256"
+
+          cd /tmp/homebrew-sratim
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/sratim.rb
+          if git diff --staged --quiet; then
+            echo "Formula is already up to date."
+          else
+            git commit -m "chore: bump formula to ${TAG}"
+            git push origin main
+            echo "Successfully pushed formula update to borisgk/homebrew-sratim"
+          fi
+
   deploy:
     name: Deploy to padre.rus9n.com
     needs: release
