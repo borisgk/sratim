@@ -53,7 +53,7 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v2.2.1
         with:
-          version: 0.17.0
+          version: 0.17.1
           use-cache: false
 
       - name: Cache Zig Build Artifacts

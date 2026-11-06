@@ -1,6 +1,6 @@
 # Sratim (סרטים)
 
-A modern, ultra-lightweight, and high-performance media server written in **pure Zig (0.17.0)** with **zero C/libc dependencies**.
+A modern, ultra-lightweight, and high-performance media server written in **pure Zig (0.17.1)** with **zero C/libc dependencies**.
 
 Sratim automatically scans your movie and TV show libraries, fetches rich metadata and artwork from TMDb, and streams media directly to web browsers using custom, native in-process video slicing and audio transcoding.
 
