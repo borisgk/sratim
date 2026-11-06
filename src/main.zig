@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const server = @import("web/server.zig");
 const config_mod = @import("config.zig");
 const db_mod = @import("db/db.zig");
@@ -33,17 +34,21 @@ pub fn main() !void {
         app_dir = std.Io.Dir.cwd();
         is_dev_mode = true;
     } else |_| {
-        // Hierarchical path resolution:
-        // 1. macOS Homebrew (Apple Silicon: /opt/homebrew)
-        // 2. macOS Homebrew (Intel: /usr/local)
-        // 3. Linux / system fallback (/etc/sratim and /var/lib/sratim)
-        if (std.Io.Dir.cwd().access(io, "/opt/homebrew/etc/sratim/config.json", .{})) |_| {
-            config_path = "/opt/homebrew/etc/sratim/config.json";
-            data_dir = "/opt/homebrew/var/lib/sratim";
-        } else |_| if (std.Io.Dir.cwd().access(io, "/usr/local/etc/sratim/config.json", .{})) |_| {
-            config_path = "/usr/local/etc/sratim/config.json";
-            data_dir = "/usr/local/var/lib/sratim";
-        } else |_| {
+        // Platform-aware path resolution:
+        // macOS Homebrew: Apple Silicon -> /opt/homebrew, Intel -> /usr/local
+        // Linux / other: /etc/sratim and /var/lib/sratim
+        const is_darwin = builtin.os.tag == .macos;
+        const is_aarch64 = builtin.cpu.arch == .aarch64;
+
+        if (is_darwin) {
+            if (is_aarch64) {
+                config_path = "/opt/homebrew/etc/sratim/config.json";
+                data_dir = "/opt/homebrew/var/lib/sratim";
+            } else {
+                config_path = "/usr/local/etc/sratim/config.json";
+                data_dir = "/usr/local/var/lib/sratim";
+            }
+        } else {
             config_path = "/etc/sratim/config.json";
             data_dir = "/var/lib/sratim";
         }
@@ -51,8 +56,26 @@ pub fn main() !void {
         std.debug.print("Using config from: {s}\n", .{config_path});
         std.debug.print("Using data directory: {s}\n", .{data_dir});
 
-        // Ensure data directory exists before opening
+        // Ensure parent directories exist
+        if (std.fs.path.dirname(config_path)) |cfg_dir| {
+            std.Io.Dir.cwd().createDirPath(io, cfg_dir) catch {};
+        }
         std.Io.Dir.cwd().createDirPath(io, data_dir) catch {};
+
+        // Auto-generate default configuration if missing
+        if (std.Io.Dir.cwd().access(io, config_path, .{})) |_| {} else |_| {
+            const default_config =
+                \\{
+                \\  "port": 8000,
+                \\  "tmdb_access_token": "",
+                \\  "tmdb_proxy": ""
+                \\}
+                \\
+            ;
+            std.Io.Dir.cwd().writeFile(io, .{ .sub_path = config_path, .data = default_config }) catch |err| {
+                std.debug.print("Notice: could not create default config at {s}: {}\n", .{ config_path, err });
+            };
+        }
 
         app_dir = std.Io.Dir.openDirAbsolute(io, data_dir, .{}) catch |err| {
             std.debug.print("Failed to open production data directory {s}: {}\n", .{ data_dir, err });
