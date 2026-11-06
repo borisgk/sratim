@@ -21,15 +21,14 @@ if [ "$EUID" -ne 0 ]; then
   log_err "Please run as root (e.g. curl ... | sudo bash)"
 fi
 
-# Detect macOS and redirect to dedicated macOS installer
+# Detect macOS and guide to Homebrew
 if [ "$(uname -s)" = "Darwin" ]; then
-  log_info "Detected macOS. Forwarding to macOS installer..."
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
-  if [ -n "$SCRIPT_DIR" ] && [ -f "${SCRIPT_DIR}/install-macos.sh" ]; then
-    exec bash "${SCRIPT_DIR}/install-macos.sh" "$@"
-  else
-    exec bash -c "$(curl -fsSL https://raw.githubusercontent.com/borisgk/sratim/main/scripts/install-macos.sh)"
-  fi
+  log_info "Detected macOS. Sratim is distributed and managed via Homebrew on macOS:"
+  echo ""
+  echo "  brew install borisgk/sratim/sratim"
+  echo "  brew services start sratim"
+  echo ""
+  exit 0
 fi
 
 # 1. OS & Architecture Check

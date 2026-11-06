@@ -25,15 +25,37 @@ pub fn main() !void {
     const io = t.io();
 
     var config_path: [:0]const u8 = "config.json";
+    var data_dir: [:0]const u8 = "";
+    var is_dev_mode = false;
 
     if (std.Io.Dir.cwd().access(io, "config.json", .{})) |_| {
         std.debug.print("Found local config.json, running in development mode.\n", .{});
         app_dir = std.Io.Dir.cwd();
+        is_dev_mode = true;
     } else |_| {
-        std.debug.print("Local config.json not found, falling back to system paths.\n", .{});
-        config_path = "/etc/sratim/config.json";
-        app_dir = std.Io.Dir.openDirAbsolute(io, "/var/lib/sratim", .{}) catch |err| {
-            std.debug.print("Failed to open production data directory /var/lib/sratim: {}\n", .{err});
+        // Hierarchical path resolution:
+        // 1. macOS Homebrew (Apple Silicon: /opt/homebrew)
+        // 2. macOS Homebrew (Intel: /usr/local)
+        // 3. Linux / system fallback (/etc/sratim and /var/lib/sratim)
+        if (std.Io.Dir.cwd().access(io, "/opt/homebrew/etc/sratim/config.json", .{})) |_| {
+            config_path = "/opt/homebrew/etc/sratim/config.json";
+            data_dir = "/opt/homebrew/var/lib/sratim";
+        } else |_| if (std.Io.Dir.cwd().access(io, "/usr/local/etc/sratim/config.json", .{})) |_| {
+            config_path = "/usr/local/etc/sratim/config.json";
+            data_dir = "/usr/local/var/lib/sratim";
+        } else |_| {
+            config_path = "/etc/sratim/config.json";
+            data_dir = "/var/lib/sratim";
+        }
+
+        std.debug.print("Using config from: {s}\n", .{config_path});
+        std.debug.print("Using data directory: {s}\n", .{data_dir});
+
+        // Ensure data directory exists before opening
+        std.Io.Dir.cwd().createDirPath(io, data_dir) catch {};
+
+        app_dir = std.Io.Dir.openDirAbsolute(io, data_dir, .{}) catch |err| {
+            std.debug.print("Failed to open production data directory {s}: {}\n", .{ data_dir, err });
             return err;
         };
     }
@@ -42,21 +64,29 @@ pub fn main() !void {
     defer config.deinit(gpa);
 
     // Pure-Zig Storage paths
-    const sratim_json_path = if (std.mem.eql(u8, config_path, "config.json")) "sratim.json" else "/var/lib/sratim/sratim.json";
-    const sratim_wal_path = if (std.mem.eql(u8, config_path, "config.json")) "sratim.wal" else "/var/lib/sratim/sratim.wal";
-    const persons_dir = if (std.mem.eql(u8, config_path, "config.json")) ".sratim/persons" else "/var/lib/sratim/persons";
+    const sratim_json_path = if (is_dev_mode) "sratim.json" else try std.fs.path.join(gpa, &.{ data_dir, "sratim.json" });
+    const sratim_wal_path = if (is_dev_mode) "sratim.wal" else try std.fs.path.join(gpa, &.{ data_dir, "sratim.wal" });
+    const persons_dir = if (is_dev_mode) ".sratim/persons" else try std.fs.path.join(gpa, &.{ data_dir, "persons" });
     std.Io.Dir.cwd().createDirPath(io, persons_dir) catch |err| {
         std.debug.print("Failed to ensure persons directory {s}: {}\n", .{ persons_dir, err });
     };
     std.debug.print("Person details directory: {s}\n", .{persons_dir});
-    const logs_json_path = if (std.mem.eql(u8, config_path, "config.json")) "logs.json" else "/var/lib/sratim/logs.json";
-    const logs_wal_path = if (std.mem.eql(u8, config_path, "config.json")) "logs.wal" else "/var/lib/sratim/logs.wal";
+    const logs_json_path = if (is_dev_mode) "logs.json" else try std.fs.path.join(gpa, &.{ data_dir, "logs.json" });
+    const logs_wal_path = if (is_dev_mode) "logs.wal" else try std.fs.path.join(gpa, &.{ data_dir, "logs.wal" });
 
     var sratim_storage = db_mod.engine.SratimStorage.init(gpa, io, sratim_json_path, sratim_wal_path, persons_dir);
     defer sratim_storage.deinit();
 
     var logs_storage = db_mod.logs_engine.LogsStorage.init(gpa, io, logs_json_path, logs_wal_path);
     defer logs_storage.deinit();
+
+    defer if (!is_dev_mode) {
+        gpa.free(sratim_json_path);
+        gpa.free(sratim_wal_path);
+        gpa.free(persons_dir);
+        gpa.free(logs_json_path);
+        gpa.free(logs_wal_path);
+    };
 
     // Load snapshots from disk (JSON snapshot + replay WAL if exists)
     if (sratim_storage.load()) |loaded| {

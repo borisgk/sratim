@@ -56,29 +56,25 @@ curl -fsSL https://raw.githubusercontent.com/borisgk/sratim/main/scripts/install
 
 ---
 
-### macOS (Apple Silicon ARM64 LaunchDaemon)
+### macOS (Apple Silicon ARM64 Homebrew)
 
-Automatically install Sratim on Apple Silicon macOS as an auto-starting background system daemon using Apple's native service supervisor (`launchd`):
+Install and manage Sratim as a native background service using Homebrew:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/borisgk/sratim/main/scripts/install-macos.sh | sudo bash
+# Install Sratim via Homebrew Tap
+brew install borisgk/sratim/sratim
+
+# Start and enable the background service
+brew services start sratim
 ```
 
-**What the macOS installer does:**
-1. Downloads the latest `sratim-macos-aarch64` binary to `/usr/local/bin/sratim`.
-2. Generates a default configuration file at `/etc/sratim/config.json`.
-3. Prepares the persistent data directory at `/var/lib/sratim/`.
-4. Installs and registers the `com.rus9n.sratim` LaunchDaemon in `/Library/LaunchDaemons/`.
-5. Starts the daemon under the invoking user account so media libraries across `/Users/...` folders and external drives are accessible without macOS permission blocks.
-
-#### Managing the macOS Daemon:
-- **Check Status**: `sudo launchctl print system/com.rus9n.sratim`
-- **Restart Daemon**: `sudo launchctl kickstart -k system/com.rus9n.sratim`
-- **Stop Daemon**: `sudo launchctl bootout system/com.rus9n.sratim`
-- **Start Daemon**: `sudo launchctl bootstrap system /Library/LaunchDaemons/com.rus9n.sratim.plist`
-- **View Live Logs**: `tail -f /var/log/sratim.log /var/log/sratim.err.log`
-
-*(Manual standalone execution without a daemon is also supported: `curl -L -o sratim https://github.com/borisgk/sratim/releases/latest/download/sratim-macos-aarch64 && chmod +x sratim && ./sratim`)*
+#### Managing the Sratim Service:
+- **Check Status / Info**: `brew services info sratim`
+- **Restart Service**: `brew services restart sratim`
+- **Stop Service**: `brew services stop sratim`
+- **View Live Logs**: `tail -f $(brew --prefix)/var/log/sratim.log`
+- **Upgrade**: `brew upgrade sratim` (automatically upgrades binary and restarts the service)
+- **Uninstall**: `brew services stop sratim && brew uninstall sratim`
 
 ---
 

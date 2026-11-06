@@ -58,7 +58,7 @@ flowchart TD
 
 ### `src/main.zig`
 - Application entry point.
-- Parses command-line flags and environment.
+- Resolves configuration and data directories hierarchically: local `./config.json` (dev mode), macOS Homebrew paths (`/opt/homebrew/etc/sratim`, `/opt/homebrew/var/lib/sratim` or `/usr/local/etc/...`), or Linux system paths (`/etc/sratim`, `/var/lib/sratim`).
 - Initializes configuration ([`src/config.zig`](file:///Users/borisk/Programming/Zig/sratim/src/config.zig)), storage engine ([`src/storage/engine.zig`](file:///Users/borisk/Programming/Zig/sratim/src/storage/engine.zig)), and logs engine ([`src/storage/logs_engine.zig`](file:///Users/borisk/Programming/Zig/sratim/src/storage/logs_engine.zig)).
 - Starts the HTTP server loop and coordinates graceful shutdown.
 
