@@ -1,5 +1,7 @@
 const std = @import("std");
 const db_mod = @import("../../../db/db.zig");
+const session_mod = @import("../../../db/session.zig");
+const logging_mod = @import("../../../db/logging.zig");
 const common = @import("../player/common.zig");
 const streamer = @import("../../../media/streamer.zig");
 const config_mod = @import("../../../config.zig");
@@ -277,6 +279,133 @@ pub fn handleGetShow(
     try json.appendSlice(allocator, "]}}");
 
     try request.respond(json.items, .{
+        .status = .ok,
+        .extra_headers = &.{
+            .{ .name = "content-type", .value = "application/json" },
+        },
+    });
+}
+
+pub fn handleGetRecentlyWatched(
+    request: *std.http.Server.Request,
+    allocator: std.mem.Allocator,
+    database: *db_mod.Database,
+    session_info: session_mod.SessionInfo,
+) !void {
+    if (request.head.method != .GET) {
+        try request.respond("{\"success\":false,\"error\":\"Method not allowed\"}", .{ .status = .method_not_allowed });
+        return;
+    }
+
+    const limit = utils.parseQueryInt(usize, request.head.target, "limit") orelse 20;
+
+    const cat = database.catalog orelse {
+        try request.respond("{\"success\":false,\"error\":\"Catalog not configured\"}", .{ .status = .internal_server_error });
+        return;
+    };
+
+    const recent_items = logging_mod.getRecentlyWatched(database, allocator, session_info.username, limit) catch |err| {
+        std.debug.print("Failed to get recently watched: {any}\n", .{err});
+        try request.respond("{\"success\":false,\"error\":\"Failed to query recently watched\"}", .{ .status = .internal_server_error });
+        return;
+    };
+    defer allocator.free(recent_items);
+
+    var json_buf = std.ArrayList(u8).empty;
+    defer json_buf.deinit(allocator);
+
+    try json_buf.appendSlice(allocator, "{\"success\":true,\"items\":[");
+
+    var first = true;
+    for (recent_items) |item| {
+        if (item.media_type == .movie) {
+            const mov_opt = cat.getMovieById(allocator, item.item_id) catch null;
+            if (mov_opt) |mov| {
+                defer {
+                    var mut = mov;
+                    mut.deinit(allocator);
+                }
+                if (mov.is_present) {
+                    if (!first) try json_buf.append(allocator, ',');
+                    first = false;
+
+                    const title = mov.title orelse mov.clean_name;
+                    const poster = mov.poster_path orelse "";
+                    const backdrop = mov.backdrop_path orelse "";
+                    const progress_pct: f64 = if (item.duration > 0.0)
+                        std.math.clamp((item.position / item.duration) * 100.0, 0.0, 100.0)
+                    else
+                        0.0;
+
+                    const escaped_title = try utils.escapeJsonAlloc(allocator, title);
+                    defer allocator.free(escaped_title);
+                    const escaped_poster = try utils.escapeJsonAlloc(allocator, poster);
+                    defer allocator.free(escaped_poster);
+                    const escaped_backdrop = try utils.escapeJsonAlloc(allocator, backdrop);
+                    defer allocator.free(escaped_backdrop);
+
+                    const entry = try std.fmt.allocPrint(
+                        allocator,
+                        "{{\"id\":{d},\"type\":\"movie\",\"title\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"position\":{d:.1},\"duration\":{d:.1},\"progress_percent\":{d:.1},\"updated_at\":{d}}}",
+                        .{ item.item_id, escaped_title, escaped_poster, escaped_backdrop, item.position, item.duration, progress_pct, item.updated_at },
+                    );
+                    defer allocator.free(entry);
+                    try json_buf.appendSlice(allocator, entry);
+                }
+            }
+        } else if (item.media_type == .episode) {
+            const ep_opt = cat.getEpisodeById(allocator, item.item_id) catch null;
+            if (ep_opt) |ep| {
+                defer {
+                    var mut = ep;
+                    mut.deinit(allocator);
+                }
+                if (ep.is_present) {
+                    const sh_opt = cat.getShowById(allocator, ep.show_id) catch null;
+                    if (sh_opt) |sh| {
+                        defer {
+                            var mut_sh = sh;
+                            mut_sh.deinit(allocator);
+                        }
+                        if (sh.is_present) {
+                            if (!first) try json_buf.append(allocator, ',');
+                            first = false;
+
+                            const show_title = sh.title;
+                            const ep_title = ep.title orelse "";
+                            const poster = ep.still_path orelse sh.poster_path orelse "";
+                            const backdrop = sh.backdrop_path orelse "";
+                            const progress_pct: f64 = if (item.duration > 0.0)
+                                std.math.clamp((item.position / item.duration) * 100.0, 0.0, 100.0)
+                            else
+                                0.0;
+
+                            const escaped_show = try utils.escapeJsonAlloc(allocator, show_title);
+                            defer allocator.free(escaped_show);
+                            const escaped_ep = try utils.escapeJsonAlloc(allocator, ep_title);
+                            defer allocator.free(escaped_ep);
+                            const escaped_poster = try utils.escapeJsonAlloc(allocator, poster);
+                            defer allocator.free(escaped_poster);
+                            const escaped_backdrop = try utils.escapeJsonAlloc(allocator, backdrop);
+                            defer allocator.free(escaped_backdrop);
+
+                            const entry = try std.fmt.allocPrint(
+                                allocator,
+                                "{{\"id\":{d},\"type\":\"episode\",\"show_id\":{d},\"show_title\":\"{s}\",\"title\":\"{s}\",\"season\":{d},\"episode\":{d},\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"position\":{d:.1},\"duration\":{d:.1},\"progress_percent\":{d:.1},\"updated_at\":{d}}}",
+                                .{ item.item_id, ep.show_id, escaped_show, escaped_ep, ep.season, ep.episode, escaped_poster, escaped_backdrop, item.position, item.duration, progress_pct, item.updated_at },
+                            );
+                            defer allocator.free(entry);
+                            try json_buf.appendSlice(allocator, entry);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    try json_buf.appendSlice(allocator, "]}");
+
+    try request.respond(json_buf.items, .{
         .status = .ok,
         .extra_headers = &.{
             .{ .name = "content-type", .value = "application/json" },

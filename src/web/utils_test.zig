@@ -188,4 +188,52 @@ test "parseQueryString with fragment" {
     try testing.expectEqualStrings("2", res2.?);
 }
 
+test "recently-watched limit query param and progress percent" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    const limit1 = utils.parseQueryInt(usize, "/api/v1/recently-watched?limit=15", "limit") orelse 20;
+    try testing.expectEqual(@as(usize, 15), limit1);
+
+    const limit2 = utils.parseQueryInt(usize, "/api/v1/recently-watched", "limit") orelse 20;
+    try testing.expectEqual(@as(usize, 20), limit2);
+
+    const limit3 = utils.parseQueryInt(usize, "/api/v1/recently-watched?other=1", "limit") orelse 20;
+    try testing.expectEqual(@as(usize, 20), limit3);
+
+    // Test progress calculation and clamping
+    const calcProgress = struct {
+        fn run(pos: f64, dur: f64) f64 {
+            if (dur > 0.0) {
+                return std.math.clamp((pos / dur) * 100.0, 0.0, 100.0);
+            }
+            return 0.0;
+        }
+    }.run;
+
+    try testing.expectApproxEqAbs(@as(f64, 38.5), calcProgress(3420.5, 8880.0), 0.1);
+    try testing.expectApproxEqAbs(@as(f64, 62.08), calcProgress(745.0, 1200.0), 0.1);
+    try testing.expectEqual(@as(f64, 0.0), calcProgress(10.0, 0.0));
+    try testing.expectEqual(@as(f64, 100.0), calcProgress(500.0, 100.0));
+    try testing.expectEqual(@as(f64, 0.0), calcProgress(-5.0, 100.0));
+
+    // Test JSON serialization of a movie item
+    const escaped_title = try utils.escapeJsonAlloc(alloc, "Test \"Movie\"");
+    defer alloc.free(escaped_title);
+
+    const movie_json = try std.fmt.allocPrint(
+        alloc,
+        "{{\"id\":{d},\"type\":\"movie\",\"title\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"position\":{d:.1},\"duration\":{d:.1},\"progress_percent\":{d:.1},\"updated_at\":{d}}}",
+        .{ 42, escaped_title, "/p.jpg", "/b.jpg", 100.5, 200.0, 50.25, 1700000000 },
+    );
+    defer alloc.free(movie_json);
+
+    // Verify it parses as valid JSON
+    const parsed = try std.json.parseFromSlice(std.json.Value, alloc, movie_json, .{});
+    defer parsed.deinit();
+    try testing.expect(parsed.value.object.get("id").?.integer == 42);
+    try testing.expectEqualStrings("Test \"Movie\"", parsed.value.object.get("title").?.string);
+    try testing.expectEqualStrings("movie", parsed.value.object.get("type").?.string);
+}
+
 

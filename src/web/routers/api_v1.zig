@@ -15,6 +15,7 @@ pub const handleRenameLibrary = library.handleRenameLibrary;
 pub const handleDeleteLibrary = library.handleDeleteLibrary;
 pub const handleGetMovie = media.handleGetMovie;
 pub const handleGetShow = media.handleGetShow;
+pub const handleGetRecentlyWatched = media.handleGetRecentlyWatched;
 
 /// Central router for /api/v1/* endpoints.
 pub fn route(
@@ -55,6 +56,9 @@ pub fn route(
         return true;
     } else if (std.mem.startsWith(u8, target, "/api/v1/show?")) {
         try media.handleGetShow(request, allocator, database, config, io);
+        return true;
+    } else if (std.mem.eql(u8, target, "/api/v1/recently-watched") or std.mem.startsWith(u8, target, "/api/v1/recently-watched?")) {
+        try media.handleGetRecentlyWatched(request, allocator, database, session_info);
         return true;
     }
 

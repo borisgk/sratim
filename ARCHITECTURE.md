@@ -110,7 +110,7 @@ The `src/db/` module exposes ergonomic, thread-safe functions that abstract `Sra
 - **[`src/web/server.zig`](file:///Users/borisk/Programming/Zig/sratim/src/web/server.zig)**: Main connection listener routing HTTP requests.
 - **Routers (`src/web/routers/`)**:
   - `api.zig`: Web UI API routes (`/api/library/rescan`, `/api/library/rename`, `/api/library/delete`, `/api/watch/event`, `/api/browse`, `/api/v1/admin/analytics`).
-  - `api_v1.zig`: External REST API endpoints (`/api/v1/libraries`, `/api/v1/movie`, `/api/v1/show`, etc.).
+  - `api_v1.zig`: External REST API endpoints (`/api/v1/libraries`, `/api/v1/movie`, `/api/v1/show`, `/api/v1/recently-watched`, etc.).
   - `admin.zig`: Admin panel routes (`/admin`, `/admin/users/toggle_admin`, etc.).
   - `auth.zig`: Web session login and logout.
   - `browse.zig`: Media catalog browsing and video player HTML rendering.
