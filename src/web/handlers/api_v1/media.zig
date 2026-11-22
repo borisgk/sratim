@@ -13,6 +13,7 @@ pub fn handleGetMovie(
     database: *db_mod.Database,
     config: *const config_mod.Config,
     io: std.Io,
+    session_info: session_mod.SessionInfo,
 ) !void {
     if (request.head.method != .GET) {
         try request.respond("{\"success\":false,\"error\":\"Method not allowed\"}", .{ .status = .method_not_allowed });
@@ -78,6 +79,7 @@ pub fn handleGetMovie(
     }
 
     const display_title = if (title_opt) |t| t else clean_name;
+    const resume_pos = logging_mod.getPlaybackProgress(database, session_info.username, movie_id) catch 0.0;
 
     var escaped_title = std.ArrayList(u8).empty;
     defer escaped_title.deinit(allocator);
@@ -105,7 +107,7 @@ pub fn handleGetMovie(
         }
     }
 
-    const json = try std.fmt.allocPrint(allocator, "{{\"success\":true,\"movie\":{{\"id\":{d},\"library_id\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"release_date\":\"{s}\",\"tmdb_id\":\"{s}\",\"file_size\":{d},\"file_path\":\"{s}\",\"runtime\":{d}}}}}", .{ id, library_id, escaped_title.items, escaped_overview.items, poster_path, backdrop_path, release_date, tmdb_id, file_size, file_path, runtime });
+    const json = try std.fmt.allocPrint(allocator, "{{\"success\":true,\"movie\":{{\"id\":{d},\"library_id\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"release_date\":\"{s}\",\"tmdb_id\":\"{s}\",\"file_size\":{d},\"file_path\":\"{s}\",\"runtime\":{d},\"resume_position\":{d:.1}}}}}", .{ id, library_id, escaped_title.items, escaped_overview.items, poster_path, backdrop_path, release_date, tmdb_id, file_size, file_path, runtime, resume_pos });
     defer allocator.free(json);
 
     try request.respond(json, .{
@@ -122,6 +124,7 @@ pub fn handleGetShow(
     database: *db_mod.Database,
     config: *const config_mod.Config,
     io: std.Io,
+    session_info: session_mod.SessionInfo,
 ) !void {
     if (request.head.method != .GET) {
         try request.respond("{\"success\":false,\"error\":\"Method not allowed\"}", .{ .status = .method_not_allowed });
@@ -271,7 +274,9 @@ pub fn handleGetShow(
             }
         }
 
-        const ep_json = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"season\":{d},\"episode\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"still_path\":\"{s}\",\"file_size\":{d},\"runtime\":{d}}}", .{ ep_id, season, episode, esc_ep_title.items, esc_ep_overview.items, still_path, ep_file_size, ep_runtime });
+        const ep_resume_pos = logging_mod.getEpisodePlaybackProgress(database, session_info.username, ep_id) catch 0.0;
+
+        const ep_json = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"season\":{d},\"episode\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"still_path\":\"{s}\",\"file_size\":{d},\"runtime\":{d},\"resume_position\":{d:.1}}}", .{ ep_id, season, episode, esc_ep_title.items, esc_ep_overview.items, still_path, ep_file_size, ep_runtime, ep_resume_pos });
         defer allocator.free(ep_json);
         try json.appendSlice(allocator, ep_json);
     }

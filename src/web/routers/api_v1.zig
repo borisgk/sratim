@@ -52,10 +52,10 @@ pub fn route(
         try library.handleGetLibraryItems(request, allocator, database);
         return true;
     } else if (std.mem.startsWith(u8, target, "/api/v1/movie?")) {
-        try media.handleGetMovie(request, allocator, database, config, io);
+        try media.handleGetMovie(request, allocator, database, config, io, session_info);
         return true;
     } else if (std.mem.startsWith(u8, target, "/api/v1/show?")) {
-        try media.handleGetShow(request, allocator, database, config, io);
+        try media.handleGetShow(request, allocator, database, config, io, session_info);
         return true;
     } else if (std.mem.eql(u8, target, "/api/v1/recently-watched") or std.mem.startsWith(u8, target, "/api/v1/recently-watched?")) {
         try media.handleGetRecentlyWatched(request, allocator, database, session_info);

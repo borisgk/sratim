@@ -261,6 +261,30 @@ test "recently-watched limit query param and progress percent" {
     try testing.expectEqualStrings("Test Show", parsed_ep.value.object.get("show_title").?.string);
     try testing.expectEqualStrings("/show_poster.jpg", parsed_ep.value.object.get("show_poster_path").?.string);
     try testing.expectEqualStrings("/show_poster.jpg", parsed_ep.value.object.get("poster_path").?.string);
+
+    // Test movie and episode detail JSON payloads containing resume_position
+    const movie_detail_json = try std.fmt.allocPrint(
+        alloc,
+        "{{\"success\":true,\"movie\":{{\"id\":{d},\"library_id\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"release_date\":\"{s}\",\"tmdb_id\":\"{s}\",\"file_size\":{d},\"file_path\":\"{s}\",\"runtime\":{d},\"resume_position\":{d:.1}}}}}",
+        .{ 42, 1, "Movie Title", "Overview", "/p.jpg", "/b.jpg", "2024-01-01", "123", 1000, "/file.mkv", 120, 3420.5 },
+    );
+    defer alloc.free(movie_detail_json);
+
+    const parsed_movie_detail = try std.json.parseFromSlice(std.json.Value, alloc, movie_detail_json, .{});
+    defer parsed_movie_detail.deinit();
+    const movie_obj = parsed_movie_detail.value.object.get("movie").?.object;
+    try testing.expectApproxEqAbs(@as(f64, 3420.5), movie_obj.get("resume_position").?.float, 0.1);
+
+    const ep_detail_json = try std.fmt.allocPrint(
+        alloc,
+        "{{\"id\":{d},\"season\":{d},\"episode\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"still_path\":\"{s}\",\"file_size\":{d},\"runtime\":{d},\"resume_position\":{d:.1}}}",
+        .{ 233827, 1, 1, "Pilot", "Overview", "/s.jpg", 1000, 45, 745.0 },
+    );
+    defer alloc.free(ep_detail_json);
+
+    const parsed_ep_detail = try std.json.parseFromSlice(std.json.Value, alloc, ep_detail_json, .{});
+    defer parsed_ep_detail.deinit();
+    try testing.expectApproxEqAbs(@as(f64, 745.0), parsed_ep_detail.value.object.get("resume_position").?.float, 0.1);
 }
 
 
