@@ -373,7 +373,9 @@ pub fn handleGetRecentlyWatched(
 
                             const show_title = sh.title;
                             const ep_title = ep.title orelse "";
-                            const poster = ep.still_path orelse sh.poster_path orelse "";
+                            // Prefer the high-quality vertical series poster (sh.poster_path) over the episode still
+                            const poster = sh.poster_path orelse ep.still_path orelse "";
+                            const show_poster = sh.poster_path orelse "";
                             const backdrop = sh.backdrop_path orelse "";
                             const progress_pct: f64 = if (item.duration > 0.0)
                                 std.math.clamp((item.position / item.duration) * 100.0, 0.0, 100.0)
@@ -386,13 +388,15 @@ pub fn handleGetRecentlyWatched(
                             defer allocator.free(escaped_ep);
                             const escaped_poster = try utils.escapeJsonAlloc(allocator, poster);
                             defer allocator.free(escaped_poster);
+                            const escaped_show_poster = try utils.escapeJsonAlloc(allocator, show_poster);
+                            defer allocator.free(escaped_show_poster);
                             const escaped_backdrop = try utils.escapeJsonAlloc(allocator, backdrop);
                             defer allocator.free(escaped_backdrop);
 
                             const entry = try std.fmt.allocPrint(
                                 allocator,
-                                "{{\"id\":{d},\"type\":\"episode\",\"show_id\":{d},\"show_title\":\"{s}\",\"title\":\"{s}\",\"season\":{d},\"episode\":{d},\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"position\":{d:.1},\"duration\":{d:.1},\"progress_percent\":{d:.1},\"updated_at\":{d}}}",
-                                .{ item.item_id, ep.show_id, escaped_show, escaped_ep, ep.season, ep.episode, escaped_poster, escaped_backdrop, item.position, item.duration, progress_pct, item.updated_at },
+                                "{{\"id\":{d},\"type\":\"episode\",\"show_id\":{d},\"show_title\":\"{s}\",\"title\":\"{s}\",\"season\":{d},\"episode\":{d},\"poster_path\":\"{s}\",\"show_poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"position\":{d:.1},\"duration\":{d:.1},\"progress_percent\":{d:.1},\"updated_at\":{d}}}",
+                                .{ item.item_id, ep.show_id, escaped_show, escaped_ep, ep.season, ep.episode, escaped_poster, escaped_show_poster, escaped_backdrop, item.position, item.duration, progress_pct, item.updated_at },
                             );
                             defer allocator.free(entry);
                             try json_buf.appendSlice(allocator, entry);

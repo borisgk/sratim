@@ -234,6 +234,33 @@ test "recently-watched limit query param and progress percent" {
     try testing.expect(parsed.value.object.get("id").?.integer == 42);
     try testing.expectEqualStrings("Test \"Movie\"", parsed.value.object.get("title").?.string);
     try testing.expectEqualStrings("movie", parsed.value.object.get("type").?.string);
+
+    // Test JSON serialization of an episode item with show_poster_path
+    const escaped_show = try utils.escapeJsonAlloc(alloc, "Test Show");
+    defer alloc.free(escaped_show);
+    const escaped_ep = try utils.escapeJsonAlloc(alloc, "Pilot");
+    defer alloc.free(escaped_ep);
+    const escaped_poster = try utils.escapeJsonAlloc(alloc, "/show_poster.jpg");
+    defer alloc.free(escaped_poster);
+    const escaped_show_poster = try utils.escapeJsonAlloc(alloc, "/show_poster.jpg");
+    defer alloc.free(escaped_show_poster);
+    const escaped_backdrop = try utils.escapeJsonAlloc(alloc, "/show_backdrop.jpg");
+    defer alloc.free(escaped_backdrop);
+
+    const episode_json = try std.fmt.allocPrint(
+        alloc,
+        "{{\"id\":{d},\"type\":\"episode\",\"show_id\":{d},\"show_title\":\"{s}\",\"title\":\"{s}\",\"season\":{d},\"episode\":{d},\"poster_path\":\"{s}\",\"show_poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"position\":{d:.1},\"duration\":{d:.1},\"progress_percent\":{d:.1},\"updated_at\":{d}}}",
+        .{ 233827, 10, escaped_show, escaped_ep, 1, 1, escaped_poster, escaped_show_poster, escaped_backdrop, 745.0, 1200.0, 62.0, 1700651200 },
+    );
+    defer alloc.free(episode_json);
+
+    const parsed_ep = try std.json.parseFromSlice(std.json.Value, alloc, episode_json, .{});
+    defer parsed_ep.deinit();
+    try testing.expect(parsed_ep.value.object.get("id").?.integer == 233827);
+    try testing.expect(parsed_ep.value.object.get("show_id").?.integer == 10);
+    try testing.expectEqualStrings("Test Show", parsed_ep.value.object.get("show_title").?.string);
+    try testing.expectEqualStrings("/show_poster.jpg", parsed_ep.value.object.get("show_poster_path").?.string);
+    try testing.expectEqualStrings("/show_poster.jpg", parsed_ep.value.object.get("poster_path").?.string);
 }
 
 
