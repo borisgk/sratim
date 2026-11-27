@@ -116,6 +116,7 @@ The `src/db/` module exposes ergonomic, thread-safe functions that abstract `Sra
   - `browse.zig`: Media catalog browsing and video player HTML rendering.
   - `static.zig`: Serves CSS, favicon, and cached TMDb images.
 - **Handlers (`src/web/handlers/`)**:
+  - `api_v1/`: External v1 JSON handlers (`auth.zig`, `library.zig`, `media.zig`) serving authentication, library items, movie/show metadata (including `runtime`, `resume_position`, and `audio_tracks`), and the recently-watched shelf.
   - `library.zig`: Request parsing, JSON serialization, and response writing for library actions.
   - `watch.zig`: Playback event recording.
   - `admin.zig`: Admin dashboard rendering.

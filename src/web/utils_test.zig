@@ -262,11 +262,25 @@ test "recently-watched limit query param and progress percent" {
     try testing.expectEqualStrings("/show_poster.jpg", parsed_ep.value.object.get("show_poster_path").?.string);
     try testing.expectEqualStrings("/show_poster.jpg", parsed_ep.value.object.get("poster_path").?.string);
 
-    // Test movie and episode detail JSON payloads containing resume_position
+    // Test movie and episode detail JSON payloads containing resume_position and audio_tracks
+    var audio_json_buf = std.ArrayList(u8).empty;
+    defer audio_json_buf.deinit(alloc);
+    const escaped_label1 = try utils.escapeJsonAlloc(alloc, "Russian (\"Dubbed\")");
+    defer alloc.free(escaped_label1);
+    const escaped_codec1 = try utils.escapeJsonAlloc(alloc, "AC-3");
+    defer alloc.free(escaped_codec1);
+    const tracks_str = try std.fmt.allocPrint(
+        alloc,
+        "[{{\"id\":{d},\"label\":\"{s}\",\"codec\":\"{s}\"}},{{\"id\":{d},\"label\":\"{s}\",\"codec\":\"{s}\"}}]",
+        .{ 1, escaped_label1, escaped_codec1, 2, "English", "DTS" },
+    );
+    defer alloc.free(tracks_str);
+    try audio_json_buf.appendSlice(alloc, tracks_str);
+
     const movie_detail_json = try std.fmt.allocPrint(
         alloc,
-        "{{\"success\":true,\"movie\":{{\"id\":{d},\"library_id\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"release_date\":\"{s}\",\"tmdb_id\":\"{s}\",\"file_size\":{d},\"file_path\":\"{s}\",\"runtime\":{d},\"resume_position\":{d:.1}}}}}",
-        .{ 42, 1, "Movie Title", "Overview", "/p.jpg", "/b.jpg", "2024-01-01", "123", 1000, "/file.mkv", 120, 3420.5 },
+        "{{\"success\":true,\"movie\":{{\"id\":{d},\"library_id\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"release_date\":\"{s}\",\"tmdb_id\":\"{s}\",\"file_size\":{d},\"file_path\":\"{s}\",\"runtime\":{d},\"resume_position\":{d:.1},\"audio_tracks\":{s}}}}}",
+        .{ 42, 1, "Movie Title", "Overview", "/p.jpg", "/b.jpg", "2024-01-01", "123", 1000, "/file.mkv", 120, 3420.5, audio_json_buf.items },
     );
     defer alloc.free(movie_detail_json);
 
@@ -274,17 +288,23 @@ test "recently-watched limit query param and progress percent" {
     defer parsed_movie_detail.deinit();
     const movie_obj = parsed_movie_detail.value.object.get("movie").?.object;
     try testing.expectApproxEqAbs(@as(f64, 3420.5), movie_obj.get("resume_position").?.float, 0.1);
+    const movie_tracks = movie_obj.get("audio_tracks").?.array.items;
+    try testing.expectEqual(@as(usize, 2), movie_tracks.len);
+    try testing.expectEqual(@as(i64, 1), movie_tracks[0].object.get("id").?.integer);
+    try testing.expectEqualStrings("Russian (\"Dubbed\")", movie_tracks[0].object.get("label").?.string);
+    try testing.expectEqualStrings("AC-3", movie_tracks[0].object.get("codec").?.string);
 
     const ep_detail_json = try std.fmt.allocPrint(
         alloc,
-        "{{\"id\":{d},\"season\":{d},\"episode\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"still_path\":\"{s}\",\"file_size\":{d},\"runtime\":{d},\"resume_position\":{d:.1}}}",
-        .{ 233827, 1, 1, "Pilot", "Overview", "/s.jpg", 1000, 45, 745.0 },
+        "{{\"id\":{d},\"season\":{d},\"episode\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"still_path\":\"{s}\",\"file_size\":{d},\"runtime\":{d},\"resume_position\":{d:.1},\"audio_tracks\":{s}}}",
+        .{ 233827, 1, 1, "Pilot", "Overview", "/s.jpg", 1000, 45, 745.0, "[]" },
     );
     defer alloc.free(ep_detail_json);
 
     const parsed_ep_detail = try std.json.parseFromSlice(std.json.Value, alloc, ep_detail_json, .{});
     defer parsed_ep_detail.deinit();
     try testing.expectApproxEqAbs(@as(f64, 745.0), parsed_ep_detail.value.object.get("resume_position").?.float, 0.1);
+    try testing.expectEqual(@as(usize, 0), parsed_ep_detail.value.object.get("audio_tracks").?.array.items.len);
 }
 
 
