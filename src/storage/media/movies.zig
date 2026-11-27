@@ -25,6 +25,13 @@ pub fn addOrUpdateMovie(self: *SratimStorage, movie: schema.Movie) !i64 {
     }
 
     if (self.movies.getPtr(final_id)) |existing| {
+        if (existing.file_size != movie.file_size) {
+            existing.duration_sec = 0.0;
+            if (existing.audio_tracks_json) |old_atj| {
+                self.allocator.free(old_atj);
+                existing.audio_tracks_json = null;
+            }
+        }
         existing.is_present = movie.is_present;
         existing.file_size = movie.file_size;
         if (!std.mem.eql(u8, existing.clean_name, movie.clean_name)) {
@@ -308,4 +315,26 @@ pub fn totalMovieStorage(self: *SratimStorage) i64 {
         if (e.value_ptr.is_present) total += e.value_ptr.file_size;
     }
     return total;
+}
+
+pub fn cacheMovieMediaInfo(
+    self: *SratimStorage,
+    id: i64,
+    file_size: ?i64,
+    duration_sec: f64,
+    audio_tracks_json: []const u8,
+) !void {
+    self.writeLock();
+    defer self.writeUnlock();
+
+    if (self.movies.getPtr(id)) |ptr| {
+        if (file_size) |fsz| {
+            if (fsz > 0 and ptr.file_size == 0) {
+                ptr.file_size = fsz;
+            }
+        }
+        ptr.duration_sec = duration_sec;
+        if (ptr.audio_tracks_json) |old| self.allocator.free(old);
+        ptr.audio_tracks_json = try self.allocator.dupe(u8, audio_tracks_json);
+    }
 }

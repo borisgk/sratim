@@ -282,6 +282,27 @@ pub fn parseGenericTrackBox(
     trak_box: BoxHeader,
     stream_idx: usize,
 ) !?Mp4MediaTrack {
+    return parseGenericTrackBoxImpl(allocator, r, trak_box, stream_idx, true);
+}
+
+/// Parses a media track's headers and codec descriptor (`tkhd`, `mdhd`, `hdlr`, `stsd`)
+/// while skipping sample tables (`stts`, `ctts`, `stss`, `stsc`, `stsz`, `stco`, `co64`).
+pub fn parseTrackMetadataOnly(
+    allocator: std.mem.Allocator,
+    r: *std.Io.Reader,
+    trak_box: BoxHeader,
+    stream_idx: usize,
+) !?Mp4MediaTrack {
+    return parseGenericTrackBoxImpl(allocator, r, trak_box, stream_idx, false);
+}
+
+fn parseGenericTrackBoxImpl(
+    allocator: std.mem.Allocator,
+    r: *std.Io.Reader,
+    trak_box: BoxHeader,
+    stream_idx: usize,
+    parse_sample_tables: bool,
+) !?Mp4MediaTrack {
     var trak_rem = trak_box.dataSize();
     var track_id: u32 = @intCast(stream_idx + 1);
 
@@ -421,6 +442,8 @@ pub fn parseGenericTrackBox(
                                         try stsd_raw.appendSlice(allocator, copy_buf[0..to_read]);
                                         rem_bytes -= to_read;
                                     }
+                                } else if (!parse_sample_tables) {
+                                    try skipBytes(r, stbl_data_size);
                                 } else if (isFourCC(stbl_child.type, "stts")) {
                                     if (stbl_data_size >= 8) {
                                         var hdr: [8]u8 = undefined;
@@ -588,18 +611,26 @@ pub fn parseGenericTrackBox(
         trak_rem -= child_data_size;
     }
 
-    const samples_res = try buildMediaSampleList(
-        allocator,
-        timescale,
-        stts_list.items,
-        ctts_list.items,
-        stss_list.items,
-        has_stss,
-        stsc_list.items,
-        stsz_uniform,
-        stsz_list.items,
-        stco_list.items,
-    );
+    const samples_res: []types.MediaSample = if (parse_sample_tables)
+        try buildMediaSampleList(
+            allocator,
+            timescale,
+            stts_list.items,
+            ctts_list.items,
+            stss_list.items,
+            has_stss,
+            stsc_list.items,
+            stsz_uniform,
+            stsz_list.items,
+            stco_list.items,
+        )
+    else
+        &.{};
+
+    const sync_indices: []u32 = if (parse_sample_tables)
+        try stss_list.toOwnedSlice(allocator)
+    else
+        &.{};
 
     return Mp4MediaTrack{
         .track_id = track_id,
@@ -613,6 +644,6 @@ pub fn parseGenericTrackBox(
         .language = language,
         .stsd_raw = try stsd_raw.toOwnedSlice(allocator),
         .samples = samples_res,
-        .sync_sample_indices = try stss_list.toOwnedSlice(allocator),
+        .sync_sample_indices = sync_indices,
     };
 }

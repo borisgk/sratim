@@ -39,6 +39,7 @@ pub fn handleGetMovie(
     io: std.Io,
     session_info: session_mod.SessionInfo,
 ) !void {
+    _ = config;
     if (request.head.method != .GET) {
         try request.respond("{\"success\":false,\"error\":\"Method not allowed\"}", .{ .status = .method_not_allowed });
         return;
@@ -77,17 +78,20 @@ pub fn handleGetMovie(
     var tmdb_id_buf: [32]u8 = undefined;
     const tmdb_id = if (mov.tmdb_id) |tid| std.fmt.bufPrint(&tmdb_id_buf, "{d}", .{tid}) catch "" else "";
 
+    var duration_sec: f64 = 0.0;
     var runtime: u32 = 0;
-    var file_size: u64 = 0;
+    var file_size: u64 = @intCast(@max(0, mov.file_size));
     var audio_tracks_json = std.ArrayList(u8).empty;
     defer audio_tracks_json.deinit(allocator);
 
-    if (common.resolveMediaPath(database, allocator, .{ .library_id = library_id, .file_path = file_path }) catch null) |resolved| {
+    if (mov.duration_sec > 0.0 and mov.audio_tracks_json != null) {
+        duration_sec = mov.duration_sec;
+        runtime = @as(u32, @intFromFloat(mov.duration_sec / 60.0));
+        try audio_tracks_json.appendSlice(allocator, mov.audio_tracks_json.?);
+    } else if (common.resolveMediaPath(database, allocator, .{ .library_id = library_id, .file_path = file_path }) catch null) |resolved| {
         defer allocator.free(resolved.resolved_path);
-        const file = std.Io.Dir.cwd().openFile(io, resolved.resolved_path, .{ .mode = .read_only }) catch null;
-        if (file) |f| {
-            defer f.close(io);
-            if (f.stat(io) catch null) |st| {
+        if (file_size == 0) {
+            if (std.Io.Dir.cwd().statFile(io, resolved.resolved_path, .{}) catch null) |st| {
                 file_size = st.size;
             }
         }
@@ -95,12 +99,17 @@ pub fn handleGetMovie(
         const c_path = allocator.dupeSentinel(u8, resolved.resolved_path, 0) catch null;
         if (c_path) |cp| {
             defer allocator.free(cp);
-            if (streamer.getMediaInfo(allocator, io, cp, config.media_engine.metadata) catch null) |media_info| {
+            if (streamer.getMediaInfoFast(allocator, io, cp) catch null) |media_info| {
                 defer media_info.deinit(allocator);
                 if (media_info.duration > 0) {
+                    duration_sec = media_info.duration;
                     runtime = @as(u32, @intFromFloat(media_info.duration / 60.0));
                 }
                 try appendAudioTracksJson(allocator, &audio_tracks_json, media_info.audio_tracks);
+                if (duration_sec > 0.0) {
+                    cat.cacheMovieMediaInfo(id, @intCast(file_size), duration_sec, audio_tracks_json.items) catch {};
+                    cat.snapshot() catch {};
+                }
             }
         }
     }
@@ -111,36 +120,38 @@ pub fn handleGetMovie(
     const display_title = if (title_opt) |t| t else clean_name;
     const resume_pos = logging_mod.getPlaybackProgress(database, session_info.username, movie_id) catch 0.0;
 
-    var escaped_title = std.ArrayList(u8).empty;
-    defer escaped_title.deinit(allocator);
-    for (display_title) |ch| {
-        switch (ch) {
-            '"' => try escaped_title.appendSlice(allocator, "\\\""),
-            '\\' => try escaped_title.appendSlice(allocator, "\\\\"),
-            '\n' => try escaped_title.appendSlice(allocator, "\\n"),
-            '\r' => try escaped_title.appendSlice(allocator, "\\r"),
-            '\t' => try escaped_title.appendSlice(allocator, "\\t"),
-            else => try escaped_title.append(allocator, ch),
-        }
-    }
+    var json = std.ArrayList(u8).empty;
+    defer json.deinit(allocator);
+    try json.ensureTotalCapacity(allocator, 512 + overview.len + audio_tracks_json.items.len);
 
-    var escaped_overview = std.ArrayList(u8).empty;
-    defer escaped_overview.deinit(allocator);
-    for (overview) |ch| {
-        switch (ch) {
-            '"' => try escaped_overview.appendSlice(allocator, "\\\""),
-            '\\' => try escaped_overview.appendSlice(allocator, "\\\\"),
-            '\n' => try escaped_overview.appendSlice(allocator, "\\n"),
-            '\r' => try escaped_overview.appendSlice(allocator, "\\r"),
-            '\t' => try escaped_overview.appendSlice(allocator, "\\t"),
-            else => try escaped_overview.append(allocator, ch),
-        }
-    }
+    var num_buf: [128]u8 = undefined;
+    try json.appendSlice(allocator, try std.fmt.bufPrint(
+        &num_buf,
+        "{{\"success\":true,\"movie\":{{\"id\":{d},\"library_id\":{d},\"title\":\"",
+        .{ id, library_id },
+    ));
+    try utils.escapeJsonString(&json, allocator, display_title);
+    try json.appendSlice(allocator, "\",\"overview\":\"");
+    try utils.escapeJsonString(&json, allocator, overview);
+    try json.appendSlice(allocator, "\",\"poster_path\":\"");
+    try utils.escapeJsonString(&json, allocator, poster_path);
+    try json.appendSlice(allocator, "\",\"backdrop_path\":\"");
+    try utils.escapeJsonString(&json, allocator, backdrop_path);
+    try json.appendSlice(allocator, "\",\"release_date\":\"");
+    try utils.escapeJsonString(&json, allocator, release_date);
+    try json.appendSlice(allocator, "\",\"tmdb_id\":\"");
+    try json.appendSlice(allocator, tmdb_id);
+    try json.appendSlice(allocator, try std.fmt.bufPrint(&num_buf, "\",\"file_size\":{d},\"file_path\":\"", .{file_size}));
+    try utils.escapeJsonString(&json, allocator, file_path);
+    try json.appendSlice(allocator, try std.fmt.bufPrint(
+        &num_buf,
+        "\",\"runtime\":{d},\"duration_sec\":{d:.2},\"resume_position\":{d:.1},\"audio_tracks\":",
+        .{ runtime, duration_sec, resume_pos },
+    ));
+    try json.appendSlice(allocator, audio_tracks_json.items);
+    try json.appendSlice(allocator, "}}");
 
-    const json = try std.fmt.allocPrint(allocator, "{{\"success\":true,\"movie\":{{\"id\":{d},\"library_id\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"release_date\":\"{s}\",\"tmdb_id\":\"{s}\",\"file_size\":{d},\"file_path\":\"{s}\",\"runtime\":{d},\"resume_position\":{d:.1},\"audio_tracks\":{s}}}}}", .{ id, library_id, escaped_title.items, escaped_overview.items, poster_path, backdrop_path, release_date, tmdb_id, file_size, file_path, runtime, resume_pos, audio_tracks_json.items });
-    defer allocator.free(json);
-
-    try request.respond(json, .{
+    try request.respond(json.items, .{
         .status = .ok,
         .extra_headers = &.{
             .{ .name = "content-type", .value = "application/json" },
@@ -182,6 +193,9 @@ pub fn handleGetShow(
         mut.deinit(allocator);
     }
 
+    _ = config;
+    const probe_files = (utils.parseQueryInt(u8, request.head.target, "probe") orelse 0) == 1;
+
     const title = show.title;
     const overview = show.overview orelse "";
     const poster_path = show.poster_path orelse "";
@@ -189,32 +203,6 @@ pub fn handleGetShow(
     const library_id = show.library_id;
     var tmdb_id_buf: [32]u8 = undefined;
     const tmdb_id = if (show.tmdb_id) |tid| std.fmt.bufPrint(&tmdb_id_buf, "{d}", .{tid}) catch "" else "";
-
-    var escaped_title = std.ArrayList(u8).empty;
-    defer escaped_title.deinit(allocator);
-    for (title) |c| {
-        switch (c) {
-            '"' => try escaped_title.appendSlice(allocator, "\\\""),
-            '\\' => try escaped_title.appendSlice(allocator, "\\\\"),
-            '\n' => try escaped_title.appendSlice(allocator, "\\n"),
-            '\r' => try escaped_title.appendSlice(allocator, "\\r"),
-            '\t' => try escaped_title.appendSlice(allocator, "\\t"),
-            else => try escaped_title.append(allocator, c),
-        }
-    }
-
-    var escaped_overview = std.ArrayList(u8).empty;
-    defer escaped_overview.deinit(allocator);
-    for (overview) |c| {
-        switch (c) {
-            '"' => try escaped_overview.appendSlice(allocator, "\\\""),
-            '\\' => try escaped_overview.appendSlice(allocator, "\\\\"),
-            '\n' => try escaped_overview.appendSlice(allocator, "\\n"),
-            '\r' => try escaped_overview.appendSlice(allocator, "\\r"),
-            '\t' => try escaped_overview.appendSlice(allocator, "\\t"),
-            else => try escaped_overview.append(allocator, c),
-        }
-    }
 
     const episodes = try cat.getEpisodesByShow(allocator, show_id);
     defer {
@@ -225,99 +213,234 @@ pub fn handleGetShow(
         allocator.free(episodes);
     }
 
+    // Single read-lock fetch of all episode resume positions for this user
+    var progress_map = std.AutoHashMap(i64, f64).init(allocator);
+    defer progress_map.deinit();
+    if (logging_mod.getEpisodeProgressForUser(database, allocator, session_info.username) catch null) |prog_list| {
+        defer allocator.free(prog_list);
+        try progress_map.ensureTotalCapacity(@intCast(prog_list.len));
+        for (prog_list) |p| {
+            progress_map.putAssumeCapacity(p.episode_id, p.position);
+        }
+    }
+
     var json = std.ArrayList(u8).empty;
     defer json.deinit(allocator);
+    try json.ensureTotalCapacity(allocator, episodes.len * 320 + 512);
 
-    try json.appendSlice(allocator, "{\"success\":true,\"show\":{");
-    const show_header = try std.fmt.allocPrint(allocator, "\"id\":{d},\"library_id\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"tmdb_id\":\"{s}\",\"episodes\":[", .{ show_id, library_id, escaped_title.items, escaped_overview.items, poster_path, backdrop_path, tmdb_id });
-    defer allocator.free(show_header);
-    try json.appendSlice(allocator, show_header);
+    var num_buf: [128]u8 = undefined;
+    try json.appendSlice(allocator, try std.fmt.bufPrint(
+        &num_buf,
+        "{{\"success\":true,\"show\":{{\"id\":{d},\"library_id\":{d},\"title\":\"",
+        .{ show_id, library_id },
+    ));
+    try utils.escapeJsonString(&json, allocator, title);
+    try json.appendSlice(allocator, "\",\"overview\":\"");
+    try utils.escapeJsonString(&json, allocator, overview);
+    try json.appendSlice(allocator, "\",\"poster_path\":\"");
+    try utils.escapeJsonString(&json, allocator, poster_path);
+    try json.appendSlice(allocator, "\",\"backdrop_path\":\"");
+    try utils.escapeJsonString(&json, allocator, backdrop_path);
+    try json.appendSlice(allocator, "\",\"tmdb_id\":\"");
+    try json.appendSlice(allocator, tmdb_id);
+    try json.appendSlice(allocator, "\",\"episodes\":[");
 
+    // Resolve library base path ONCE only if ?probe=1 was explicitly requested
+    var lib_opt = if (probe_files) (cat.getLibraryById(allocator, library_id) catch null) else null;
+    defer if (lib_opt) |*l| l.deinit(allocator);
+
+    var newly_cached = false;
     var first_ep = true;
     for (episodes) |ep| {
         if (!ep.is_present) continue;
-        if (!first_ep) try json.appendSlice(allocator, ",");
+        if (!first_ep) try json.append(allocator, ',');
         first_ep = false;
 
-        const ep_id = ep.id;
-        const file_path = ep.file_path;
-        const season = ep.season;
-        const episode = ep.episode;
-        const ep_title_opt = ep.title;
-        const ep_overview_opt = ep.overview;
-        const ep_still_path_opt = ep.still_path;
-        const ep_db_file_size = ep.file_size;
-
-        var ep_file_size: u64 = @intCast(@max(0, ep_db_file_size));
+        var ep_file_size: u64 = @intCast(@max(0, ep.file_size));
         var ep_runtime: u32 = 0;
-        var ep_audio_tracks_json = std.ArrayList(u8).empty;
-        defer ep_audio_tracks_json.deinit(allocator);
 
-        if (common.resolveMediaPath(database, allocator, .{ .library_id = library_id, .file_path = file_path }) catch null) |resolved| {
-            defer allocator.free(resolved.resolved_path);
+        var probed_tracks_json = std.ArrayList(u8).empty;
+        defer probed_tracks_json.deinit(allocator);
+        var tracks_slice: []const u8 = "null";
 
-            if (std.Io.Dir.cwd().openFile(io, resolved.resolved_path, .{ .mode = .read_only }) catch null) |file| {
-                defer file.close(io);
-                if (file.stat(io) catch null) |st| {
-                    ep_file_size = st.size;
-                }
-            }
-
-            const c_path = allocator.dupeSentinel(u8, resolved.resolved_path, 0) catch null;
-            if (c_path) |cp| {
-                defer allocator.free(cp);
-                if (streamer.getMediaInfo(allocator, io, cp, config.media_engine.metadata) catch null) |media_info| {
-                    defer media_info.deinit(allocator);
-                    if (media_info.duration > 0) {
-                        ep_runtime = @as(u32, @intFromFloat(media_info.duration / 60.0));
+        if (ep.duration_sec > 0.0 and ep.audio_tracks_json != null) {
+            ep_runtime = @as(u32, @intFromFloat(ep.duration_sec / 60.0));
+            tracks_slice = ep.audio_tracks_json.?;
+        } else if (probe_files and lib_opt != null) {
+            if (std.fs.path.join(allocator, &.{ lib_opt.?.path, ep.file_path }) catch null) |full_path| {
+                defer allocator.free(full_path);
+                if (ep_file_size == 0) {
+                    if (std.Io.Dir.cwd().statFile(io, full_path, .{}) catch null) |st| {
+                        ep_file_size = st.size;
                     }
-                    try appendAudioTracksJson(allocator, &ep_audio_tracks_json, media_info.audio_tracks);
+                }
+                if (allocator.dupeSentinel(u8, full_path, 0) catch null) |cp| {
+                    defer allocator.free(cp);
+                    if (streamer.getMediaInfoFast(allocator, io, cp) catch null) |media_info| {
+                        defer media_info.deinit(allocator);
+                        if (media_info.duration > 0) {
+                            ep_runtime = @as(u32, @intFromFloat(media_info.duration / 60.0));
+                        }
+                        try appendAudioTracksJson(allocator, &probed_tracks_json, media_info.audio_tracks);
+                        if (media_info.duration > 0.0) {
+                            cat.cacheEpisodeMediaInfo(ep.id, @intCast(ep_file_size), media_info.duration, probed_tracks_json.items) catch {};
+                            newly_cached = true;
+                        }
+                    }
                 }
             }
-        }
-        if (ep_audio_tracks_json.items.len == 0) {
-            try ep_audio_tracks_json.appendSlice(allocator, "[]");
-        }
-
-        const basename = std.fs.path.basename(file_path);
-        const display_title = if (ep_title_opt) |t| t else basename;
-        const display_overview = if (ep_overview_opt) |o| o else "";
-        const still_path = if (ep_still_path_opt) |s| s else "";
-
-        var esc_ep_title = std.ArrayList(u8).empty;
-        defer esc_ep_title.deinit(allocator);
-        for (display_title) |c| {
-            switch (c) {
-                '"' => try esc_ep_title.appendSlice(allocator, "\\\""),
-                '\\' => try esc_ep_title.appendSlice(allocator, "\\\\"),
-                '\n' => try esc_ep_title.appendSlice(allocator, "\\n"),
-                '\r' => try esc_ep_title.appendSlice(allocator, "\\r"),
-                '\t' => try esc_ep_title.appendSlice(allocator, "\\t"),
-                else => try esc_ep_title.append(allocator, c),
+            if (probed_tracks_json.items.len == 0) {
+                try probed_tracks_json.appendSlice(allocator, "[]");
             }
+            tracks_slice = probed_tracks_json.items;
         }
 
-        var esc_ep_overview = std.ArrayList(u8).empty;
-        defer esc_ep_overview.deinit(allocator);
-        for (display_overview) |c| {
-            switch (c) {
-                '"' => try esc_ep_overview.appendSlice(allocator, "\\\""),
-                '\\' => try esc_ep_overview.appendSlice(allocator, "\\\\"),
-                '\n' => try esc_ep_overview.appendSlice(allocator, "\\n"),
-                '\r' => try esc_ep_overview.appendSlice(allocator, "\\r"),
-                '\t' => try esc_ep_overview.appendSlice(allocator, "\\t"),
-                else => try esc_ep_overview.append(allocator, c),
-            }
-        }
+        const basename = std.fs.path.basename(ep.file_path);
+        const display_title = ep.title orelse basename;
+        const display_overview = ep.overview orelse "";
+        const still_path = ep.still_path orelse "";
+        const ep_resume_pos = progress_map.get(ep.id) orelse 0.0;
 
-        const ep_resume_pos = logging_mod.getEpisodePlaybackProgress(database, session_info.username, ep_id) catch 0.0;
+        try json.appendSlice(allocator, try std.fmt.bufPrint(
+            &num_buf,
+            "{{\"id\":{d},\"season\":{d},\"episode\":{d},\"title\":\"",
+            .{ ep.id, ep.season, ep.episode },
+        ));
+        try utils.escapeJsonString(&json, allocator, display_title);
+        try json.appendSlice(allocator, "\",\"overview\":\"");
+        try utils.escapeJsonString(&json, allocator, display_overview);
+        try json.appendSlice(allocator, "\",\"still_path\":\"");
+        try utils.escapeJsonString(&json, allocator, still_path);
+        try json.appendSlice(allocator, try std.fmt.bufPrint(
+            &num_buf,
+            "\",\"file_size\":{d},\"runtime\":{d},\"resume_position\":{d:.1},\"audio_tracks\":",
+            .{ ep_file_size, ep_runtime, ep_resume_pos },
+        ));
+        try json.appendSlice(allocator, tracks_slice);
+        try json.append(allocator, '}');
+    }
 
-        const ep_json = try std.fmt.allocPrint(allocator, "{{\"id\":{d},\"season\":{d},\"episode\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"still_path\":\"{s}\",\"file_size\":{d},\"runtime\":{d},\"resume_position\":{d:.1},\"audio_tracks\":{s}}}", .{ ep_id, season, episode, esc_ep_title.items, esc_ep_overview.items, still_path, ep_file_size, ep_runtime, ep_resume_pos, ep_audio_tracks_json.items });
-        defer allocator.free(ep_json);
-        try json.appendSlice(allocator, ep_json);
+    if (newly_cached) {
+        cat.snapshot() catch {};
     }
 
     try json.appendSlice(allocator, "]}}");
+
+    try request.respond(json.items, .{
+        .status = .ok,
+        .extra_headers = &.{
+            .{ .name = "content-type", .value = "application/json" },
+        },
+    });
+}
+
+pub fn handleGetEpisode(
+    request: *std.http.Server.Request,
+    allocator: std.mem.Allocator,
+    database: *db_mod.Database,
+    config: *const config_mod.Config,
+    io: std.Io,
+    session_info: session_mod.SessionInfo,
+) !void {
+    _ = config;
+    if (request.head.method != .GET) {
+        try request.respond("{\"success\":false,\"error\":\"Method not allowed\"}", .{ .status = .method_not_allowed });
+        return;
+    }
+
+    const episode_id = utils.parseQueryInt(i64, request.head.target, "id") orelse {
+        try request.respond("{\"success\":false,\"error\":\"Missing episode id\"}", .{ .status = .bad_request });
+        return;
+    };
+
+    const cat = database.catalog orelse {
+        try request.respond("{\"success\":false,\"error\":\"Catalog not configured\"}", .{ .status = .internal_server_error });
+        return;
+    };
+
+    const ep_opt = try cat.getEpisodeById(allocator, episode_id);
+    if (ep_opt == null or !ep_opt.?.is_present) {
+        try request.respond("{\"success\":false,\"error\":\"Episode not found\"}", .{ .status = .not_found });
+        return;
+    }
+    var ep = ep_opt.?;
+    defer ep.deinit(allocator);
+
+    const sh_opt = try cat.getShowById(allocator, ep.show_id);
+    if (sh_opt == null or !sh_opt.?.is_present) {
+        try request.respond("{\"success\":false,\"error\":\"Parent show not found\"}", .{ .status = .not_found });
+        return;
+    }
+    var sh = sh_opt.?;
+    defer sh.deinit(allocator);
+
+    var ep_file_size: u64 = @intCast(@max(0, ep.file_size));
+    var ep_duration_sec: f64 = 0.0;
+    var ep_runtime: u32 = 0;
+    var ep_audio_tracks_json = std.ArrayList(u8).empty;
+    defer ep_audio_tracks_json.deinit(allocator);
+
+    if (ep.duration_sec > 0.0 and ep.audio_tracks_json != null) {
+        ep_duration_sec = ep.duration_sec;
+        ep_runtime = @as(u32, @intFromFloat(ep.duration_sec / 60.0));
+        try ep_audio_tracks_json.appendSlice(allocator, ep.audio_tracks_json.?);
+    } else if (common.resolveMediaPath(database, allocator, .{ .library_id = sh.library_id, .file_path = ep.file_path }) catch null) |resolved| {
+        defer allocator.free(resolved.resolved_path);
+
+        if (ep_file_size == 0) {
+            if (std.Io.Dir.cwd().statFile(io, resolved.resolved_path, .{}) catch null) |st| {
+                ep_file_size = st.size;
+            }
+        }
+
+        if (allocator.dupeSentinel(u8, resolved.resolved_path, 0) catch null) |cp| {
+            defer allocator.free(cp);
+            if (streamer.getMediaInfoFast(allocator, io, cp) catch null) |media_info| {
+                defer media_info.deinit(allocator);
+                if (media_info.duration > 0) {
+                    ep_duration_sec = media_info.duration;
+                    ep_runtime = @as(u32, @intFromFloat(media_info.duration / 60.0));
+                }
+                try appendAudioTracksJson(allocator, &ep_audio_tracks_json, media_info.audio_tracks);
+                if (ep_duration_sec > 0.0) {
+                    cat.cacheEpisodeMediaInfo(ep.id, @intCast(ep_file_size), ep_duration_sec, ep_audio_tracks_json.items) catch {};
+                    cat.snapshot() catch {};
+                }
+            }
+        }
+    }
+    if (ep_audio_tracks_json.items.len == 0) {
+        try ep_audio_tracks_json.appendSlice(allocator, "[]");
+    }
+
+    const basename = std.fs.path.basename(ep.file_path);
+    const display_title = ep.title orelse basename;
+    const display_overview = ep.overview orelse "";
+    const still_path = ep.still_path orelse "";
+    const ep_resume_pos = logging_mod.getEpisodePlaybackProgress(database, session_info.username, ep.id) catch 0.0;
+
+    var json = std.ArrayList(u8).empty;
+    defer json.deinit(allocator);
+    try json.ensureTotalCapacity(allocator, 512 + display_overview.len + ep_audio_tracks_json.items.len);
+
+    var num_buf: [128]u8 = undefined;
+    try json.appendSlice(allocator, try std.fmt.bufPrint(
+        &num_buf,
+        "{{\"success\":true,\"episode\":{{\"id\":{d},\"show_id\":{d},\"library_id\":{d},\"season\":{d},\"episode\":{d},\"title\":\"",
+        .{ ep.id, ep.show_id, sh.library_id, ep.season, ep.episode },
+    ));
+    try utils.escapeJsonString(&json, allocator, display_title);
+    try json.appendSlice(allocator, "\",\"overview\":\"");
+    try utils.escapeJsonString(&json, allocator, display_overview);
+    try json.appendSlice(allocator, "\",\"still_path\":\"");
+    try utils.escapeJsonString(&json, allocator, still_path);
+    try json.appendSlice(allocator, try std.fmt.bufPrint(
+        &num_buf,
+        "\",\"file_size\":{d},\"runtime\":{d},\"duration_sec\":{d:.2},\"resume_position\":{d:.1},\"audio_tracks\":",
+        .{ ep_file_size, ep_runtime, ep_duration_sec, ep_resume_pos },
+    ));
+    try json.appendSlice(allocator, ep_audio_tracks_json.items);
+    try json.appendSlice(allocator, "}}");
 
     try request.respond(json.items, .{
         .status = .ok,

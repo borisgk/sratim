@@ -96,9 +96,23 @@ const native_metadata = @import("native/metadata.zig");
 pub const SubtitleTrack = native_metadata.SubtitleTrack;
 pub const AudioTrack = native_metadata.AudioTrack;
 pub const MediaInfo = native_metadata.MediaInfo;
+pub const MetadataOptions = native_metadata.MetadataOptions;
 
 /// Retrieves the duration, codec info, and available audio/subtitle tracks of a media file via pure Zig parsing.
 pub fn getMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8, mode: config_mod.EngineMode) !MediaInfo {
     _ = mode;
     return native_metadata.getMediaInfo(allocator, io, file_path);
+}
+
+/// Retrieves media info with caller-selected subtitle parsing options.
+pub fn getMediaInfoWithOptions(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8, options: MetadataOptions) !MediaInfo {
+    return native_metadata.getMediaInfoWithOptions(allocator, io, file_path, options);
+}
+
+/// Fast header-only probe for duration and audio tracks (skips subtitle tracks and MKV cluster sniffing).
+pub fn getMediaInfoFast(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8) !MediaInfo {
+    return native_metadata.getMediaInfoWithOptions(allocator, io, file_path, .{
+        .include_subtitles = false,
+        .detect_und_subtitles = false,
+    });
 }

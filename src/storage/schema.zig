@@ -76,6 +76,8 @@ pub const Movie = struct {
     release_date: ?[]const u8 = null,
     file_size: i64 = 0,
     credits_fetched: bool = false,
+    duration_sec: f64 = 0.0,
+    audio_tracks_json: ?[]const u8 = null,
 
     pub fn clone(self: Movie, allocator: std.mem.Allocator) !Movie {
         return .{
@@ -92,6 +94,8 @@ pub const Movie = struct {
             .release_date = if (self.release_date) |r| try allocator.dupe(u8, r) else null,
             .file_size = self.file_size,
             .credits_fetched = self.credits_fetched,
+            .duration_sec = self.duration_sec,
+            .audio_tracks_json = if (self.audio_tracks_json) |atj| try allocator.dupe(u8, atj) else null,
         };
     }
 
@@ -103,6 +107,7 @@ pub const Movie = struct {
         if (self.poster_path) |p| allocator.free(p);
         if (self.backdrop_path) |b| allocator.free(b);
         if (self.release_date) |r| allocator.free(r);
+        if (self.audio_tracks_json) |atj| allocator.free(atj);
     }
 };
 
@@ -154,6 +159,8 @@ pub const Episode = struct {
     overview: ?[]const u8 = null,
     still_path: ?[]const u8 = null,
     file_size: i64 = 0,
+    duration_sec: f64 = 0.0,
+    audio_tracks_json: ?[]const u8 = null,
 
     pub fn clone(self: Episode, allocator: std.mem.Allocator) !Episode {
         return .{
@@ -168,6 +175,8 @@ pub const Episode = struct {
             .overview = if (self.overview) |o| try allocator.dupe(u8, o) else null,
             .still_path = if (self.still_path) |s| try allocator.dupe(u8, s) else null,
             .file_size = self.file_size,
+            .duration_sec = self.duration_sec,
+            .audio_tracks_json = if (self.audio_tracks_json) |atj| try allocator.dupe(u8, atj) else null,
         };
     }
 
@@ -176,6 +185,7 @@ pub const Episode = struct {
         if (self.title) |t| allocator.free(t);
         if (self.overview) |o| allocator.free(o);
         if (self.still_path) |s| allocator.free(s);
+        if (self.audio_tracks_json) |atj| allocator.free(atj);
     }
 };
 

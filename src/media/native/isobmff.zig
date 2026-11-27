@@ -34,8 +34,11 @@ pub const buildMediaSampleList = samples.buildMediaSampleList;
 // Re-export track and container parsers
 pub const parseSubtitleTrackBox = tracks.parseSubtitleTrackBox;
 pub const parseGenericTrackBox = tracks.parseGenericTrackBox;
+pub const parseTrackMetadataOnly = tracks.parseTrackMetadataOnly;
 pub const parseMp4SubtitleTrack = parser.parseMp4SubtitleTrack;
 pub const parseMp4Media = parser.parseMp4Media;
+pub const parseMp4MetadataOnly = parser.parseMp4MetadataOnly;
+pub const parseMp4MediaFromReader = parser.parseMp4MediaFromReader;
 pub const findMp4KeyframePts = parser.findMp4KeyframePts;
 pub const buildAvc1Stsd = stsd.buildAvc1Stsd;
 pub const buildHevcStsd = stsd.buildHevcStsd;

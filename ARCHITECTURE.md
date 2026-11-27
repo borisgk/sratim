@@ -80,9 +80,9 @@ All database state is stored in memory using `zembed.Table` and persisted via JS
 - **[`src/storage/schema.zig`](file:///Users/borisk/Programming/Zig/sratim/src/storage/schema.zig)**:
   - Strong struct definitions and memory management:
     - [`Library`](file:///Users/borisk/Programming/Zig/sratim/src/storage/schema.zig#L45): ID, name, path, `LibraryType` (`.Movies`, `.Shows`, `.Other`), scan intervals.
-    - [`Movie`](file:///Users/borisk/Programming/Zig/sratim/src/storage/schema.zig#L65): ID, `library_id`, file path, clean name, title, TMDb ID, poster/backdrop, release date.
-    - [`Show`](file:///Users/borisk/Programming/Zig/sratim/src/storage/schema.zig#L109): ID, `library_id`, directory path, title, TMDb ID, overview, poster/backdrop.
-    - [`Episode`](file:///Users/borisk/Programming/Zig/sratim/src/storage/schema.zig#L145): ID, `show_id`, file path, season, episode, title, overview, file size.
+    - [`Movie`](file:///Users/borisk/Programming/Zig/sratim/src/storage/schema.zig#L65): ID, `library_id`, file path, clean name, title, TMDb ID, poster/backdrop, release date, file size, and lazily cached container probe fields (`duration_sec`, `audio_tracks_json`, invalidated when `file_size` changes).
+    - [`Show`](file:///Users/borisk/Programming/Zig/sratim/src/storage/schema.zig#L114): ID, `library_id`, directory path, title, TMDb ID, overview, poster/backdrop.
+    - [`Episode`](file:///Users/borisk/Programming/Zig/sratim/src/storage/schema.zig#L150): ID, `show_id`, file path, season, episode, title, overview, file size, and lazily cached container probe fields (`duration_sec`, `audio_tracks_json`, invalidated when `file_size` changes).
     - [`Person`](file:///Users/borisk/Programming/Zig/sratim/src/storage/schema.zig#L347): TMDb Person ID, name, profile image path, department.
     - [`MovieCredit`](file:///Users/borisk/Programming/Zig/sratim/src/storage/schema.zig#L402) / [`ShowCredit`](file:///Users/borisk/Programming/Zig/sratim/src/storage/schema.zig#L438): Links movies/shows to people, storing character name or crew job.
     - [`User`](file:///Users/borisk/Programming/Zig/sratim/src/storage/schema.zig#L182) & [`Session`](file:///Users/borisk/Programming/Zig/sratim/src/storage/schema.zig#L206): Auth accounts, password hash/salt, admin flag, session tokens.
@@ -110,13 +110,13 @@ The `src/db/` module exposes ergonomic, thread-safe functions that abstract `Sra
 - **[`src/web/server.zig`](file:///Users/borisk/Programming/Zig/sratim/src/web/server.zig)**: Main connection listener routing HTTP requests.
 - **Routers (`src/web/routers/`)**:
   - `api.zig`: Web UI API routes (`/api/library/rescan`, `/api/library/rename`, `/api/library/delete`, `/api/watch/event`, `/api/browse`, `/api/v1/admin/analytics`).
-  - `api_v1.zig`: External REST API endpoints (`/api/v1/libraries`, `/api/v1/movie`, `/api/v1/show`, `/api/v1/recently-watched`, etc.).
+  - `api_v1.zig`: External REST API endpoints (`/api/v1/libraries`, `/api/v1/movie`, `/api/v1/show`, `/api/v1/episode`, `/api/v1/recently-watched`, etc.).
   - `admin.zig`: Admin panel routes (`/admin`, `/admin/users/toggle_admin`, etc.).
   - `auth.zig`: Web session login and logout.
   - `browse.zig`: Media catalog browsing and video player HTML rendering.
   - `static.zig`: Serves CSS, favicon, and cached TMDb images.
 - **Handlers (`src/web/handlers/`)**:
-  - `api_v1/`: External v1 JSON handlers (`auth.zig`, `library.zig`, `media.zig`) serving authentication, library items, movie/show metadata (including `runtime`, `resume_position`, and `audio_tracks`), and the recently-watched shelf.
+  - `api_v1/`: External v1 JSON handlers (`auth.zig`, `library.zig`, `media.zig`) serving authentication, library items, zero-disk-I/O `GET /api/v1/show` (`audio_tracks: null` until probed, optional `?probe=1`), single-item write-through cached `GET /api/v1/movie` and `GET /api/v1/episode` (`runtime`, `duration_sec`, `resume_position`, `audio_tracks`), and the recently-watched shelf.
   - `library.zig`: Request parsing, JSON serialization, and response writing for library actions.
   - `watch.zig`: Playback event recording.
   - `admin.zig`: Admin dashboard rendering.

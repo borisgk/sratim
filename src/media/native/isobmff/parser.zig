@@ -82,6 +82,29 @@ pub fn parseMp4Media(
 
     var file_buf: [65536]u8 = undefined;
     var file_reader = file.reader(io, &file_buf);
+    return parseMp4MediaFromReader(allocator, &file_reader, true);
+}
+
+/// Parses only MP4 container/track metadata (`mvhd`, `tkhd`, `mdhd`, `hdlr`, `stsd`) without allocating sample tables.
+pub fn parseMp4MetadataOnly(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    file_path: [:0]const u8,
+) !Mp4Media {
+    const file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
+    defer file.close(io);
+
+    var file_buf: [65536]u8 = undefined;
+    var file_reader = file.reader(io, &file_buf);
+    return parseMp4MediaFromReader(allocator, &file_reader, false);
+}
+
+/// Parses MP4 tracks from an already-opened `std.Io.File.Reader`, optionally skipping sample tables.
+pub fn parseMp4MediaFromReader(
+    allocator: std.mem.Allocator,
+    file_reader: *std.Io.File.Reader,
+    parse_sample_tables: bool,
+) !Mp4Media {
     const r = &file_reader.interface;
 
     var current_stream_idx: usize = 0;
@@ -125,7 +148,10 @@ pub fn parseMp4Media(
                     const track_stream_idx = current_stream_idx;
                     current_stream_idx += 1;
 
-                    const track_opt = try parseGenericTrackBox(allocator, r, moov_child, track_stream_idx);
+                    const track_opt = if (parse_sample_tables)
+                        try parseGenericTrackBox(allocator, r, moov_child, track_stream_idx)
+                    else
+                        try tracks.parseTrackMetadataOnly(allocator, r, moov_child, track_stream_idx);
                     if (track_opt) |trk| {
                         if (isFourCC(trk.handler_type, "vide") and video_track == null) {
                             video_track = trk;

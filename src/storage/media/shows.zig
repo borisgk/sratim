@@ -254,6 +254,13 @@ pub fn addOrUpdateEpisode(self: *SratimStorage, episode: schema.Episode) !i64 {
 
     if (self.episodes.getPtr(final_id)) |existing| {
         const season_or_ep_changed = existing.season != episode.season or existing.episode != episode.episode;
+        if (existing.file_size != episode.file_size) {
+            existing.duration_sec = 0.0;
+            if (existing.audio_tracks_json) |old_atj| {
+                self.allocator.free(old_atj);
+                existing.audio_tracks_json = null;
+            }
+        }
         existing.is_present = episode.is_present;
         existing.file_size = episode.file_size;
         existing.season = episode.season;
@@ -367,4 +374,26 @@ pub fn totalEpisodeStorage(self: *SratimStorage) i64 {
         if (e.value_ptr.is_present) total += e.value_ptr.file_size;
     }
     return total;
+}
+
+pub fn cacheEpisodeMediaInfo(
+    self: *SratimStorage,
+    id: i64,
+    file_size: ?i64,
+    duration_sec: f64,
+    audio_tracks_json: []const u8,
+) !void {
+    self.writeLock();
+    defer self.writeUnlock();
+
+    if (self.episodes.getPtr(id)) |ptr| {
+        if (file_size) |fsz| {
+            if (fsz > 0 and ptr.file_size == 0) {
+                ptr.file_size = fsz;
+            }
+        }
+        ptr.duration_sec = duration_sec;
+        if (ptr.audio_tracks_json) |old| self.allocator.free(old);
+        ptr.audio_tracks_json = try self.allocator.dupe(u8, audio_tracks_json);
+    }
 }

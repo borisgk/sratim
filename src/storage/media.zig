@@ -26,6 +26,7 @@ pub const countMovies = movies.countMovies;
 pub const countMoviesByLibrary = movies.countMoviesByLibrary;
 pub const countUnmatchedMovies = movies.countUnmatchedMovies;
 pub const totalMovieStorage = movies.totalMovieStorage;
+pub const cacheMovieMediaInfo = movies.cacheMovieMediaInfo;
 
 // Show & Episode operations
 pub const addOrUpdateShow = shows.addOrUpdateShow;
@@ -43,3 +44,4 @@ pub const getEpisodesByShow = shows.getEpisodesByShow;
 pub const linkEpisodeMetadata = shows.linkEpisodeMetadata;
 pub const countEpisodes = shows.countEpisodes;
 pub const totalEpisodeStorage = shows.totalEpisodeStorage;
+pub const cacheEpisodeMediaInfo = shows.cacheEpisodeMediaInfo;

@@ -1318,4 +1318,120 @@ test "storage: deleteLibrary cascades removal of movies, shows, episodes, and cr
     try testing.expectEqual(@as(usize, 0), storage.countEpisodes());
 }
 
+test "storage: movie and episode media probe cache persists across snapshot and invalidates on file_size change" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    std.Io.Dir.cwd().createDirPath(testing.io, "tmp") catch {};
+    const snap_path = "tmp/test_probe_cache.json";
+    const wal_path = "tmp/test_probe_cache.wal";
+    const persons_dir = "tmp/test_probe_cache_persons";
+    defer std.Io.Dir.cwd().deleteFile(testing.io, snap_path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(testing.io, wal_path) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, persons_dir) catch {};
+
+    {
+        var storage = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
+        defer storage.deinit();
+
+        const mov_lib = try storage.addLibrary("Movies", "/movies", .Movies);
+        const movie_id = try storage.addOrUpdateMovie(.{
+            .id = 0,
+            .library_id = mov_lib.id,
+            .file_path = "Inception.mkv",
+            .clean_name = "Inception",
+            .is_present = true,
+            .file_size = 8_000_000_000,
+        });
+
+        const show_lib = try storage.addLibrary("Shows", "/shows", .Shows);
+        const show_id = try storage.addOrUpdateShow(.{
+            .id = 0,
+            .library_id = show_lib.id,
+            .path = "Greys Anatomy",
+            .title = "Grey's Anatomy",
+            .is_present = true,
+        });
+        const ep_id = try storage.addOrUpdateEpisode(.{
+            .id = 0,
+            .show_id = show_id,
+            .file_path = "Greys Anatomy/Season 14/S14E05.mkv",
+            .season = 14,
+            .episode = 5,
+            .is_present = true,
+            .file_size = 1_500_000_000,
+        });
+
+        try storage.cacheMovieMediaInfo(movie_id, 8_000_000_000, 8880.5, "[{\"id\":1,\"label\":\"English\",\"codec\":\"DTS\"}]");
+        try storage.cacheEpisodeMediaInfo(ep_id, 1_500_000_000, 2584.42, "[{\"id\":1,\"label\":\"English\",\"codec\":\"E-AC-3\"}]");
+        try storage.snapshot();
+    }
+
+    // Reload from snapshot and verify probe cache survived and invalidates only when file_size changes
+    var restored = engine.SratimStorage.init(allocator, testing.io, snap_path, wal_path, persons_dir);
+    defer restored.deinit();
+    try testing.expect(try restored.load());
+
+    {
+        var mov = (try restored.getMovieById(allocator, 1)).?;
+        defer mov.deinit(allocator);
+        try testing.expectApproxEqAbs(@as(f64, 8880.5), mov.duration_sec, 0.01);
+        try testing.expectEqualStrings("[{\"id\":1,\"label\":\"English\",\"codec\":\"DTS\"}]", mov.audio_tracks_json.?);
+
+        var ep = (try restored.getEpisodeById(allocator, 1)).?;
+        defer ep.deinit(allocator);
+        try testing.expectApproxEqAbs(@as(f64, 2584.42), ep.duration_sec, 0.01);
+        try testing.expectEqualStrings("[{\"id\":1,\"label\":\"English\",\"codec\":\"E-AC-3\"}]", ep.audio_tracks_json.?);
+    }
+
+    // Rescan with identical file_size preserves cache
+    _ = try restored.addOrUpdateEpisode(.{
+        .id = 0,
+        .show_id = 1,
+        .file_path = "Greys Anatomy/Season 14/S14E05.mkv",
+        .season = 14,
+        .episode = 5,
+        .is_present = true,
+        .file_size = 1_500_000_000,
+    });
+    {
+        var ep_same = (try restored.getEpisodeById(allocator, 1)).?;
+        defer ep_same.deinit(allocator);
+        try testing.expectApproxEqAbs(@as(f64, 2584.42), ep_same.duration_sec, 0.01);
+        try testing.expect(ep_same.audio_tracks_json != null);
+    }
+
+    // Rescan with changed file_size invalidates cached duration_sec and audio_tracks_json
+    _ = try restored.addOrUpdateEpisode(.{
+        .id = 0,
+        .show_id = 1,
+        .file_path = "Greys Anatomy/Season 14/S14E05.mkv",
+        .season = 14,
+        .episode = 5,
+        .is_present = true,
+        .file_size = 1_900_000_000,
+    });
+    {
+        var ep_changed = (try restored.getEpisodeById(allocator, 1)).?;
+        defer ep_changed.deinit(allocator);
+        try testing.expectEqual(@as(f64, 0.0), ep_changed.duration_sec);
+        try testing.expect(ep_changed.audio_tracks_json == null);
+    }
+
+    _ = try restored.addOrUpdateMovie(.{
+        .id = 0,
+        .library_id = 1,
+        .file_path = "Inception.mkv",
+        .clean_name = "Inception",
+        .is_present = true,
+        .file_size = 9_000_000_000,
+    });
+    {
+        var mov_changed = (try restored.getMovieById(allocator, 1)).?;
+        defer mov_changed.deinit(allocator);
+        try testing.expectEqual(@as(f64, 0.0), mov_changed.duration_sec);
+        try testing.expect(mov_changed.audio_tracks_json == null);
+    }
+}
+
 

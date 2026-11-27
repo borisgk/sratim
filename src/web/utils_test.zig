@@ -279,14 +279,15 @@ test "recently-watched limit query param and progress percent" {
 
     const movie_detail_json = try std.fmt.allocPrint(
         alloc,
-        "{{\"success\":true,\"movie\":{{\"id\":{d},\"library_id\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"release_date\":\"{s}\",\"tmdb_id\":\"{s}\",\"file_size\":{d},\"file_path\":\"{s}\",\"runtime\":{d},\"resume_position\":{d:.1},\"audio_tracks\":{s}}}}}",
-        .{ 42, 1, "Movie Title", "Overview", "/p.jpg", "/b.jpg", "2024-01-01", "123", 1000, "/file.mkv", 120, 3420.5, audio_json_buf.items },
+        "{{\"success\":true,\"movie\":{{\"id\":{d},\"library_id\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"poster_path\":\"{s}\",\"backdrop_path\":\"{s}\",\"release_date\":\"{s}\",\"tmdb_id\":\"{s}\",\"file_size\":{d},\"file_path\":\"{s}\",\"runtime\":{d},\"duration_sec\":{d:.2},\"resume_position\":{d:.1},\"audio_tracks\":{s}}}}}",
+        .{ 42, 1, "Movie Title", "Overview", "/p.jpg", "/b.jpg", "2024-01-01", "123", 1000, "/file.mkv", 120, 7205.5, 3420.5, audio_json_buf.items },
     );
     defer alloc.free(movie_detail_json);
 
     const parsed_movie_detail = try std.json.parseFromSlice(std.json.Value, alloc, movie_detail_json, .{});
     defer parsed_movie_detail.deinit();
     const movie_obj = parsed_movie_detail.value.object.get("movie").?.object;
+    try testing.expectApproxEqAbs(@as(f64, 7205.5), movie_obj.get("duration_sec").?.float, 0.05);
     try testing.expectApproxEqAbs(@as(f64, 3420.5), movie_obj.get("resume_position").?.float, 0.1);
     const movie_tracks = movie_obj.get("audio_tracks").?.array.items;
     try testing.expectEqual(@as(usize, 2), movie_tracks.len);
@@ -294,17 +295,39 @@ test "recently-watched limit query param and progress percent" {
     try testing.expectEqualStrings("Russian (\"Dubbed\")", movie_tracks[0].object.get("label").?.string);
     try testing.expectEqualStrings("AC-3", movie_tracks[0].object.get("codec").?.string);
 
-    const ep_detail_json = try std.fmt.allocPrint(
+    // Unprobed episode in GET /api/v1/show emits audio_tracks: null
+    const show_ep_unprobed_json = try std.fmt.allocPrint(
         alloc,
         "{{\"id\":{d},\"season\":{d},\"episode\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"still_path\":\"{s}\",\"file_size\":{d},\"runtime\":{d},\"resume_position\":{d:.1},\"audio_tracks\":{s}}}",
-        .{ 233827, 1, 1, "Pilot", "Overview", "/s.jpg", 1000, 45, 745.0, "[]" },
+        .{ 233827, 1, 1, "Pilot", "Overview", "/s.jpg", 1000, 0, 745.0, "null" },
     );
-    defer alloc.free(ep_detail_json);
+    defer alloc.free(show_ep_unprobed_json);
 
-    const parsed_ep_detail = try std.json.parseFromSlice(std.json.Value, alloc, ep_detail_json, .{});
-    defer parsed_ep_detail.deinit();
-    try testing.expectApproxEqAbs(@as(f64, 745.0), parsed_ep_detail.value.object.get("resume_position").?.float, 0.1);
-    try testing.expectEqual(@as(usize, 0), parsed_ep_detail.value.object.get("audio_tracks").?.array.items.len);
+    const parsed_unprobed = try std.json.parseFromSlice(std.json.Value, alloc, show_ep_unprobed_json, .{});
+    defer parsed_unprobed.deinit();
+    try testing.expectApproxEqAbs(@as(f64, 745.0), parsed_unprobed.value.object.get("resume_position").?.float, 0.1);
+    try testing.expect(parsed_unprobed.value.object.get("audio_tracks").? == .null);
+
+    // GET /api/v1/episode?id=... single-episode payload
+    const single_ep_json = try std.fmt.allocPrint(
+        alloc,
+        "{{\"success\":true,\"episode\":{{\"id\":{d},\"show_id\":{d},\"library_id\":{d},\"season\":{d},\"episode\":{d},\"title\":\"{s}\",\"overview\":\"{s}\",\"still_path\":\"{s}\",\"file_size\":{d},\"runtime\":{d},\"duration_sec\":{d:.2},\"resume_position\":{d:.1},\"audio_tracks\":{s}}}}}",
+        .{ 233827, 10, 2, 14, 5, "Danger Zone", "Overview", "/s.jpg", 1948251136, 43, 2584.42, 612.5, audio_json_buf.items },
+    );
+    defer alloc.free(single_ep_json);
+
+    const parsed_single_ep = try std.json.parseFromSlice(std.json.Value, alloc, single_ep_json, .{});
+    defer parsed_single_ep.deinit();
+    const ep_obj = parsed_single_ep.value.object.get("episode").?.object;
+    try testing.expectEqual(@as(i64, 233827), ep_obj.get("id").?.integer);
+    try testing.expectEqual(@as(i64, 10), ep_obj.get("show_id").?.integer);
+    try testing.expectEqual(@as(i64, 2), ep_obj.get("library_id").?.integer);
+    try testing.expectApproxEqAbs(@as(f64, 2584.42), ep_obj.get("duration_sec").?.float, 0.05);
+    try testing.expectEqual(@as(usize, 2), ep_obj.get("audio_tracks").?.array.items.len);
+
+    // Verify optional ?probe=1 query flag parsing
+    try testing.expectEqual(@as(u8, 1), utils.parseQueryInt(u8, "/api/v1/show?id=10&probe=1", "probe") orelse 0);
+    try testing.expectEqual(@as(u8, 0), utils.parseQueryInt(u8, "/api/v1/show?id=10", "probe") orelse 0);
 }
 
 

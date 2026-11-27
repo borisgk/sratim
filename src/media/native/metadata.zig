@@ -63,25 +63,46 @@ pub fn getKeyframePts(io: std.Io, file_path: []const u8, start_time: f64) !f64 {
     return cues.getKeyframePts(io, file_path, start_time);
 }
 
+pub const MetadataOptions = struct {
+    include_subtitles: bool = true,
+    detect_und_subtitles: bool = true,
+};
+
 /// Pure Zig extraction of container track metadata, codecs, and duration.
 pub fn getMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8) !MediaInfo {
+    return getMediaInfoWithOptions(allocator, io, file_path, .{});
+}
+
+/// Pure Zig extraction of container track metadata with configurable subtitle scanning options.
+/// Opens the media file once and reuses its 64 KB buffered reader across magic detection and header parsing.
+pub fn getMediaInfoWithOptions(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    file_path: [:0]const u8,
+    options: MetadataOptions,
+) !MediaInfo {
     const file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
     defer file.close(io);
 
-    var probe_buf: [1024]u8 = undefined;
-    var file_reader = file.reader(io, &probe_buf);
+    var file_buf: [65536]u8 = undefined;
+    var file_reader = file.reader(io, &file_buf);
     var magic_buf: [16]u8 = undefined;
     const bytes_read = file_reader.interface.readSliceShort(&magic_buf) catch 0;
+    try file_reader.seekTo(0);
 
     if (bytes_read >= 8 and isobmff.isMp4Container(magic_buf[0..bytes_read])) {
-        return getMp4MediaInfo(allocator, io, file_path);
+        return getMp4MediaInfoFromReader(allocator, &file_reader, options);
     }
 
-    return getMatroskaMediaInfo(allocator, io, file_path);
+    return getMatroskaMediaInfoFromReader(allocator, io, file_path, &file_reader.interface, options);
 }
 
-fn getMp4MediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8) !MediaInfo {
-    var media = try isobmff.parseMp4Media(allocator, io, file_path);
+fn getMp4MediaInfoFromReader(
+    allocator: std.mem.Allocator,
+    file_reader: *std.Io.File.Reader,
+    options: MetadataOptions,
+) !MediaInfo {
+    var media = try isobmff.parseMp4MediaFromReader(allocator, file_reader, false);
     defer media.deinit(allocator);
 
     var duration_sec: f64 = 0.0;
@@ -145,20 +166,22 @@ fn getMp4MediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]cons
         subtitle_tracks.deinit(allocator);
     }
 
-    for (media.subtitle_tracks, 0..) |st, idx| {
-        const lang_name = languages.getLanguageName(st.language[0..3]);
-        const label = if (lang_name) |ln|
-            try std.fmt.allocPrint(allocator, "Subtitle Track {d} ({s})", .{ idx + 1, ln })
-        else
-            try std.fmt.allocPrint(allocator, "Subtitle Track {d}", .{idx + 1});
+    if (options.include_subtitles) {
+        for (media.subtitle_tracks, 0..) |st, idx| {
+            const lang_name = languages.getLanguageName(st.language[0..3]);
+            const label = if (lang_name) |ln|
+                try std.fmt.allocPrint(allocator, "Subtitle Track {d} ({s})", .{ idx + 1, ln })
+            else
+                try std.fmt.allocPrint(allocator, "Subtitle Track {d}", .{idx + 1});
 
-        const lang_dup = try allocator.dupe(u8, if (lang_name) |ln| ln else st.language[0..3]);
+            const lang_dup = try allocator.dupe(u8, if (lang_name) |ln| ln else st.language[0..3]);
 
-        try subtitle_tracks.append(allocator, .{
-            .id = st.stream_idx,
-            .label = label,
-            .language = lang_dup,
-        });
+            try subtitle_tracks.append(allocator, .{
+                .id = st.stream_idx,
+                .label = label,
+                .language = lang_dup,
+            });
+        }
     }
 
     return MediaInfo{
@@ -170,14 +193,13 @@ fn getMp4MediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]cons
     };
 }
 
-fn getMatroskaMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0]const u8) !MediaInfo {
-    const file = try std.Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_only });
-    defer file.close(io);
-
-    var file_buf: [65536]u8 = undefined;
-    var file_reader = file.reader(io, &file_buf);
-    const r = &file_reader.interface;
-
+fn getMatroskaMediaInfoFromReader(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    file_path: [:0]const u8,
+    r: *std.Io.Reader,
+    options: MetadataOptions,
+) !MediaInfo {
     const ebml_hdr = (try ebml.readElementHeader(r)) orelse return error.InvalidEbml;
     if (ebml_hdr.id != ebml.ID_EBML) return error.NotMatroska;
     try ebml.skipBytes(r, ebml_hdr.size);
@@ -352,7 +374,7 @@ fn getMatroskaMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0
                                 .label = label_dup,
                                 .codec = codec_dup,
                             });
-                        } else if (tt == 17) { // Subtitle
+                        } else if (tt == 17 and options.include_subtitles) { // Subtitle
                             var is_bitmap = false;
                             if (codec_id_str) |cid| {
                                 if (std.mem.indexOf(u8, cid, "PGS") != null or
@@ -382,7 +404,7 @@ fn getMatroskaMediaInfo(allocator: std.mem.Allocator, io: std.Io, file_path: [:0
                                 }
 
                                 // If language is undetermined and no custom label, attempt automated detection from subtitle text
-                                if (std.ascii.eqlIgnoreCase(lang, "und") and label.len == 0) {
+                                if (options.detect_und_subtitles and std.ascii.eqlIgnoreCase(lang, "und") and label.len == 0) {
                                     const sample_opt = subtitles.peekSubtitleSample(allocator, io, file_path, current_stream_idx) catch null;
                                     if (sample_opt) |sample| {
                                         defer allocator.free(sample);

@@ -127,6 +127,7 @@ pub const SratimStorage = struct {
     pub const countMoviesByLibrary = media_mod.countMoviesByLibrary;
     pub const countUnmatchedMovies = media_mod.countUnmatchedMovies;
     pub const totalMovieStorage = media_mod.totalMovieStorage;
+    pub const cacheMovieMediaInfo = media_mod.cacheMovieMediaInfo;
 
     // Show & Episode operations
     pub const addOrUpdateShow = media_mod.addOrUpdateShow;
@@ -144,6 +145,7 @@ pub const SratimStorage = struct {
     pub const linkEpisodeMetadata = media_mod.linkEpisodeMetadata;
     pub const countEpisodes = media_mod.countEpisodes;
     pub const totalEpisodeStorage = media_mod.totalEpisodeStorage;
+    pub const cacheEpisodeMediaInfo = media_mod.cacheEpisodeMediaInfo;
 
     // Person & Credit operations
     pub const addOrUpdatePerson = credits_mod.addOrUpdatePerson;
